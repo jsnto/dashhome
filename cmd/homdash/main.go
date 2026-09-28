@@ -41,14 +41,14 @@ func main() {
 		log.Print("google calendar: not configured")
 	}
 
-	var haClient *ha.Client
+	var haClient ha.StatesClient
 	if cfg.HAConfigured() {
 		haClient = ha.NewClient(cfg.HAURL, cfg.HAToken)
 	} else {
 		log.Print("home assistant: not configured")
 	}
 
-	var hClient *hermes.Client
+	var hClient hermes.Chatter
 	if cfg.HermesConfigured() {
 		hClient = hermes.NewClient(cfg.HermesBaseURL, cfg.HermesChatPath, cfg.HermesAuthHeader, cfg.HermesAuthValue)
 	} else {
