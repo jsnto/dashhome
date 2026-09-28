@@ -118,14 +118,14 @@ func Load() (*Config, error) {
 		PushToken: env("HERMES_PUSH_TOKEN", ""),
 
 		Google: GoogleConfig{
-			Endpoint:             env("GOOGLE_API_ENDPOINT", ""),
-			AccessToken:          env("GOOGLE_ACCESS_TOKEN", ""),
-			ServiceAccountFile:   env("GOOGLE_APPLICATION_CREDENTIALS", ""),
-			Domain:               env("GOOGLE_DOMAIN", ""),
-			ClientID:             env("GOOGLE_CLIENT_ID", ""),
-			ClientSecret:         env("GOOGLE_CLIENT_SECRET", ""),
-			RedirectURI:          env("GOOGLE_REDIRECT_URI", ""),
-			TokenCache:           env("GOOGLE_TOKEN_CACHE", ""),
+			Endpoint:           env("GOOGLE_API_ENDPOINT", ""),
+			AccessToken:        env("GOOGLE_ACCESS_TOKEN", ""),
+			ServiceAccountFile: env("GOOGLE_APPLICATION_CREDENTIALS", ""),
+			Domain:             env("GOOGLE_DOMAIN", ""),
+			ClientID:           env("GOOGLE_CLIENT_ID", ""),
+			ClientSecret:       env("GOOGLE_CLIENT_SECRET", ""),
+			RedirectURI:        env("GOOGLE_REDIRECT_URI", ""),
+			TokenCache:         env("GOOGLE_TOKEN_CACHE", ""),
 		},
 
 		DataDir:   env("DATA_DIR", "./data"),
