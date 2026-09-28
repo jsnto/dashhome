@@ -26,13 +26,13 @@ func init() { gin.SetMode(gin.TestMode) }
 // --- fakes ---------------------------------------------------------------
 
 type fakeGoogle struct {
-	cals          []calendar.Calendar
-	events        map[string][]calendar.Event
-	err           error
-	hasToken      bool
-	loginURL      string
-	lastStart     time.Time
-	lastEnd       time.Time
+	cals      []calendar.Calendar
+	events    map[string][]calendar.Event
+	err       error
+	hasToken  bool
+	loginURL  string
+	lastStart time.Time
+	lastEnd   time.Time
 }
 
 func (f *fakeGoogle) ListCalendars(ctx context.Context) ([]calendar.Calendar, error) {
@@ -50,18 +50,18 @@ func (f *fakeGoogle) ListEvents(ctx context.Context, id string, start, end time.
 	return f.events[id], nil
 }
 
-func (f *fakeGoogle) Mode() calendar.Mode    { return calendar.ModeOAuth }
-func (f *fakeGoogle) HasToken() bool         { return f.hasToken }
-func (f *fakeGoogle) LoginURL() string       { return f.loginURL }
+func (f *fakeGoogle) Mode() calendar.Mode                             { return calendar.ModeOAuth }
+func (f *fakeGoogle) HasToken() bool                                  { return f.hasToken }
+func (f *fakeGoogle) LoginURL() string                                { return f.loginURL }
 func (f *fakeGoogle) Callback(ctx context.Context, code string) error { return nil }
 
 // newTestGoogleOAuth builds a real OAuth-mode Google client for handler tests.
 func newTestGoogleOAuth(cache string) (*calendar.GoogleClient, error) {
 	return calendar.NewGoogle(context.Background(), calendar.GoogleSettings{
-		ClientID:    "id",
+		ClientID:     "id",
 		ClientSecret: "secret",
-		RedirectURI: "https://example.com/cb",
-		TokenCache:  cache,
+		RedirectURI:  "https://example.com/cb",
+		TokenCache:   cache,
 	})
 }
 
@@ -156,12 +156,12 @@ func TestGetConfig(t *testing.T) {
 		Integrations struct {
 			Homeassistant bool `json:"homeassistant"`
 			Google        struct {
-				Configured     bool   `json:"configured"`
-				Mode           string `json:"mode"`
-				LoginRequired  bool   `json:"login_required"`
+				Configured    bool   `json:"configured"`
+				Mode          string `json:"mode"`
+				LoginRequired bool   `json:"login_required"`
 			} `json:"google"`
-			HermesChat  bool `json:"hermes_chat"`
-			HermesPush  bool `json:"hermes_push"`
+			HermesChat bool `json:"hermes_chat"`
+			HermesPush bool `json:"hermes_push"`
 		} `json:"integrations"`
 		Board struct {
 			HAEntityIDs []string `json:"ha_entities"`
@@ -339,8 +339,8 @@ func TestListEventsSingleCalendar(t *testing.T) {
 	}
 	var resp struct {
 		Events []struct {
-			ID         string `json:"id"`
-			CalID      string `json:"calendar_id"`
+			ID    string `json:"id"`
+			CalID string `json:"calendar_id"`
 		} `json:"events"`
 	}
 	json.NewDecoder(w.Body).Decode(&resp)
@@ -379,8 +379,8 @@ func TestListEventsAllFail(t *testing.T) {
 
 func TestHAEntitiesAll(t *testing.T) {
 	states := []ha.EntityState{
-		{EntityID: "climate.thermo", State: "21.5", Attributes: map[string]string{"friendly_name": "Thermostat", "unit_of_measurement": "°C"}},
-		{EntityID: "binary_sensor.door", State: "off", Attributes: map[string]string{"friendly_name": "Front door"}},
+		{EntityID: "climate.thermo", State: "21.5", Attributes: map[string]any{"friendly_name": "Thermostat", "unit_of_measurement": "°C", "hvac_modes": []any{"heat", "cool"}}},
+		{EntityID: "binary_sensor.door", State: "off", Attributes: map[string]any{"friendly_name": "Front door"}},
 	}
 	cfg := cfgFor(t)
 	cfg.Board.HAEntityIDs = nil // no filter
@@ -391,9 +391,10 @@ func TestHAEntitiesAll(t *testing.T) {
 	}
 	var resp struct {
 		Entities []struct {
-			EntityID string `json:"entity_id"`
-			Label    string `json:"label"`
-			State    string `json:"state"`
+			EntityID   string         `json:"entity_id"`
+			Label      string         `json:"label"`
+			State      string         `json:"state"`
+			Attributes map[string]any `json:"attributes"`
 		} `json:"entities"`
 		Total int `json:"total"`
 	}
@@ -407,11 +408,17 @@ func TestHAEntitiesAll(t *testing.T) {
 	if resp.Entities[1].Label != "Front door" {
 		t.Errorf("label = %q, want friendly name fallback", resp.Entities[1].Label)
 	}
+	if got := resp.Entities[0].Attributes["unit_of_measurement"]; got != "°C" {
+		t.Errorf("unit_of_measurement = %v (%T)", got, got)
+	}
+	if got, ok := resp.Entities[0].Attributes["hvac_modes"].([]any); !ok || len(got) != 2 || got[0] != "heat" {
+		t.Errorf("hvac_modes = %v (%T)", resp.Entities[0].Attributes["hvac_modes"], resp.Entities[0].Attributes["hvac_modes"])
+	}
 }
 
 func TestHAEntitiesFiltered(t *testing.T) {
 	states := []ha.EntityState{
-		{EntityID: "climate.thermo", State: "21.5", Attributes: map[string]string{"friendly_name": "Thermostat"}},
+		{EntityID: "climate.thermo", State: "21.5", Attributes: map[string]any{"friendly_name": "Thermostat"}},
 		{EntityID: "binary_sensor.door", State: "off"},
 		{EntityID: "sensor.ignored", State: "x"},
 	}

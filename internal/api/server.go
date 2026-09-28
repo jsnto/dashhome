@@ -32,9 +32,9 @@ type GoogleAPI interface {
 // Server holds the dependencies of every handler.
 type Server struct {
 	cfg    *config.Config
-	google GoogleAPI // nil = not configured
+	google GoogleAPI       // nil = not configured
 	ha     ha.StatesClient // nil = not configured
-	hermes hermes.Chatter // nil = not configured
+	hermes hermes.Chatter  // nil = not configured
 	pushes store.PushStore
 }
 
@@ -149,15 +149,15 @@ func (s *Server) listCalendars(c *gin.Context) {
 // --- events -------------------------------------------------------------
 
 type apiEvent struct {
-	CalendarID   string `json:"calendar_id"`
-	CalendarLbl  string `json:"calendar_label"`
-	ID           string `json:"id"`
-	Summary      string `json:"summary"`
-	Description  string `json:"description,omitempty"`
-	Location     string `json:"location,omitempty"`
-	Start        string `json:"start"`
-	End          string `json:"end"`
-	AllDay       bool   `json:"all_day"`
+	CalendarID  string `json:"calendar_id"`
+	CalendarLbl string `json:"calendar_label"`
+	ID          string `json:"id"`
+	Summary     string `json:"summary"`
+	Description string `json:"description,omitempty"`
+	Location    string `json:"location,omitempty"`
+	Start       string `json:"start"`
+	End         string `json:"end"`
+	AllDay      bool   `json:"all_day"`
 }
 
 func (s *Server) listEvents(c *gin.Context) {
@@ -243,13 +243,13 @@ func (s *Server) listEvents(c *gin.Context) {
 // --- Home Assistant ------------------------------------------------------
 
 type apiEntity struct {
-	EntityID    string            `json:"entity_id"`
-	Label       string            `json:"label"`
-	Friendly    string            `json:"friendly_name,omitempty"`
-	State       string            `json:"state"`
-	Attributes  map[string]string `json:"attributes,omitempty"`
-	LastUpdated *time.Time        `json:"last_updated,omitempty"`
-	LastChanged *time.Time        `json:"last_changed,omitempty"`
+	EntityID    string         `json:"entity_id"`
+	Label       string         `json:"label"`
+	Friendly    string         `json:"friendly_name,omitempty"`
+	State       string         `json:"state"`
+	Attributes  map[string]any `json:"attributes,omitempty"`
+	LastUpdated *time.Time     `json:"last_updated,omitempty"`
+	LastChanged *time.Time     `json:"last_changed,omitempty"`
 }
 
 func (s *Server) haEntities(c *gin.Context) {
@@ -452,7 +452,9 @@ func (s *Server) googleCallback(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "oauth_not_configured", "Google OAuth client credentials are not set")
 		return
 	}
-	err := s.google.Callback(context.Background(), c.Query("code"))
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	err := s.google.Callback(ctx, c.Query("code"))
 	if err != nil {
 		fail(c, http.StatusBadRequest, "auth_failed", err.Error())
 		return

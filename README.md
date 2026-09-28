@@ -33,7 +33,7 @@ the backend.
 
 ## Quick start
 
-Requirements: Go ≥ 1.22, Node ≥ 18, and the integrations you want to use
+Requirements: Go ≥ 1.26.3, Node ≥ 18, and the integrations you want to use
 (Home Assistant, Google Cloud, a Hermes API).
 
 ```sh

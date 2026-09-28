@@ -50,6 +50,38 @@ func TestGetStates(t *testing.T) {
 	}
 }
 
+func TestGetStatesNativeAttributeTypes(t *testing.T) {
+	srv := fakeHA(t, `[
+		{"entity_id":"zone.home","state":"zoning","attributes":{"friendly_name":"Home","latitude":47.6,"longitude":-122.3},"last_updated":"2026-01-02T03:04:05Z"},
+		{"entity_id":"climate.thermostat","state":"heat","attributes":{"friendly_name":"Thermostat","hvac_modes":["heat","cool","off"],"current_temperature":21.5,"locked":true},"last_updated":"2026-01-02T03:04:05Z"}
+	]`, "Bearer ha-tok")
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ha-tok")
+	states, err := c.GetStates(context.Background())
+	if err != nil {
+		t.Fatalf("GetStates: %v", err)
+	}
+	if len(states) != 2 {
+		t.Fatalf("len = %d, want 2", len(states))
+	}
+	if got := states[0].Attributes["latitude"]; got != 47.6 {
+		t.Errorf("latitude = %v (%T), want 47.6", got, got)
+	}
+	if got, ok := states[1].Attributes["hvac_modes"].([]any); !ok || len(got) != 3 || got[0] != "heat" || got[2] != "off" {
+		t.Errorf("hvac_modes = %v (%T)", states[1].Attributes["hvac_modes"], states[1].Attributes["hvac_modes"])
+	}
+	if got := states[1].Attributes["current_temperature"]; got != 21.5 {
+		t.Errorf("current_temperature = %v (%T)", got, got)
+	}
+	if got := states[1].Attributes["locked"]; got != true {
+		t.Errorf("locked = %v (%T)", got, got)
+	}
+	if states[0].FriendlyName() != "Home" || states[1].FriendlyName() != "Thermostat" {
+		t.Errorf("friendly names = %q, %q", states[0].FriendlyName(), states[1].FriendlyName())
+	}
+}
+
 func TestGetStatesAuthError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

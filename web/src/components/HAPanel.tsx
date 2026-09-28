@@ -69,7 +69,7 @@ export default function HAPanel() {
               <div className="ha-card" key={e.entity_id} title={e.entity_id}>
                 <div className="ha-state-wrap">
                   <span className={`ha-state ${stateClass(e.state)}`}>{e.state}</span>
-                  {unit && <span className="ha-unit">{unit}</span>}
+                  {unit != null && <span className="ha-unit">{String(unit)}</span>}
                 </div>
                 <div className="ha-label">{e.label}</div>
                 {e.last_changed && (

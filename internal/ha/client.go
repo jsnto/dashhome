@@ -18,11 +18,11 @@ type StatesClient interface {
 
 // EntityState is a normalized Home Assistant entity.
 type EntityState struct {
-	EntityID    string            `json:"entity_id"`
-	State       string            `json:"state"`
-	Attributes  map[string]string `json:"attributes,omitempty"`
-	LastUpdated time.Time         `json:"last_updated,omitempty"`
-	LastChanged time.Time         `json:"last_changed,omitempty"`
+	EntityID    string         `json:"entity_id"`
+	State       string         `json:"state"`
+	Attributes  map[string]any `json:"attributes,omitempty"`
+	LastUpdated time.Time      `json:"last_updated,omitempty"`
+	LastChanged time.Time      `json:"last_changed,omitempty"`
 }
 
 // FriendlyName returns the friendly_name attribute if present.
@@ -30,7 +30,8 @@ func (e EntityState) FriendlyName() string {
 	if e.Attributes == nil {
 		return ""
 	}
-	return e.Attributes["friendly_name"]
+	s, _ := e.Attributes["friendly_name"].(string)
+	return s
 }
 
 // Client is the HTTP implementation of StatesClient.
@@ -50,11 +51,11 @@ func NewClient(baseURL, token string) *Client {
 }
 
 type haState struct {
-	EntityID    string            `json:"entity_id"`
-	State       string            `json:"state"`
-	Attributes  map[string]string `json:"attributes"`
-	LastUpdated *time.Time        `json:"last_updated"`
-	LastChanged *time.Time        `json:"last_changed"`
+	EntityID    string         `json:"entity_id"`
+	State       string         `json:"state"`
+	Attributes  map[string]any `json:"attributes"`
+	LastUpdated *time.Time     `json:"last_updated"`
+	LastChanged *time.Time     `json:"last_changed"`
 }
 
 // GetStates fetches the state of every entity.

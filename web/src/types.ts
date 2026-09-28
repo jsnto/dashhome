@@ -44,7 +44,7 @@ export interface HAEntity {
   label: string
   friendly_name?: string
   state: string
-  attributes?: Record<string, string>
+  attributes?: Record<string, unknown>
   last_updated?: string
   last_changed?: string
 }

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { ApiEvent } from '../types'
+import { dayKey } from '../utils'
 
 const PALETTE = [
   '#4cc2ff',
@@ -21,12 +22,6 @@ function shortLabel(label: string): string {
   return label ? `${word} · ` : ''
 }
 
-function dayKey(d: Date): string {
-  const m = `${d.getMonth() + 1}`.padStart(2, '0')
-  const day = `${d.getDate()}`.padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day}`
-}
-
 function fmtWhen(e: ApiEvent): string {
   const d = new Date(e.start)
   if (e.all_day) {
@@ -35,13 +30,24 @@ function fmtWhen(e: ApiEvent): string {
   return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
 
-function fmtWhenEnd(e: ApiEvent): string {
+// All-day events are exclusive on the end date; the last day is end - 1.
+function allDayEndDay(e: ApiEvent): Date {
   const d = new Date(e.end)
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1)
+}
+
+function fmtWhenEnd(e: ApiEvent): string {
   if (e.all_day) {
-    // all-day events are exclusive on the end date
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    return allDayEndDay(e).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   }
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  return new Date(e.end).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+function showEnd(e: ApiEvent): boolean {
+  if (!e.all_day) {
+    return new Date(e.end).getDate() !== new Date(e.start).getDate()
+  }
+  return dayKey(allDayEndDay(e)) !== dayKey(new Date(e.start))
 }
 
 interface Cell {
@@ -148,8 +154,7 @@ export default function MonthGrid({ year, month, events, multi }: Props) {
                 <b>{e.summary || '(no title)'}</b>
                 <span className="when">
                   {fmtWhen(e)}
-                  {(!e.all_day || new Date(e.end).getDate() !== new Date(e.start).getDate()) &&
-                    ` – ${fmtWhenEnd(e)}`}
+                  {showEnd(e) && ` – ${fmtWhenEnd(e)}`}
                 </span>
                 {e.location && <em> @ {e.location}</em>}
                 {e.description && <p className="desc">{e.description}</p>}

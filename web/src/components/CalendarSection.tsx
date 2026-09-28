@@ -1,16 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ApiError, api } from '../api'
 import type { ApiEvent, CalendarInfo } from '../types'
+import { dayKey } from '../utils'
 import MonthGrid from './MonthGrid'
 import Note from './Note'
 
 const SUMMARY = '__summary__'
-
-function dayKey(d: Date): string {
-  const m = `${d.getMonth() + 1}`.padStart(2, '0')
-  const day = `${d.getDate()}`.padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day}`
-}
 
 export default function CalendarSection() {
   const [calendars, setCalendars] = useState<CalendarInfo[] | null>(null)
