@@ -1,0 +1,23 @@
+{
+  "ha_entities": [
+    "climate.thermostat",
+    "sensor.front_door",
+    "binary_sensor.back_door",
+    "sensor.humidity_living",
+    "sensor.temperature_outside",
+    "person.family"
+  ],
+  "ha_labels": {
+    "climate.thermostat": "Thermostat",
+    "sensor.front_door": "Front door",
+    "binary_sensor.back_door": "Back door",
+    "sensor.humidity_living": "Humidity (living)",
+    "sensor.temperature_outside": "Outside temp",
+    "person.family": "Family"
+  },
+  "calendars": [
+    { "id": "your.family@gmail.com", "label": "Family" },
+    { "id": "your.work@gmail.com", "label": "Work" }
+  ],
+  "refresh_seconds": 30
+}

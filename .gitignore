@@ -1,0 +1,15 @@
+# local state & secrets
+.env
+data/
+homdash.json
+*.log
+
+# build artifacts
+bin/
+web/dist/
+web/node_modules/
+
+# editor
+.vscode/
+.idea/
+.DS_Store
