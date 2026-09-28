@@ -735,7 +735,8 @@ func TestGoogleLoginAlreadyAuthorized(t *testing.T) {
 // --- static frontend serving ----------------------------------------------------------
 
 func TestStaticServing(t *testing.T) {
-	dist := t.TempDir()
+	base := t.TempDir()
+	dist := filepath.Join(base, "dist")
 	if err := os.MkdirAll(filepath.Join(dist, "assets"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -743,6 +744,9 @@ func TestStaticServing(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dist, "assets", "app.js"), []byte("console.log(1)"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "secret.json"), []byte("top-secret-token"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -769,6 +773,16 @@ func TestStaticServing(t *testing.T) {
 	w = do(r, "GET", "/api/nope", nil, nil)
 	if w.Code != 404 {
 		t.Fatalf("api 404: %d", w.Code)
+	}
+	// Escaping paths must not serve files outside dist.
+	for _, p := range []string{"/../secret.json", "/../../secret.json", "/assets/../../secret.json", "/.."} {
+		w = do(r, "GET", p, nil, nil)
+		if strings.Contains(w.Body.String(), "top-secret-token") {
+			t.Errorf("%s: served file outside dist: %s", p, w.Body.String())
+		}
+		if w.Code == http.StatusOK && !strings.Contains(w.Body.String(), "idx") {
+			t.Errorf("%s: served %d for escaping path: %s", p, w.Code, w.Body.String())
+		}
 	}
 }
 

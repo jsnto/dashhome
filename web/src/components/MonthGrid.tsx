@@ -50,6 +50,11 @@ function showEnd(e: ApiEvent): boolean {
   return dayKey(allDayEndDay(e)) !== dayKey(new Date(e.start))
 }
 
+function fromDayKey(key: string): Date {
+  const [y, m, d] = key.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
 interface Cell {
   date: Date
   inMonth: boolean
@@ -141,7 +146,7 @@ export default function MonthGrid({ year, month, events, multi }: Props) {
 
       {selected && (
         <div className="day-detail">
-          <h4>{new Date(selected).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h4>
+          <h4>{fromDayKey(selected).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h4>
           {(byDay.get(selected) || []).length === 0 && <p className="note">No events.</p>}
           <ul>
             {(byDay.get(selected) || []).map((e) => (

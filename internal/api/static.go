@@ -30,7 +30,7 @@ func ServeStatic(r *gin.Engine, dist string) {
 			return
 		}
 		clean := filepath.Clean(strings.TrimPrefix(p, "/"))
-		if clean != "." && clean != "" {
+		if clean != "." && clean != "" && clean != ".." && !strings.HasPrefix(clean, "../") {
 			if f, err := os.Stat(filepath.Join(dist, clean)); err == nil && !f.IsDir() {
 				c.File(filepath.Join(dist, clean))
 				return
