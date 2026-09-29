@@ -16,14 +16,18 @@ export default function ChatPanel() {
   const [cfgErr, setCfgErr] = useState<ApiError | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const idRef = useRef(0)
+  const busyRef = useRef(false)
+  const stopVoiceRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [msgs, busy])
 
   /** Shared send path for typed and spoken messages: same request, same thread. */
-  const sendText = (text: string) => {
-    if (busy) return
+  const sendText = (text: string, fromVoice = false) => {
+    if (busyRef.current) return
+    stopVoiceRef.current()
+    busyRef.current = true
     const history: ChatMessage[] = msgs.map(({ role, content }) => ({ role, content }))
     setMsgs((m) => [...m, { id: idRef.current++, role: 'user', content: text }])
     setBusy(true)
@@ -32,7 +36,7 @@ export default function ChatPanel() {
       try {
         const reply = await api.chat(text, history)
         setMsgs((m) => [...m, { id: idRef.current++, role: 'assistant', content: reply }])
-        speak(reply) // read the reply aloud so the voice loop is complete (best-effort)
+        if (fromVoice) speak(reply)
       } catch (err) {
         const msg =
           err instanceof ApiError
@@ -41,6 +45,7 @@ export default function ChatPanel() {
         setCfgErr(err instanceof ApiError ? err : null)
         setMsgs((m) => [...m, { id: idRef.current++, role: 'assistant', content: msg, error: true }])
       } finally {
+        busyRef.current = false
         setBusy(false)
       }
     })()
@@ -54,7 +59,8 @@ export default function ChatPanel() {
     sendText(text)
   }
 
-  const { supported, listening, interim, blocked, toggle } = useVoice(sendText)
+  const { supported, listening, interim, blocked, toggle, stop } = useVoice((text) => sendText(text, true))
+  stopVoiceRef.current = stop
   const micDisabled = !supported || blocked !== null || busy
   const micTitle = !supported
     ? 'Voice input is not supported in this browser'

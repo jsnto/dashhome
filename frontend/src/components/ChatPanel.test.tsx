@@ -253,12 +253,72 @@ describe('ChatPanel voice input', () => {
     rec.onresult?.(resultEvent({ final: 'wait for me' }))
 
     await screen.findByText('wait for me')
-    expect((screen.getByRole('button', { name: 'Stop voice input' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(rec.started).toBe(false)
+    expect(screen.queryByText(/Listening/)).toBeNull()
+    expect((screen.getByRole('button', { name: 'Voice input' }) as HTMLButtonElement).disabled).toBe(true)
 
     await screen.findByText('reply to: wait for me')
-    rec.onend?.()
     await waitFor(() =>
       expect((screen.getByRole('button', { name: 'Voice input' }) as HTMLButtonElement).disabled).toBe(false),
     )
+  })
+
+  it('stops the live recognition session as soon as a send goes out', async () => {
+    const { fetchMock, state } = stubHermes()
+    vi.stubGlobal('fetch', fetchMock)
+    enableRecognition()
+    state.delay = 50
+    render(<ChatPanel />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
+    const rec = MockSpeechRecognition.last
+    await screen.findByText(/Listening/)
+
+    rec.onresult?.(resultEvent({ final: 'turn on the lights' }))
+
+    expect(rec.started).toBe(false)
+    await waitFor(() => expect(screen.queryByText(/Listening/)).toBeNull())
+    await screen.findByText('reply to: turn on the lights')
+    expect(rec.started).toBe(false)
+  })
+
+  it('does not read replies aloud for typed messages', async () => {
+    const { fetchMock } = stubHermes()
+    vi.stubGlobal('fetch', fetchMock)
+    const synth = stubSynthesis()
+    render(<ChatPanel />)
+
+    fireEvent.change(screen.getByPlaceholderText('Message Hermes…'), { target: { value: 'typed question' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('reply to: typed question')
+
+    expect(synth.speak).not.toHaveBeenCalled()
+    expect(synth.cancel).not.toHaveBeenCalled()
+  })
+
+  it('neither double-sends nor loses the second spoken final that lands while a reply is in flight', async () => {
+    const { fetchMock, state, sent } = stubHermes()
+    vi.stubGlobal('fetch', fetchMock)
+    enableRecognition()
+    state.delay = 50
+    render(<ChatPanel />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
+    const rec = MockSpeechRecognition.last
+    rec.onresult?.(resultEvent({ final: 'turn on the lights' }))
+
+    // The session was stopped when the first send went out; a late/stale
+    // second final arriving before the reply lands must not produce a
+    // second request or a second log entry.
+    rec.onresult?.(resultEvent({ final: 'and open the blinds' }))
+
+    // The visible busy state is the user-visible outcome, mirroring typed input.
+    await screen.findByText('thinking…')
+    expect(sent).toEqual([{ message: 'turn on the lights', conversation: [] }])
+    expect(screen.queryByText('and open the blinds')).toBeNull()
+
+    await screen.findByText('reply to: turn on the lights')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('and open the blinds')).toBeNull()
   })
 })
