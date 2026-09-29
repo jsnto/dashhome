@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api } from '../api'
+import { onRefreshSeconds } from '../refreshBus'
 import type { HAEntity } from '../types'
 import Note from './Note'
 
@@ -24,6 +25,9 @@ export default function HAPanel() {
       .then((c) => setRefreshSec(c.board.refresh_seconds || 30))
       .catch(() => {})
   }, [])
+
+  // Adopt a new interval saved in Settings without a reload.
+  useEffect(() => onRefreshSeconds(setRefreshSec), [])
 
   useEffect(() => {
     let cancelled = false

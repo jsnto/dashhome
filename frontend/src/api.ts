@@ -1,4 +1,5 @@
 import type {
+  ApiBoard,
   ApiConfig,
   ApiEvent,
   CalendarInfo,
@@ -48,6 +49,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getConfig: () => request<ApiConfig>('/config'),
+
+  /** Persist the UI polling interval (board.refresh_seconds) server-side. */
+  setRefreshSeconds: (seconds: number) =>
+    request<{ board: ApiBoard }>('/config/refresh', {
+      method: 'PUT',
+      body: JSON.stringify({ refresh_seconds: seconds }),
+    }).then((b) => b.board),
 
   getCalendars: () =>
     request<{ calendars: CalendarInfo[] }>('/calendars').then((b) => b.calendars),

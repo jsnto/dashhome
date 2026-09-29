@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -52,6 +53,7 @@ func (s *Server) Engine() *gin.Engine {
 
 	api := r.Group("/api")
 	api.GET("/config", s.getConfig)
+	api.PUT("/config/refresh", s.putConfigRefresh)
 	api.GET("/calendars", s.listCalendars)
 	api.GET("/events", s.listEvents)
 	api.GET("/ha/entities", s.haEntities)
@@ -99,6 +101,33 @@ func (s *Server) getConfig(c *gin.Context) {
 			"hermes_push":   s.cfg.PushConfigured(),
 		},
 	})
+}
+
+// putConfigRefresh persists the UI polling interval (board.refresh_seconds)
+// to the board file. Same exposure as GET /api/config: the dashboard itself
+// has no login; the board file is deliberately a non-secret config surface.
+func (s *Server) putConfigRefresh(c *gin.Context) {
+	var req struct {
+		RefreshSeconds *int `json:"refresh_seconds"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "bad_request", "body must be JSON {\"refresh_seconds\": n}")
+		return
+	}
+	if req.RefreshSeconds == nil {
+		fail(c, http.StatusBadRequest, "bad_request", "refresh_seconds is required")
+		return
+	}
+	if err := s.cfg.SetRefreshSeconds(*req.RefreshSeconds); err != nil {
+		status := http.StatusBadRequest
+		code := "bad_refresh_seconds"
+		if errors.Is(err, config.ErrNoBoardFile) {
+			status, code = http.StatusServiceUnavailable, "no_board_file"
+		}
+		fail(c, status, code, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"board": s.cfg.Board})
 }
 
 // --- calendars ----------------------------------------------------------

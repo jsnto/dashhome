@@ -194,6 +194,131 @@ func TestGetConfigUnconfiguredGoogle(t *testing.T) {
 	}
 }
 
+// The board file is deliberately non-secret, but GET /api/config must never
+// leak the environment-derived secrets either. Every value configured here
+// must be absent from the response body.
+func TestGetConfigSecretFree(t *testing.T) {
+	cfg := cfgFor(t)
+	cfg.HAURL, cfg.HAToken = "https://ha.local", "super-secret-ha-token"
+	cfg.HermesBaseURL = "https://hermes.local"
+	cfg.HermesAuthValue = "Bearer super-secret-hermes-key"
+	cfg.PushToken = "super-secret-push-token"
+	cfg.Google.ClientID = "12345.apps.googleusercontent.com"
+	cfg.Google.ClientSecret = "super-secret-google-client"
+	cfg.Google.AccessToken = "ya29.super-secret-google-access"
+	g := &fakeGoogle{hasToken: true, cals: []calendar.Calendar{{ID: "personal@example.com", Summary: "Personal"}}}
+	r := newServer(t, cfg, g, &fakeHA{}, &fakeHermes{})
+	w := do(r, "GET", "/api/config", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, secret := range []string{
+		"super-secret-ha-token",
+		"super-secret-hermes-key",
+		"super-secret-push-token",
+		"super-secret-google-client",
+		"super-secret-google-access",
+	} {
+		if strings.Contains(body, secret) {
+			t.Errorf("GET /api/config leaked secret %q in: %s", secret, body)
+		}
+	}
+}
+
+func TestPutConfigRefresh(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"ha_entities":["climate.thermo"],"refresh_seconds":30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	r := newServer(t, cfg, nil, nil, nil)
+
+	// Valid update: accepted, in-memory and on-disk, and visible via GET.
+	w := do(r, "PUT", "/api/config/refresh", map[string]any{"refresh_seconds": 45}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Board struct {
+			RefreshSeconds int `json:"refresh_seconds"`
+		} `json:"board"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Board.RefreshSeconds != 45 {
+		t.Errorf("response refresh_seconds = %d, want 45", resp.Board.RefreshSeconds)
+	}
+	if cfg.RefreshSeconds() != 45 {
+		t.Errorf("in-memory RefreshSeconds = %d, want 45", cfg.RefreshSeconds())
+	}
+	data, _ := os.ReadFile(file)
+	if !strings.Contains(string(data), `"refresh_seconds": 45`) {
+		t.Errorf("file not updated: %s", data)
+	}
+	if !strings.Contains(string(data), `"climate.thermo"`) {
+		t.Errorf("other board fields not preserved: %s", data)
+	}
+	wg := do(r, "GET", "/api/config", nil, nil)
+	var getResp struct {
+		Board struct {
+			RefreshSeconds int `json:"refresh_seconds"`
+		} `json:"board"`
+	}
+	json.NewDecoder(wg.Body).Decode(&getResp)
+	if getResp.Board.RefreshSeconds != 45 {
+		t.Errorf("GET refresh_seconds = %d, want 45", getResp.Board.RefreshSeconds)
+	}
+}
+
+func TestPutConfigRefreshInvalid(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds":30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	r := newServer(t, cfg, nil, nil, nil)
+
+	cases := []struct {
+		name string
+		body any
+	}{
+		{"zero", map[string]any{"refresh_seconds": 0}},
+		{"below-min", map[string]any{"refresh_seconds": 4}},
+		{"above-max", map[string]any{"refresh_seconds": 3601}},
+		{"negative", map[string]any{"refresh_seconds": -5}},
+		{"string", map[string]any{"refresh_seconds": "45"}},
+		{"missing", map[string]any{}},
+		{"wrong-type-body", "not-json"},
+	}
+	for _, tc := range cases {
+		w := do(r, "PUT", "/api/config/refresh", tc.body, map[string]string{"Content-Type": "application/json"})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code = %d, want 400: %s", tc.name, w.Code, w.Body.String())
+		}
+	}
+	if cfg.RefreshSeconds() != 30 {
+		t.Errorf("in-memory RefreshSeconds = %d, want unchanged 30", cfg.RefreshSeconds())
+	}
+	data, _ := os.ReadFile(file)
+	if !strings.Contains(string(data), `"refresh_seconds":30`) && !strings.Contains(string(data), `"refresh_seconds": 30`) {
+		t.Errorf("file changed after invalid PUTs: %s", data)
+	}
+}
+
+func TestPutConfigRefreshNoBoardFile(t *testing.T) {
+	cfg := cfgFor(t)
+	cfg.BoardFile = ""
+	r := newServer(t, cfg, nil, nil, nil)
+	w := do(r, "PUT", "/api/config/refresh", map[string]any{"refresh_seconds": 45}, nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code = %d, want 503: %s", w.Code, w.Body.String())
+	}
+}
+
 // --- calendars / events ------------------------------------------------------
 
 var testMonthStart = testTime("2026-03-01T00:00:00Z")

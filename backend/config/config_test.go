@@ -1,8 +1,11 @@
 package config
 
 import (
+	"errors"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -131,5 +134,129 @@ func TestBoardFileMalformed(t *testing.T) {
 	t.Setenv("CONFIG_FILE", file)
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for malformed board file")
+	}
+}
+
+func TestValidateRefreshSeconds(t *testing.T) {
+	for _, bad := range []int{0, -1, 4, RefreshSecondsMin - 1, RefreshSecondsMax + 1, 100000} {
+		if err := ValidateRefreshSeconds(bad); err == nil {
+			t.Errorf("ValidateRefreshSeconds(%d): unexpected success", bad)
+		}
+	}
+	for _, ok := range []int{5, 30, 3600} {
+		if err := ValidateRefreshSeconds(ok); err != nil {
+			t.Errorf("ValidateRefreshSeconds(%d): %v", ok, err)
+		}
+	}
+}
+
+func TestSetRefreshSecondsPersistsAcrossReload(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	content := `{
+		"ha_entities": ["climate.thermo"],
+		"ha_labels": {"climate.thermo": "Thermostat"},
+		"calendars": [{"id": "c1@example.com", "label": "Family"}],
+		"refresh_seconds": 30
+	}`
+	if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.SetRefreshSeconds(45); err != nil {
+		t.Fatalf("SetRefreshSeconds: %v", err)
+	}
+	if cfg.RefreshSeconds() != 45 {
+		t.Errorf("in-memory RefreshSeconds = %d, want 45", cfg.RefreshSeconds())
+	}
+
+	// File on disk: value updated, every other board field preserved.
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk Board
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("board file not valid JSON: %v: %s", err, data)
+	}
+	if onDisk.RefreshSeconds != 45 {
+		t.Errorf("on-disk refresh_seconds = %d, want 45", onDisk.RefreshSeconds)
+	}
+	if len(onDisk.HAEntityIDs) != 1 || onDisk.HAEntityIDs[0] != "climate.thermo" {
+		t.Errorf("on-disk ha_entities = %v", onDisk.HAEntityIDs)
+	}
+	if onDisk.HALabels["climate.thermo"] != "Thermostat" {
+		t.Errorf("on-disk ha_labels = %v", onDisk.HALabels)
+	}
+	if len(onDisk.Calendars) != 1 || onDisk.Calendars[0].ID != "c1@example.com" || onDisk.Calendars[0].Label != "Family" {
+		t.Errorf("on-disk calendars = %v", onDisk.Calendars)
+	}
+
+	// A fresh process load sees the persisted value (survives a reload).
+	cfg2, err := Load()
+	if err != nil {
+		t.Fatalf("reload Load: %v", err)
+	}
+	if cfg2.RefreshSeconds() != 45 {
+		t.Errorf("reloaded RefreshSeconds = %d, want 45", cfg2.RefreshSeconds())
+	}
+}
+
+func TestSetRefreshSecondsInvalidLeavesStateUntouched(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds": 30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []int{0, 4, 3601} {
+		if err := cfg.SetRefreshSeconds(bad); err == nil {
+			t.Fatalf("SetRefreshSeconds(%d): unexpected success", bad)
+		}
+	}
+	if cfg.RefreshSeconds() != 30 {
+		t.Errorf("in-memory RefreshSeconds = %d, want unchanged 30", cfg.RefreshSeconds())
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"refresh_seconds": 30`) {
+		t.Errorf("file changed after invalid set: %s", data)
+	}
+	if _, err := os.Stat(file + ".tmp"); err == nil {
+		t.Error("temp file left behind")
+	}
+}
+
+func TestWriteBoardFileCreatesParentDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "dir", "board.json")
+	if err := WriteBoardFile(path, Board{RefreshSeconds: 60}); err != nil {
+		t.Fatalf("WriteBoardFile: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b Board
+	if err := json.Unmarshal(data, &b); err != nil || b.RefreshSeconds != 60 {
+		t.Errorf("round trip = %+v, %v", b, err)
+	}
+}
+
+func TestSetRefreshSecondsNoBoardFile(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.SetRefreshSeconds(30); !errors.Is(err, ErrNoBoardFile) {
+		t.Errorf("err = %v, want ErrNoBoardFile", err)
 	}
 }

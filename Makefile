@@ -20,10 +20,11 @@ run: build
 run-web:
 	cd frontend && npm run dev
 
-## Run all tests (Go unit tests + frontend typecheck/build).
+## Run all tests (Go unit tests + frontend typecheck/build + frontend unit tests).
 test:
 	go test ./...
 	cd frontend && npm run build
+	cd frontend && npm test
 
 clean:
 	rm -rf bin frontend/dist

@@ -4,8 +4,10 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -79,6 +81,16 @@ type Config struct {
 	// Board is the parsed dashboard configuration.
 	Board Board
 }
+
+// Refresh interval bounds: sane polling cadence for the dashboard panels
+// (no faster than hammering the upstream services, no slower than "live").
+const (
+	RefreshSecondsMin = 5
+	RefreshSecondsMax = 3600
+)
+
+// ErrNoBoardFile is returned when the board file path is not configured.
+var ErrNoBoardFile = errors.New("no board file configured (set CONFIG_FILE)")
 
 // HAConfigured reports whether Home Assistant is configured.
 func (c *Config) HAConfigured() bool { return c.HAURL != "" && c.HAToken != "" }
@@ -185,6 +197,55 @@ func (c *Config) HAEntityLabel(id, friendlyName string) string {
 		return friendlyName
 	}
 	return id
+}
+
+// ValidateRefreshSeconds reports whether n is a sane UI polling interval.
+func ValidateRefreshSeconds(n int) error {
+	if n < RefreshSecondsMin || n > RefreshSecondsMax {
+		return fmt.Errorf("refresh_seconds must be between %d and %d", RefreshSecondsMin, RefreshSecondsMax)
+	}
+	return nil
+}
+
+// SetRefreshSeconds validates n, persists the whole board to the board file,
+// and updates the in-memory board only after the write succeeds, so a failed
+// write leaves the running config (and the file) unchanged.
+func (c *Config) SetRefreshSeconds(n int) error {
+	if err := ValidateRefreshSeconds(n); err != nil {
+		return err
+	}
+	if c.BoardFile == "" {
+		return ErrNoBoardFile
+	}
+	updated := c.Board
+	updated.RefreshSeconds = n
+	if err := WriteBoardFile(c.BoardFile, updated); err != nil {
+		return err
+	}
+	c.Board = updated
+	return nil
+}
+
+// WriteBoardFile writes b to path as indented JSON. The write is atomic
+// (temp file + rename within the same directory); a missing parent directory
+// is created.
+func WriteBoardFile(path string, b Board) error {
+	data, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode board: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create board directory %s: %w", filepath.Dir(path), err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return fmt.Errorf("write board file %s: %w", path, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("replace board file %s: %w", path, err)
+	}
+	return nil
 }
 
 // HAFilter returns the configured entity set. A nil slice means "all".

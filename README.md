@@ -14,6 +14,15 @@ dashhome is a single Go process (Gin) on port **3000** that integrates with
   to. Pushes are recorded durably, the **latest push is always shown** on the
   dashboard, and previous pushes are browsable in tabs (newest first).
 
+The dashboard has a **settings screen** (header → *Settings*): light/dark
+theme (persisted per browser, defaults to the OS preference), a read-only
+summary of which integrations are actually configured, and the live-update
+interval (how often the panels poll the backend, persisted to
+`dashhome.json`). A header button toggles the browser's full-screen mode.
+
+Live updates: panels poll the backend on the configured interval; the backend
+fetches fresh data from each configured service on every request.
+
 The React frontend talks only to the backend API; all integrations live in
 the backend.
 
@@ -200,7 +209,8 @@ the History tabs open any previous one.
   `friendly_name`).
 - `calendars` — calendar IDs to show as tabs, in order. Empty/missing =
   show every visible calendar.
-- `refresh_seconds` — UI polling interval hint (default 30).
+- `refresh_seconds` — UI polling interval hint (default 30, range 5–3600).
+  Editable from the dashboard's settings screen, which persists it here.
 
 Path: `CONFIG_FILE` (default `./dashhome.json`).
 
@@ -217,7 +227,8 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 | Route | Description |
 |---|---|
 | `GET /healthz` | Liveness probe |
-| `GET /api/config` | Dashboard config + integration status |
+| `GET /api/config` | Dashboard config + integration status (no secrets) |
+| `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json`, `200 {board}` |
 | `GET /api/calendars` | Calendars visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
 | `GET /api/ha/entities` | Configured entities with current states |
@@ -241,13 +252,16 @@ into friendly setup notes.
   traversal).
 - Markdown from Hermes is rendered with `react-markdown` **without**
   raw-HTML support, so pushed content cannot inject HTML.
+- `GET /api/config` exposes only non-secret board settings and per-integration
+  booleans; tokens and credentials (env vars only) are never included in API
+  responses.
 - Secrets live only in env vars / your secrets store; `.env`, `data/`, and
   `dashhome.json` are git-ignored.
 
 ## Development
 
 ```sh
-make test   # go test ./...  +  frontend typecheck & build
+make test   # go test ./...  +  frontend typecheck & build  +  vitest
 ```
 
 - Backend tests use local fakes (httptest servers + in-memory fakes) — no
