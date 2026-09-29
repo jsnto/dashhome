@@ -17,7 +17,7 @@ func ServeStatic(r *gin.Engine, dist string) {
 		r.NoRoute(func(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error":  "not_found",
-				"detail": "no frontend build found; run `make web` (or: cd web && npm install && npm run build), or use the Vite dev server on :5173",
+				"detail": "no frontend build found; run `make web` (or: cd frontend && npm install && npm run build), or use the Vite dev server on :5173",
 			})
 		})
 		return

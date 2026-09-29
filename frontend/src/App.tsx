@@ -45,7 +45,7 @@ export default function App() {
     <div className="app">
       <header className="top">
         <h1 className="logo">
-          hom<span>dash</span>
+          dash<span>home</span>
         </h1>
         <div className="dots">
           {dots.map((d) => (
@@ -67,7 +67,7 @@ export default function App() {
         </div>
       </main>
 
-      <footer className="foot">homdash — your home, on one dashboard</footer>
+      <footer className="foot">dashhome — your home, on one dashboard</footer>
     </div>
   )
 }

@@ -14,11 +14,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
 
-	"github.com/jsnto/homdash/internal/calendar"
-	"github.com/jsnto/homdash/internal/config"
-	"github.com/jsnto/homdash/internal/ha"
-	"github.com/jsnto/homdash/internal/hermes"
-	"github.com/jsnto/homdash/internal/store"
+	"github.com/jsnto/dashhome/backend/calendar"
+	"github.com/jsnto/dashhome/backend/config"
+	"github.com/jsnto/dashhome/backend/ha"
+	"github.com/jsnto/dashhome/backend/hermes"
+	"github.com/jsnto/dashhome/backend/store"
 )
 
 func init() { gin.SetMode(gin.TestMode) }

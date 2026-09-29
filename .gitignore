@@ -1,13 +1,13 @@
 # local state & secrets
 .env
 data/
-homdash.json
+dashhome.json
 *.log
 
 # build artifacts
 bin/
-web/dist/
-web/node_modules/
+frontend/dist/
+frontend/node_modules/
 
 # editor
 .vscode/

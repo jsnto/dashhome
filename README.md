@@ -1,9 +1,9 @@
-# homdash
+# dashhome
 
 A home dashboard: your calendars, your Home Assistant states, and Hermes —
 on one page.
 
-homdash is a single Go process (Gin) on port **3000** that integrates with
+dashhome is a single Go process (Gin) on port **3000** that integrates with
 
 - **Google Calendar** — every visible calendar in its own tab, plus a
   **Summary** tab that combines all of them into one month view;
@@ -19,7 +19,7 @@ the backend.
 
 ```
 +--------------------------------------------------------------+
-| homdash (Go + Gin, :3000)                                     |
+| dashhome (Go + Gin, :3000)                                   |
 |                                                               |
 |  /api  ──► Google Calendar   (list calendars, list events)    |
 |        ──► Home Assistant    (entity states)                  |
@@ -39,14 +39,14 @@ Requirements: Go ≥ 1.26.3, Node ≥ 18, and the integrations you want to use
 ```sh
 # 1. configure
 cp .env.example .env        # then edit the values
-cp homdash.example.json homdash.json   # optional: pick the entities/calendars
+cp dashhome.example.json dashhome.json # optional: pick the entities/calendars
 
 # 2. build the frontend (served by the Go binary)
 make web
 
 # 3. run everything on :3000
 set -a; . ./.env; set +a
-make run        # or: go run ./cmd/homdash
+make run        # or: go run ./cmd/dashhome
 ```
 
 Open http://localhost:3000.
@@ -61,7 +61,7 @@ make run-web      # Vite dev server on :5173 (proxies /api to :3000)
 ## Docker
 
 Or run the whole app as one container with Docker Compose. The image is
-built in three stages (Node builds `web/dist`, Go builds the static
+built in three stages (Node builds `frontend/dist`, Go builds the static
 binary, a small final image carries both):
 
 ```sh
@@ -76,8 +76,8 @@ docker compose up -d --build
 - Push records and the Google token cache live in the `data` named
   volume, so they survive container rebuilds.
 - To use a dashboard config file, set `CONFIG_FILE` in `.env` and add a
-  volume entry mounting the file (e.g. `./homdash.json:/homdash.json`
-  with `CONFIG_FILE=/homdash.json`).
+  volume entry mounting the file (e.g. `./dashhome.json:/dashhome.json`
+  with `CONFIG_FILE=/dashhome.json`).
 - In the service-account mode (the `.env.example` default), the app exits
   at startup unless the key file at `GOOGLE_APPLICATION_CREDENTIALS`
   (default `/secrets/google-sa.json`) is present; add a volume entry
@@ -99,7 +99,7 @@ optional dashboard config file. Never commit real credentials.
 | `HOMEASSISTANT_URL` | Base URL, e.g. `https://ha.example.com` |
 | `HOMEASSISTANT_TOKEN` | Long-lived access token (HA → Profile → Security) |
 
-Which entities the dashboard shows is **driven by `homdash.json`**, not code
+Which entities the dashboard shows is **driven by `dashhome.json`**, not code
 — edit `ha_entities` (and optional `ha_labels`) and restart (or reload) to
 change the dashboard without a code change. With an empty or missing
 `ha_entities`, all entities are shown.
@@ -117,7 +117,7 @@ Pick **one** credential mode:
    - Optional `GOOGLE_DOMAIN=user@workspace.com` enables domain-wide
      delegation (the service account acts as that user).
    - The dashboard shows every calendar visible to the credentials, or the
-     subset listed in `homdash.json` → `calendars`.
+     subset listed in `dashhome.json` → `calendars`.
 2. **3-legged OAuth** (personal Google account)
    - Create an *OAuth client* (Web application). Authorized redirect URI:
      `<https://your-host>/api/auth/google/callback`.
@@ -139,7 +139,7 @@ proxy or tests).
 | `HERMES_AUTH_HEADER` | Header name to send (default `Authorization`) |
 | `HERMES_AUTH_VALUE` | Full header value, e.g. `Bearer sk-…` (empty = no auth) |
 
-**Expected contract** (kept in one module — `internal/hermes` — so it is
+**Expected contract** (kept in one module — `backend/hermes` — so it is
 easy to adapt to your real Hermes service):
 
 - Request: `POST {base}{path}` with `Content-Type: application/json`
@@ -158,7 +158,7 @@ easy to adapt to your real Hermes service):
   `message` / `response` / `text` or a plain-text body):
 
   ```json
-  { "reply": "all quiet on the homdash front" }
+  { "reply": "all quiet on the dashhome front" }
   ```
 
 ### Hermes push
@@ -181,7 +181,7 @@ Each push is stored as a dated JSON record under `DATA_DIR/hermes_pushes/`
 (durable across restarts). The dashboard always renders the latest push;
 the History tabs open any previous one.
 
-### Dashboard config file (`homdash.json`)
+### Dashboard config file (`dashhome.json`)
 
 ```json
 {
@@ -202,7 +202,7 @@ the History tabs open any previous one.
   show every visible calendar.
 - `refresh_seconds` — UI polling interval hint (default 30).
 
-Path: `CONFIG_FILE` (default `./homdash.json`).
+Path: `CONFIG_FILE` (default `./dashhome.json`).
 
 ### Other
 
@@ -210,7 +210,7 @@ Path: `CONFIG_FILE` (default `./homdash.json`).
 |---|---|---|
 | `PORT` | `3000` | Listen port |
 | `DATA_DIR` | `./data` | Push records + Google token cache |
-| `CONFIG_FILE` | `./homdash.json` | Dashboard config |
+| `CONFIG_FILE` | `./dashhome.json` | Dashboard config |
 
 ## API
 
@@ -242,7 +242,7 @@ into friendly setup notes.
 - Markdown from Hermes is rendered with `react-markdown` **without**
   raw-HTML support, so pushed content cannot inject HTML.
 - Secrets live only in env vars / your secrets store; `.env`, `data/`, and
-  `homdash.json` are git-ignored.
+  `dashhome.json` are git-ignored.
 
 ## Development
 
@@ -252,7 +252,7 @@ make test   # go test ./...  +  frontend typecheck & build
 
 - Backend tests use local fakes (httptest servers + in-memory fakes) — no
   real HA, Google, or Hermes calls.
-- Layout: `cmd/homdash` (entrypoint), `internal/api` (Gin handlers),
-  `internal/calendar` (Google client), `internal/ha` (HA client),
-  `internal/hermes` (Hermes client), `internal/store` (push persistence),
-  `internal/config` (env + board config), `web/` (React app).
+- Layout: `cmd/dashhome` (entrypoint), `backend/api` (Gin handlers),
+  `backend/calendar` (Google client), `backend/ha` (HA client),
+  `backend/hermes` (Hermes client), `backend/store` (push persistence),
+  `backend/config` (env + board config), `frontend/` (React app).

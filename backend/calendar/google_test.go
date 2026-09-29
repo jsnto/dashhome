@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// fakeGoogle serves the two Calendar API endpoints homdash uses.
+// fakeGoogle serves the two Calendar API endpoints dashhome uses.
 func fakeGoogle(t *testing.T, evQuery *url.Values) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
