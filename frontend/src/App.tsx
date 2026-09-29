@@ -21,6 +21,14 @@ export default function App() {
       .catch(() => {})
   }, [])
 
+  useEffect(() => {
+    if (!showSettings) return
+    api
+      .getConfig()
+      .then(setCfg)
+      .catch(() => {})
+  }, [showSettings])
+
   const dots: { label: string; ok: boolean; title: string }[] = cfg
     ? [
         {

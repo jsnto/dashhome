@@ -95,7 +95,7 @@ export default function SettingsPanel({ cfg, theme, onThemeChange, onClose }: Pr
   }
 
   return (
-    <main className="settings-wrap">
+    <div className="settings-wrap">
       <section className="card settings">
         <div className="card-head">
           <h2>Settings</h2>
@@ -198,6 +198,6 @@ export default function SettingsPanel({ cfg, theme, onThemeChange, onClose }: Pr
           )}
         </section>
       </section>
-    </main>
+    </div>
   )
 }

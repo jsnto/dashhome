@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 )
 
 // Board is the local dashboard configuration: what the dashboard shows.
@@ -78,8 +79,11 @@ type Config struct {
 	DataDir string
 	// BoardFile is the dashboard config file path. Optional.
 	BoardFile string
-	// Board is the parsed dashboard configuration.
+	// Board is the parsed dashboard configuration. Guarded by boardMu;
+	// readers that may race with SetRefreshSeconds must use BoardSnapshot.
 	Board Board
+	// boardMu guards Board against concurrent access.
+	boardMu sync.RWMutex
 }
 
 // Refresh interval bounds: sane polling cadence for the dashboard panels
@@ -101,8 +105,18 @@ func (c *Config) HermesConfigured() bool { return c.HermesBaseURL != "" }
 // PushConfigured reports whether authenticated Hermes pushes are enabled.
 func (c *Config) PushConfigured() bool { return c.PushToken != "" }
 
+// BoardSnapshot returns a copy of the board that is safe to read while
+// SetRefreshSeconds may be updating it from another goroutine.
+func (c *Config) BoardSnapshot() Board {
+	c.boardMu.RLock()
+	defer c.boardMu.RUnlock()
+	return c.Board
+}
+
 // RefreshSeconds returns the UI polling hint with a sane default.
 func (c *Config) RefreshSeconds() int {
+	c.boardMu.RLock()
+	defer c.boardMu.RUnlock()
 	if c.Board.RefreshSeconds <= 0 {
 		return 30
 	}
@@ -176,6 +190,8 @@ func (c *Config) loadBoard() error {
 // CalendarLabel returns the configured label for a calendar ID, or summary
 // when no label is configured.
 func (c *Config) CalendarLabel(id, summary string) string {
+	c.boardMu.RLock()
+	defer c.boardMu.RUnlock()
 	for _, ref := range c.Board.Calendars {
 		if ref.ID == id && ref.Label != "" {
 			return ref.Label
@@ -190,6 +206,8 @@ func (c *Config) CalendarLabel(id, summary string) string {
 // HAEntityLabel returns the configured label for an entity ID, or the
 // friendly name as fallback.
 func (c *Config) HAEntityLabel(id, friendlyName string) string {
+	c.boardMu.RLock()
+	defer c.boardMu.RUnlock()
 	if label, ok := c.Board.HALabels[id]; ok && label != "" {
 		return label
 	}
@@ -217,39 +235,68 @@ func (c *Config) SetRefreshSeconds(n int) error {
 	if c.BoardFile == "" {
 		return ErrNoBoardFile
 	}
+	c.boardMu.Lock()
 	updated := c.Board
 	updated.RefreshSeconds = n
-	if err := WriteBoardFile(c.BoardFile, updated); err != nil {
-		return err
+	err := WriteBoardFile(c.BoardFile, updated)
+	if err == nil {
+		c.Board = updated
 	}
-	c.Board = updated
-	return nil
+	c.boardMu.Unlock()
+	return err
 }
 
 // WriteBoardFile writes b to path as indented JSON. The write is atomic
-// (temp file + rename within the same directory); a missing parent directory
-// is created.
+// (unique temp file in the same directory + rename); a missing parent
+// directory is created. The existing file's permissions are preserved; a
+// new file is created with 0644.
 func WriteBoardFile(path string, b Board) error {
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode board: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create board directory %s: %w", filepath.Dir(path), err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create board directory %s: %w", dir, err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	mode := os.FileMode(0o644)
+	if st, err := os.Stat(path); err == nil {
+		mode = st.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat board file %s: %w", path, err)
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return fmt.Errorf("create temp board file: %w", err)
+	}
+	renamed := false
+	defer func() {
+		if !renamed {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+	if err := tmp.Chmod(mode); err != nil {
+		return fmt.Errorf("set board file mode %s: %w", path, err)
+	}
+	if _, err := tmp.Write(data); err != nil {
 		return fmt.Errorf("write board file %s: %w", path, err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp board file: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("replace board file %s: %w", path, err)
 	}
+	renamed = true
 	return nil
 }
 
 // HAFilter returns the configured entity set. A nil slice means "all".
 func (c *Config) HAFilter() []string {
+	c.boardMu.RLock()
+	defer c.boardMu.RUnlock()
 	if len(c.Board.HAEntityIDs) == 0 {
 		return nil
 	}
@@ -261,6 +308,8 @@ func (c *Config) HAFilter() []string {
 // CalendarFilter returns the configured calendar IDs. A nil slice means
 // "all visible calendars".
 func (c *Config) CalendarFilter() []string {
+	c.boardMu.RLock()
+	defer c.boardMu.RUnlock()
 	if len(c.Board.Calendars) == 0 {
 		return nil
 	}

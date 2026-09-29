@@ -93,7 +93,7 @@ func (s *Server) getConfig(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"board": s.cfg.Board,
+		"board": s.cfg.BoardSnapshot(),
 		"integrations": gin.H{
 			"homeassistant": s.cfg.HAConfigured(),
 			"google":        google,
@@ -127,7 +127,7 @@ func (s *Server) putConfigRefresh(c *gin.Context) {
 		fail(c, status, code, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"board": s.cfg.Board})
+	c.JSON(http.StatusOK, gin.H{"board": s.cfg.BoardSnapshot()})
 }
 
 // --- calendars ----------------------------------------------------------

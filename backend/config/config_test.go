@@ -1,11 +1,12 @@
 package config
 
 import (
-	"errors"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -258,5 +259,119 @@ func TestSetRefreshSecondsNoBoardFile(t *testing.T) {
 	cfg := &Config{}
 	if err := cfg.SetRefreshSeconds(30); !errors.Is(err, ErrNoBoardFile) {
 		t.Errorf("err = %v, want ErrNoBoardFile", err)
+	}
+}
+
+func TestWriteBoardFilePreservesMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(path, []byte(`{"refresh_seconds": 30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteBoardFile(path, Board{RefreshSeconds: 60}); err != nil {
+		t.Fatalf("WriteBoardFile: %v", err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600 preserved", st.Mode().Perm())
+	}
+
+	fresh := filepath.Join(dir, "fresh.json")
+	if err := WriteBoardFile(fresh, Board{RefreshSeconds: 60}); err != nil {
+		t.Fatalf("WriteBoardFile fresh: %v", err)
+	}
+	st, err = os.Stat(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o644 {
+		t.Errorf("fresh file mode = %v, want 0644", st.Mode().Perm())
+	}
+}
+
+func TestWriteBoardFileRemovesTempWhenRenameFails(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dashhome.json")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteBoardFile(target, Board{RefreshSeconds: 30}); err == nil {
+		t.Fatal("expected error when the target path is a directory")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != "dashhome.json" {
+			t.Errorf("leftover entry %q after failed write", e.Name())
+		}
+	}
+}
+
+func TestSetRefreshSecondsConcurrentWithReaders(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds": 30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				cfg.BoardSnapshot()
+				cfg.RefreshSeconds()
+				cfg.CalendarLabel("c1@example.com", "s")
+				cfg.HAEntityLabel("climate.thermo", "x")
+				cfg.CalendarFilter()
+				cfg.HAFilter()
+			}
+		}()
+	}
+	done := make(chan error, 1)
+	go func() {
+		defer close(stop)
+		var err error
+		for i := 0; i < 100; i++ {
+			if err = cfg.SetRefreshSeconds(5 + i%30); err != nil {
+				break
+			}
+		}
+		done <- err
+	}()
+	wg.Wait()
+	if err := <-done; err != nil {
+		t.Fatalf("SetRefreshSeconds: %v", err)
+	}
+	if got := cfg.RefreshSeconds(); got < 5 || got > 34 {
+		t.Errorf("final RefreshSeconds = %d, want a persisted value in [5,34]", got)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk Board
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("board file not valid JSON after concurrent writes: %v: %s", err, data)
+	}
+	if onDisk.RefreshSeconds != cfg.RefreshSeconds() {
+		t.Errorf("on-disk refresh_seconds = %d, in-memory = %d", onDisk.RefreshSeconds, cfg.RefreshSeconds())
 	}
 }
