@@ -1,0 +1,34 @@
+# homdash — single-service Docker Compose stack.
+#
+# .env (see .env.example) is read twice:
+#   1. by Docker Compose itself, for the ${VAR} substitutions below;
+#   2. via env_file, to pass the app's environment variables into the
+#      container.
+#
+# The app listens on $PORT (default 3000); the same variable picks the
+# published host port, so `PORT=3100` in .env serves the dashboard on
+# http://localhost:3100. No credentials are stored here — they come from
+# .env and are never baked into the image.
+
+name: homdash
+
+services:
+  homdash:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: homdash:latest
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: ${PORT:-3000}
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      # Durable state (Hermes push records, Google token cache).
+      - data:/app/data
+    restart: unless-stopped
+
+volumes:
+  data:

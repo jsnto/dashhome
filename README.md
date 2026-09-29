@@ -58,6 +58,35 @@ make run          # backend on :3000
 make run-web      # Vite dev server on :5173 (proxies /api to :3000)
 ```
 
+## Docker
+
+Or run the whole app as one container with Docker Compose. The image is
+built in three stages (Node builds `web/dist`, Go builds the static
+binary, a small final image carries both):
+
+```sh
+cp .env.example .env    # then edit the values
+docker compose up -d --build
+```
+
+- The app's environment variables are passed into the container from
+  `.env`; set `PORT` there to move both the published host port and the
+  container's listen port (default `3000`). No credentials are stored in
+  the image or the compose file.
+- Push records and the Google token cache live in the `data` named
+  volume, so they survive container rebuilds.
+- To use a dashboard config file, set `CONFIG_FILE` in `.env` and add a
+  volume entry mounting the file (e.g. `./homdash.json:/homdash.json`
+  with `CONFIG_FILE=/homdash.json`).
+- In the service-account mode (the `.env.example` default), the app exits
+  at startup unless the key file at `GOOGLE_APPLICATION_CREDENTIALS`
+  (default `/secrets/google-sa.json`) is present; add a volume entry
+  mounting it (e.g. `./secrets/google-sa.json:/secrets/google-sa.json`)
+  or point the variable at a mounted path.
+
+`docker compose down` stops and removes the stack (add `-v` to also drop
+the `data` volume).
+
 ## Configuration
 
 Everything comes from environment variables (see `.env.example`) plus an

@@ -1,0 +1,13 @@
+# VCS
+.git
+
+# local state & secrets (never baked into the image)
+.env
+*.log
+data/
+homdash.json
+
+# build artifacts (rebuilt inside the image)
+bin/
+web/node_modules/
+web/dist/
