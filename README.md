@@ -78,6 +78,11 @@ docker compose up -d --build
 - To use a dashboard config file, set `CONFIG_FILE` in `.env` and add a
   volume entry mounting the file (e.g. `./homdash.json:/homdash.json`
   with `CONFIG_FILE=/homdash.json`).
+- In the service-account mode (the `.env.example` default), the app exits
+  at startup unless the key file at `GOOGLE_APPLICATION_CREDENTIALS`
+  (default `/secrets/google-sa.json`) is present; add a volume entry
+  mounting it (e.g. `./secrets/google-sa.json:/secrets/google-sa.json`)
+  or point the variable at a mounted path.
 
 `docker compose down` stops and removes the stack (add `-v` to also drop
 the `data` volume).
