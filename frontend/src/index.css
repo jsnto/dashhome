@@ -623,6 +623,23 @@ body {
   border-color: var(--accent);
 }
 
+.chat-form .mic {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+}
+
+.chat-form .mic.listening {
+  border-color: var(--err);
+  color: var(--err);
+  background: rgba(255, 107, 107, 0.16);
+}
+
+.chat-form .mic.listening:hover:not(:disabled) {
+  border-color: var(--err);
+  color: var(--err);
+}
+
 /* pushes / markdown */
 
 .push-body {
