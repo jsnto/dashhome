@@ -1,12 +1,14 @@
 // Shared API types mirroring the Go backend JSON.
 
+export interface ApiBoard {
+  ha_entities: string[]
+  ha_labels: Record<string, string>
+  calendars: { id: string; label: string }[]
+  refresh_seconds: number
+}
+
 export interface ApiConfig {
-  board: {
-    ha_entities: string[]
-    ha_labels: Record<string, string>
-    calendars: { id: string; label: string }[]
-    refresh_seconds: number
-  }
+  board: ApiBoard
   integrations: {
     homeassistant: boolean
     google: {

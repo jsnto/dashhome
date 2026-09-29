@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { api } from '../api'
+import { onRefreshSeconds } from '../refreshBus'
 import type { Push } from '../types'
 
 /**
@@ -22,6 +23,9 @@ export default function PushPanel() {
       .then((c) => setRefreshSec(c.board.refresh_seconds || 30))
       .catch(() => {})
   }, [])
+
+  // Adopt a new interval saved in Settings without a reload.
+  useEffect(() => onRefreshSeconds(setRefreshSec), [])
 
   useEffect(() => {
     let cancelled = false
