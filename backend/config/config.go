@@ -1,4 +1,4 @@
-// Package config loads homdash runtime configuration from environment
+// Package config loads dashhome runtime configuration from environment
 // variables and an optional local dashboard configuration file.
 package config
 
@@ -11,7 +11,7 @@ import (
 
 // Board is the local dashboard configuration: what the dashboard shows.
 // It is deliberately kept separate from secrets (which come from the
-// environment) so it can be edited freely. See homdash.example.json.
+// environment) so it can be edited freely. See dashhome.example.json.
 type Board struct {
 	// HAEntityIDs is the set of Home Assistant entity IDs shown on the
 	// dashboard, in display order. Empty means "show every entity".
@@ -129,7 +129,7 @@ func Load() (*Config, error) {
 		},
 
 		DataDir:   env("DATA_DIR", "./data"),
-		BoardFile: env("CONFIG_FILE", "./homdash.json"),
+		BoardFile: env("CONFIG_FILE", "./dashhome.json"),
 	}
 
 	if cfg.Google.TokenCache == "" {

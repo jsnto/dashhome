@@ -1,4 +1,4 @@
-# homdash — single-service Docker Compose stack.
+# dashhome — single-service Docker Compose stack.
 #
 # .env (see .env.example) is read twice:
 #   1. by Docker Compose itself, for the ${VAR} substitutions below;
@@ -10,14 +10,14 @@
 # http://localhost:3100. No credentials are stored here — they come from
 # .env and are never baked into the image.
 
-name: homdash
+name: dashhome
 
 services:
-  homdash:
+  dashhome:
     build:
       context: .
       dockerfile: Dockerfile
-    image: homdash:latest
+    image: dashhome:latest
     env_file:
       - path: .env
         required: false

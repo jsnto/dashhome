@@ -1,4 +1,4 @@
-module github.com/jsnto/homdash
+module github.com/jsnto/dashhome
 
 go 1.26.3
 

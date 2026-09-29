@@ -5,9 +5,9 @@
 .env
 *.log
 data/
-homdash.json
+dashhome.json
 
 # build artifacts (rebuilt inside the image)
 bin/
-web/node_modules/
-web/dist/
+frontend/node_modules/
+frontend/dist/

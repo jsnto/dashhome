@@ -28,7 +28,7 @@ func SetOAuthEndpointForTest(ep oauth2.Endpoint) (restore func()) {
 	return func() { oauthEndpoint = old }
 }
 
-// scope is the read-only Calendar scope; homdash never writes calendars.
+// scope is the read-only Calendar scope; dashhome never writes calendars.
 const scope = "https://www.googleapis.com/auth/calendar.readonly"
 
 // Mode is the credential mode of a GoogleClient.

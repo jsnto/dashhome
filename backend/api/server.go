@@ -1,4 +1,4 @@
-// Package api wires the homdash HTTP API: calendar, Home Assistant,
+// Package api wires the dashhome HTTP API: calendar, Home Assistant,
 // Hermes chat and Hermes markdown pushes.
 package api
 
@@ -13,11 +13,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/jsnto/homdash/internal/calendar"
-	"github.com/jsnto/homdash/internal/config"
-	"github.com/jsnto/homdash/internal/ha"
-	"github.com/jsnto/homdash/internal/hermes"
-	"github.com/jsnto/homdash/internal/store"
+	"github.com/jsnto/dashhome/backend/calendar"
+	"github.com/jsnto/dashhome/backend/config"
+	"github.com/jsnto/dashhome/backend/ha"
+	"github.com/jsnto/dashhome/backend/hermes"
+	"github.com/jsnto/dashhome/backend/store"
 )
 
 // GoogleAPI is the surface of the Google client the API needs.
@@ -118,7 +118,7 @@ func (s *Server) listCalendars(c *gin.Context) {
 	}
 	if !s.google.HasToken() {
 		fail(c, http.StatusServiceUnavailable, "google_login_required",
-			"visit "+s.google.LoginURL()+" to authorize homdash")
+			"visit "+s.google.LoginURL()+" to authorize dashhome")
 		return
 	}
 	cals, err := s.google.ListCalendars(c.Request.Context())
@@ -168,7 +168,7 @@ func (s *Server) listEvents(c *gin.Context) {
 	}
 	if !s.google.HasToken() {
 		fail(c, http.StatusServiceUnavailable, "google_login_required",
-			"visit "+s.google.LoginURL()+" to authorize homdash")
+			"visit "+s.google.LoginURL()+" to authorize dashhome")
 		return
 	}
 
