@@ -146,7 +146,7 @@ proxy or tests).
 | Variable | Meaning |
 |---|---|
 | `HERMES_BASE_URL` | Base URL of the Hermes API (no trailing slash) |
-| `HERMES_CHAT_PATH` | Chat endpoint path (default `/v1/chat`) |
+| `HERMES_CHAT_PATH` | Chat endpoint path (default `/chat/completions`) |
 | `HERMES_AUTH_HEADER` | Header name to send (default `Authorization`) |
 | `HERMES_AUTH_VALUE` | Full header value, e.g. `Bearer sk-…` (empty = no auth) |
 

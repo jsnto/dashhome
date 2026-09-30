@@ -50,7 +50,7 @@ type Client struct {
 // NewClient builds a Hermes chat client.
 func NewClient(baseURL, chatPath, authName, authValue string) *Client {
 	if chatPath == "" {
-		chatPath = "/v1/chat"
+		chatPath = "/chat/completions"
 	}
 	if !strings.HasPrefix(chatPath, "/") {
 		chatPath = "/" + chatPath

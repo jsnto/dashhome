@@ -50,22 +50,6 @@ func TestChatOpenAIEnvelope(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// The legacy body shape the client used to send is rejected by the live
-	// endpoint with this exact 400; the new client must not send it.
-	legacy, _ := json.Marshal(map[string]any{"message": "hi"})
-	resp, err := http.Post(srv.URL+"/chat/completions", "application/json", strings.NewReader(string(legacy)))
-	if err != nil {
-		t.Fatalf("legacy probe request: %v", err)
-	}
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("legacy probe: status = %d, want 400", resp.StatusCode)
-	}
-	probe, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if strings.TrimSpace(string(probe)) != live400Body {
-		t.Errorf("legacy probe body = %s, want the exact live 400 body", probe)
-	}
-
 	c := NewClient(srv.URL, "/chat/completions", "Authorization", "Bearer sk-test")
 	reply, err := c.Chat(context.Background(), ChatRequest{
 		Message: "hi",

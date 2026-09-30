@@ -25,7 +25,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Port != "3000" {
 		t.Errorf("default Port = %q, want 3000", cfg.Port)
 	}
-	if cfg.HermesChatPath != "/v1/chat" {
+	if cfg.HermesChatPath != "/chat/completions" {
 		t.Errorf("default HermesChatPath = %q", cfg.HermesChatPath)
 	}
 	if cfg.HermesAuthHeader != "Authorization" {
