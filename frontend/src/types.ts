@@ -59,17 +59,6 @@ export interface HAEntity {
   last_changed?: string
 }
 
-export interface HADashboard {
-  id: string
-  url_path: string | null
-  title: string
-  icon?: string
-  require_admin: boolean
-  show_in_sidebar: boolean
-  mode: string
-  filename?: string
-}
-
 export interface Push {
   id: string
   received_at: string
