@@ -3,6 +3,7 @@ package ha
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -371,6 +372,21 @@ func TestDashDialErrors(t *testing.T) {
 	c.CallTimeout = 500 * time.Millisecond
 	if _, err := c.ListDashboards(context.Background(), false); err == nil || !strings.Contains(err.Error(), "home assistant websocket") {
 		t.Errorf("unreachable: err = %v", err)
+	}
+
+	// Handshake rejected with an auth status maps to the token hint,
+	// same convention as the states client.
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "denied", status)
+		}))
+		t.Cleanup(srv.Close)
+		c := NewDashClient(srv.URL, "tok")
+		_, err := c.ListDashboards(context.Background(), false)
+		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("home assistant auth failed (status %d)", status)) ||
+			!strings.Contains(err.Error(), "HOMEASSISTANT_TOKEN") {
+			t.Errorf("handshake status %d: err = %v", status, err)
+		}
 	}
 }
 

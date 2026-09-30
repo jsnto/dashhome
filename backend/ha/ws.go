@@ -352,14 +352,10 @@ func (d *DashClient) dial(ctx context.Context) (*websocket.Conn, error) {
 		HTTPHeader: http.Header{"Origin": []string{d.BaseURL}},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("home assistant websocket: %w", err)
-	}
-	if resp.StatusCode != http.StatusSwitchingProtocols {
-		conn.Close(websocket.StatusInternalError, "handshake failed")
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
 			return nil, fmt.Errorf("home assistant auth failed (status %d): check HOMEASSISTANT_TOKEN", resp.StatusCode)
 		}
-		return nil, fmt.Errorf("home assistant websocket: handshake status %d", resp.StatusCode)
+		return nil, fmt.Errorf("home assistant websocket: %w", err)
 	}
 	conn.SetReadLimit(8 << 20)
 	return conn, nil
