@@ -113,12 +113,23 @@ func NewDashClient(baseURL, token string) *DashClient {
 
 var errUnknownCommand = errors.New("home assistant unknown command")
 
-// dashResult is the result envelope of one WS command.
+// errCodeUnknownCommand is the HA error object code for a command type the
+// instance does not know (older instances lack the lovelace/* names).
+const errCodeUnknownCommand = "unknown_command"
+
+// dashResult is the result envelope of one WS command. A failed command
+// carries its details in the protocol's `error` object.
 type dashResult struct {
 	ID      json.Number     `json:"id"`
 	Success bool            `json:"success"`
 	Result  json.RawMessage `json:"result"`
-	Message string          `json:"message"`
+	Error   *wsError        `json:"error"`
+}
+
+// wsError is the error object of a failed WS command result.
+type wsError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 type wsEnv struct {
@@ -308,10 +319,14 @@ func (d *DashClient) oneCall(ctx context.Context, cmdType string, args map[strin
 		break
 	}
 	if !res.Success {
-		if strings.Contains(strings.ToLower(res.Message), "unknown command") {
-			return nil, fmt.Errorf("%w: %s", errUnknownCommand, res.Message)
+		code, msg := "", ""
+		if res.Error != nil {
+			code, msg = res.Error.Code, res.Error.Message
 		}
-		return nil, fmt.Errorf("home assistant %s failed: %s", cmdType, res.Message)
+		if code == errCodeUnknownCommand {
+			return nil, fmt.Errorf("%w: %s", errUnknownCommand, msg)
+		}
+		return nil, fmt.Errorf("home assistant %s failed: %s", cmdType, msg)
 	}
 	if len(res.Result) == 0 {
 		res.Result = json.RawMessage("null")

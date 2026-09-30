@@ -50,10 +50,11 @@ func (f *fakeCalls) lastConfig() (fakeConfigCall, bool) {
 
 // fakeHAWS speaks just enough of the Home Assistant WebSocket API for the
 // DashClient: auth_required -> auth -> auth_ok, then result replies for the
-// dashboard commands of the given style. A presentation of rejectToken is
-// answered with auth_invalid without failing the test (for auth-error
+// dashboard commands of the given style, with failed results carrying the
+// protocol's `error: {code, message}` object. A presentation of rejectToken
+// is answered with auth_invalid without failing the test (for auth-error
 // coverage); any other token mismatch is a test bug. `errorCommand` (if set)
-// answers success=false with `errorMessage`.
+// answers success=false with the not_found error and `errorMessage`.
 func fakeHAWS(t *testing.T, style commandStyle, token, rejectToken string, errorCommand, errorMessage string) (string, *fakeCalls) {
 	t.Helper()
 	calls := &fakeCalls{}
@@ -143,17 +144,17 @@ func fakeHAWS(t *testing.T, style commandStyle, token, rejectToken string, error
 					send(unknownCommand(cmd.ID))
 					break
 				}
-				send(result(cmd.ID, true, list, ""))
+				send(result(cmd.ID, true, list, "", ""))
 			case cmdConfigNew, cmdConfigOld:
 				if style == styleLegacy && cmd.Type == cmdConfigNew {
 					send(unknownCommand(cmd.ID))
 					break
 				}
 				if cmd.Type == errorCommand {
-					send(result(cmd.ID, false, nil, errorMessage))
+					send(result(cmd.ID, false, nil, "not_found", errorMessage))
 					break
 				}
-				send(result(cmd.ID, true, cfg, ""))
+				send(result(cmd.ID, true, cfg, "", ""))
 			default:
 				send(unknownCommand(cmd.ID))
 			}
@@ -163,19 +164,19 @@ func fakeHAWS(t *testing.T, style commandStyle, token, rejectToken string, error
 	return srv.URL, calls
 }
 
-func result(id json.Number, success bool, res json.RawMessage, message string) map[string]any {
+func result(id json.Number, success bool, res json.RawMessage, code, message string) map[string]any {
 	out := map[string]any{"id": id, "type": "result", "success": success}
 	if res != nil {
 		out["result"] = json.RawMessage(res)
 	}
 	if message != "" {
-		out["message"] = message
+		out["error"] = map[string]string{"code": code, "message": message}
 	}
 	return out
 }
 
 func unknownCommand(id json.Number) map[string]any {
-	return result(id, false, nil, "Unknown command.")
+	return result(id, false, nil, "unknown_command", "Unknown command.")
 }
 
 func sp(s string) *string { return &s }
