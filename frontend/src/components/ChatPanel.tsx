@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ApiError, api } from '../api'
+import { speak, useVoice } from '../useVoice'
 import type { ChatMessage } from '../types'
 import Note from './Note'
 
@@ -15,39 +16,65 @@ export default function ChatPanel() {
   const [cfgErr, setCfgErr] = useState<ApiError | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const idRef = useRef(0)
+  const busyRef = useRef(false)
+  const stopVoiceRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [msgs, busy])
 
-  const send = async (e: FormEvent) => {
-    e.preventDefault()
-    const text = input.trim()
-    if (!text || busy) return
+  /** Shared send path for typed and spoken messages: same request, same thread. */
+  const sendText = (text: string, fromVoice = false) => {
+    if (busyRef.current) return
+    stopVoiceRef.current()
+    busyRef.current = true
     const history: ChatMessage[] = msgs.map(({ role, content }) => ({ role, content }))
     setMsgs((m) => [...m, { id: idRef.current++, role: 'user', content: text }])
-    setInput('')
     setBusy(true)
     setCfgErr(null)
-    try {
-      const reply = await api.chat(text, history)
-      setMsgs((m) => [...m, { id: idRef.current++, role: 'assistant', content: reply }])
-    } catch (err) {
-      const msg =
-        err instanceof ApiError
-          ? `${err.code}${err.detail ? ` — ${err.detail}` : ''}`
-          : String(err)
-      setCfgErr(err instanceof ApiError ? err : null)
-      setMsgs((m) => [...m, { id: idRef.current++, role: 'assistant', content: msg, error: true }])
-    } finally {
-      setBusy(false)
-    }
+    ;(async () => {
+      try {
+        const reply = await api.chat(text, history)
+        setMsgs((m) => [...m, { id: idRef.current++, role: 'assistant', content: reply }])
+        if (fromVoice) speak(reply)
+      } catch (err) {
+        const msg =
+          err instanceof ApiError
+            ? `${err.code}${err.detail ? ` — ${err.detail}` : ''}`
+            : String(err)
+        setCfgErr(err instanceof ApiError ? err : null)
+        setMsgs((m) => [...m, { id: idRef.current++, role: 'assistant', content: msg, error: true }])
+      } finally {
+        busyRef.current = false
+        setBusy(false)
+      }
+    })()
   }
+
+  const send = (e: FormEvent) => {
+    e.preventDefault()
+    const text = input.trim()
+    if (!text) return
+    setInput('')
+    sendText(text)
+  }
+
+  const { supported, listening, interim, blocked, toggle, stop } = useVoice((text) => sendText(text, true))
+  stopVoiceRef.current = stop
+  const micDisabled = !supported || blocked !== null || busy
+  const micTitle = !supported
+    ? 'Voice input is not supported in this browser'
+    : blocked
+      ? blocked
+      : listening
+        ? 'Stop listening'
+        : 'Speak a command'
 
   return (
     <section className="card chat">
       <div className="card-head">
         <h2>Hermes</h2>
+        {listening && <span className="note">Listening{interim ? ` — ${interim}` : '…'}</span>}
         {busy && <span className="note">thinking…</span>}
       </div>
       {cfgErr && <Note err={cfgErr} />}
@@ -73,6 +100,20 @@ export default function ChatPanel() {
           disabled={busy}
           autoComplete="off"
         />
+        <button
+          type="button"
+          className={`btn mic ${listening ? 'listening' : ''}`}
+          onClick={toggle}
+          disabled={micDisabled}
+          title={micTitle}
+          aria-label={listening ? 'Stop voice input' : 'Voice input'}
+          aria-pressed={listening}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <rect x="9" y="2" width="6" height="12" rx="3" />
+            <path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v3" />
+          </svg>
+        </button>
         <button className="btn" type="submit" disabled={busy || !input.trim()}>
           Send
         </button>

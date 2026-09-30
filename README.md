@@ -9,7 +9,9 @@ dashhome is a single Go process (Gin) on port **3000** that integrates with
   **Summary** tab that combines all of them into one month view;
 - **Home Assistant** — the current state of a configurable set of entities;
 - **Hermes (chat)** — a chat box that forwards messages to your Hermes API
-  and keeps the conversation thread visible;
+  and keeps the conversation thread visible; the mic button also accepts
+  spoken commands (browser speech recognition), which go through the same
+  path as typed messages, with the reply read aloud;
 - **Hermes (push)** — an authenticated endpoint for Hermes to push markdown
   to. Pushes are recorded durably, the **latest push is always shown** on the
   dashboard, and previous pushes are browsable in tabs (newest first).
