@@ -27,7 +27,8 @@ interval (how often the panels poll the backend, persisted to
 `dashhome.json`). A header button toggles the browser's full-screen mode.
 
 Live updates: panels poll the backend on the configured interval; the backend
-fetches fresh data from each configured service on every request.
+fetches fresh data from each configured service on every request — except the
+read-only HA dashboard-config proxy, which caches with a short TTL.
 
 The React frontend talks only to the backend API; all integrations live in
 the backend.
@@ -37,11 +38,11 @@ the backend.
 | dashhome (Go + Gin, :3000)                                   |
 |                                                               |
 |  /api  ──► Google Calendar   (list calendars, list events)    |
-|        ──► Home Assistant    (entity states)                  |
+|        ──► Home Assistant    (entity states, dashboards)      |
 |        ──► Hermes chat       (POST message, get reply)        |
 |        ◄── Hermes push       (POST markdown, token-auth)      |
 |                                                               |
-|  /     ──► React (Vite) build: calendar tabs, HA grid,        |
+|  /     ──► React (Vite) build: calendar tabs, HA board/full,  |
 |            chat box, markdown panel + push history tabs       |
 +--------------------------------------------------------------+
 ```
@@ -142,7 +143,7 @@ does not make HA reachable to the viewer's browser). Two deployment notes:
 The backend also proxies the read-only dashboard config API (WS
 `lovelace/dashboards/list` + `lovelace/config`, with the older
 `get_dashboards`/`get_dashboard` names probed automatically): see
-`GET /api/ha/dashboards` and `GET /api/ha/dashboard/:path` above.
+`GET /api/ha/dashboards` and `GET /api/ha/dashboard/:path` below.
 
 ### Google Calendar
 
