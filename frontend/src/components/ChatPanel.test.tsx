@@ -146,6 +146,37 @@ describe('ChatPanel voice input', () => {
     await waitFor(() => expect(screen.queryByText(/Listening/)).toBeNull())
   })
 
+  it('ignores a stale onend so a replacement session keeps its live state', async () => {
+    const { fetchMock } = stubHermes()
+    vi.stubGlobal('fetch', fetchMock)
+    enableRecognition()
+    render(<ChatPanel />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
+    const rec1 = MockSpeechRecognition.last
+    await screen.findByText(/Listening/)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop voice input' }))
+    await waitFor(() => expect(screen.queryByText(/Listening/)).toBeNull())
+
+    // A second session starts before rec1's (asynchronous) onend arrives.
+    fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
+    const rec2 = MockSpeechRecognition.last
+    expect(rec2).not.toBe(rec1)
+    await screen.findByText(/Listening/)
+
+    // The stale onend arrives late; it must not clobber rec2's state.
+    rec1.onend?.()
+
+    expect((screen.getByRole('button', { name: 'Stop voice input' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(rec2.started).toBe(true)
+
+    // The live session can still be stopped normally.
+    fireEvent.click(screen.getByRole('button', { name: 'Stop voice input' }))
+    await waitFor(() => expect(screen.queryByText(/Listening/)).toBeNull())
+    expect(rec2.started).toBe(false)
+  })
+
   it('reads Hermes replies aloud with speechSynthesis', async () => {
     const { fetchMock } = stubHermes()
     vi.stubGlobal('fetch', fetchMock)

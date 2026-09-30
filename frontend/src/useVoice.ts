@@ -122,6 +122,7 @@ export function useVoice(onFinal: (text: string) => void): Voice {
     rec.continuous = false
     rec.interimResults = true
     rec.onresult = (event) => {
+      if (recRef.current !== rec) return
       let inter = ''
       let fin = ''
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -135,9 +136,11 @@ export function useVoice(onFinal: (text: string) => void): Voice {
       if (text) onFinalRef.current(text)
     }
     rec.onerror = (event) => {
+      if (recRef.current !== rec) return
       setBlocked(blockReason(event.error))
     }
     rec.onend = () => {
+      if (recRef.current !== rec) return
       recRef.current = null
       setListening(false)
       setInterim('')
