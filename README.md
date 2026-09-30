@@ -146,30 +146,44 @@ proxy or tests).
 | Variable | Meaning |
 |---|---|
 | `HERMES_BASE_URL` | Base URL of the Hermes API (no trailing slash) |
-| `HERMES_CHAT_PATH` | Chat endpoint path (default `/v1/chat`) |
+| `HERMES_CHAT_PATH` | Chat endpoint path (default `/chat/completions`) |
 | `HERMES_AUTH_HEADER` | Header name to send (default `Authorization`) |
 | `HERMES_AUTH_VALUE` | Full header value, e.g. `Bearer sk-…` (empty = no auth) |
 
 **Expected contract** (kept in one module — `backend/hermes` — so it is
-easy to adapt to your real Hermes service):
+easy to adapt to your real Hermes service): Hermes speaks the
+OpenAI-compatible chat-completions contract.
 
-- Request: `POST {base}{path}` with `Content-Type: application/json`
+- Request: `POST {base}{path}` with `Content-Type: application/json` —
+  a top-level `messages` array built from the conversation history
+  (oldest first) followed by the current user message as the final turn:
 
   ```json
   {
-    "message": "how's the house?",
-    "conversation": [
+    "messages": [
       { "role": "user", "content": "earlier question" },
-      { "role": "assistant", "content": "earlier reply" }
+      { "role": "assistant", "content": "earlier reply" },
+      { "role": "user", "content": "how's the house?" }
     ]
   }
   ```
 
-- Response: JSON with a `reply` field (the client also accepts
-  `message` / `response` / `text` or a plain-text body):
+- Response: the OpenAI envelope; the reply text is at
+  `choices[0].message.content`. A 2xx body without it (missing or empty
+  `choices`, empty `content`) is treated as an error, not a reply:
 
   ```json
-  { "reply": "all quiet on the dashhome front" }
+  {
+    "id": "chatcmpl-…",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "message": { "role": "assistant", "content": "all quiet on the dashhome front" },
+        "finish_reason": "stop"
+      }
+    ]
+  }
   ```
 
 ### Hermes push

@@ -137,7 +137,7 @@ func Load() (*Config, error) {
 		HAToken: env("HOMEASSISTANT_TOKEN", ""),
 
 		HermesBaseURL:    env("HERMES_BASE_URL", ""),
-		HermesChatPath:   env("HERMES_CHAT_PATH", "/v1/chat"),
+		HermesChatPath:   env("HERMES_CHAT_PATH", "/chat/completions"),
 		HermesAuthHeader: env("HERMES_AUTH_HEADER", "Authorization"),
 		HermesAuthValue:  env("HERMES_AUTH_VALUE", ""),
 
