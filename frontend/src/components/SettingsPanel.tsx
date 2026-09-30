@@ -28,6 +28,11 @@ interface ServiceRow {
  */
 function serviceRows(cfg: ApiConfig): ServiceRow[] {
   const g = cfg.integrations.google
+  const embed = cfg.board.ha_embed ?? null
+  const embedPath = embed?.url_path?.trim()
+  const embedDesc =
+    (embedPath ? `Embeds the \u201c${embedPath}\u201d dashboard.` : 'Embeds the default dashboard.') +
+    (embed?.token_url ? ' Token passed in the URL.' : '')
   return [
     {
       label: 'Google Calendar',
@@ -41,6 +46,12 @@ function serviceRows(cfg: ApiConfig): ServiceRow[] {
       desc: 'Entity states shown in the Home panel.',
       state: cfg.integrations.homeassistant ? 'ok' : 'off',
       stateText: cfg.integrations.homeassistant ? 'Configured' : 'Not configured',
+    },
+    {
+      label: 'Home Assistant (full)',
+      desc: `Real HA dashboard in an iframe, next to the entity board. ${embedDesc}`,
+      state: cfg.integrations.homeassistant ? 'ok' : 'off',
+      stateText: cfg.integrations.homeassistant ? 'Available' : 'Not configured',
     },
     {
       label: 'Hermes chat',

@@ -5,6 +5,7 @@ import type {
   CalendarInfo,
   ChatMessage,
   HAEntity,
+  HADashboard,
   Push,
 } from './types'
 
@@ -68,6 +69,25 @@ export const api = {
 
   getHAEntities: () =>
     request<{ entities: HAEntity[] }>('/ha/entities').then((b) => b.entities),
+
+  /**
+   * Fully-formed iframe URL for the "Home (full)" section, assembled
+   * server-side (token only when token_url is enabled, so the token never
+   * lands in the board file or browser storage).
+   */
+  getHAAEmbedURL: () => request<{ url: string }>('/ha/embed-url').then((b) => b.url),
+
+  /** Dashboard inventory (metadata only); reload bypasses the server cache. */
+  getHADashboards: (reload = false) =>
+    request<{ dashboards: HADashboard[] }>(
+      `/ha/dashboards${reload ? '?reload=1' : ''}`,
+    ).then((b) => b.dashboards),
+
+  /** Full config JSON of one dashboard (pass-through); "" = default dashboard. */
+  getHADashboardConfig: (urlPath: string, reload = false) =>
+    request<unknown>(
+      `/ha/dashboard/${encodeURIComponent(urlPath)}${reload ? '?reload=1' : ''}`,
+    ),
 
   chat: (message: string, conversation: ChatMessage[]) =>
     request<{ reply: string }>('/hermes/chat', {

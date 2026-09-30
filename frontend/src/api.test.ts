@@ -51,3 +51,58 @@ describe('api.setRefreshSeconds', () => {
     })
   })
 })
+
+describe('api.getHAAEmbedURL', () => {
+  it('GETs the server-assembled embed URL', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ url: 'https://ha.local/' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const url = await api.getHAAEmbedURL()
+    expect(url).toBe('https://ha.local/')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/ha/embed-url')
+  })
+})
+
+describe('api.getHADashboards', () => {
+  it('GETs the dashboard list and passes reload through', async () => {
+    const fetchMock = vi.fn(async (_input: unknown) =>
+      new Response(JSON.stringify({ dashboards: [{ id: 'default', title: 'My Home' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const list = await api.getHADashboards()
+    expect(list[0].id).toBe('default')
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/ha/dashboards')
+
+    await api.getHADashboards(true)
+    expect(String(fetchMock.mock.calls[1][0])).toBe('/api/ha/dashboards?reload=1')
+  })
+})
+
+describe('api.getHADashboardConfig', () => {
+  it('GETs the config of one dashboard, default via empty path', async () => {
+    const fetchMock = vi.fn(async (_input: unknown) =>
+      new Response(JSON.stringify({ views: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const cfg = (await api.getHADashboardConfig('energy')) as { views: unknown[] }
+    expect(cfg.views).toEqual([])
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/ha/dashboard/energy')
+
+    await api.getHADashboardConfig('')
+    expect(String(fetchMock.mock.calls[1][0])).toBe('/api/ha/dashboard/')
+  })
+})

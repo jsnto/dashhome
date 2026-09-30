@@ -116,6 +116,97 @@ func TestBoardFile(t *testing.T) {
 	}
 }
 
+func TestHAEmbedBoardKey(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "board.json")
+	content := `{
+		"ha_entities": ["climate.thermo"],
+		"ha_embed": { "url_path": "  /energy/  ", "token_url": true }
+	}`
+	if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	embed := cfg.HAEmbed()
+	if embed == nil || embed.URLPath == nil || *embed.URLPath != "  /energy/  " || !embed.TokenURL {
+		t.Errorf("HAEmbed = %+v", embed)
+	}
+
+	// The accessor returns a copy: mutating it must not touch the board.
+	embed.TokenURL = false
+	if got := cfg.HAEmbed(); got == nil || !got.TokenURL {
+		t.Errorf("HAEmbed mutated through the copy: %+v", got)
+	}
+
+	// Explicit null url_path = default dashboard (distinct from a string).
+	dir2 := t.TempDir()
+	file2 := filepath.Join(dir2, "board.json")
+	if err := os.WriteFile(file2, []byte(`{ "ha_embed": { "url_path": null } }`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file2)
+	cfg2, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	embed2 := cfg2.HAEmbed()
+	if embed2 == nil || embed2.URLPath != nil || embed2.TokenURL {
+		t.Errorf("HAEmbed (null url_path) = %+v, want {URLPath:<nil> TokenURL:false}", embed2)
+	}
+
+	// Missing key: nil embed.
+	if err := os.Remove(file2); err != nil {
+		t.Fatal(err)
+	}
+	cfg3, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg3.HAEmbed() != nil {
+		t.Errorf("missing ha_embed should mean nil, got %+v", cfg3.HAEmbed())
+	}
+}
+
+func TestSetRefreshSecondsPreservesHAEmbed(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{ "refresh_seconds": 30, "ha_embed": { "url_path": "energy", "token_url": true } }`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.SetRefreshSeconds(45); err != nil {
+		t.Fatalf("SetRefreshSeconds: %v", err)
+	}
+
+	// In memory: ha_embed survives the refresh write.
+	embed := cfg.HAEmbed()
+	if embed == nil || embed.URLPath == nil || *embed.URLPath != "energy" || !embed.TokenURL {
+		t.Errorf("in-memory HAEmbed = %+v", embed)
+	}
+
+	// On disk: ha_embed is serialized.
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk Board
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("board file not valid JSON: %v: %s", err, data)
+	}
+	if onDisk.HAEmbed == nil || onDisk.HAEmbed.URLPath == nil || *onDisk.HAEmbed.URLPath != "energy" || !onDisk.HAEmbed.TokenURL {
+		t.Errorf("on-disk ha_embed = %+v", onDisk.HAEmbed)
+	}
+}
+
 func TestBoardFileMissingIsOK(t *testing.T) {
 	t.Setenv("CONFIG_FILE", filepath.Join(t.TempDir(), "nope.json"))
 	cfg, err := Load()

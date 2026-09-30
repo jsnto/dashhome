@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,15 +34,16 @@ type GoogleAPI interface {
 // Server holds the dependencies of every handler.
 type Server struct {
 	cfg    *config.Config
-	google GoogleAPI       // nil = not configured
-	ha     ha.StatesClient // nil = not configured
-	hermes hermes.Chatter  // nil = not configured
+	google GoogleAPI           // nil = not configured
+	ha     ha.StatesClient     // nil = not configured
+	haDash ha.DashboardsClient // nil = not configured
+	hermes hermes.Chatter      // nil = not configured
 	pushes store.PushStore
 }
 
 // NewServer builds a Server. All dependencies may be nil (unconfigured).
-func NewServer(cfg *config.Config, google GoogleAPI, haClient ha.StatesClient, hermesClient hermes.Chatter, pushes store.PushStore) *Server {
-	return &Server{cfg: cfg, google: google, ha: haClient, hermes: hermesClient, pushes: pushes}
+func NewServer(cfg *config.Config, google GoogleAPI, haClient ha.StatesClient, haDash ha.DashboardsClient, hermesClient hermes.Chatter, pushes store.PushStore) *Server {
+	return &Server{cfg: cfg, google: google, ha: haClient, haDash: haDash, hermes: hermesClient, pushes: pushes}
 }
 
 // Engine builds the gin engine with all routes.
@@ -57,6 +59,12 @@ func (s *Server) Engine() *gin.Engine {
 	api.GET("/calendars", s.listCalendars)
 	api.GET("/events", s.listEvents)
 	api.GET("/ha/entities", s.haEntities)
+	api.GET("/ha/embed-url", s.haEmbedURL)
+	api.GET("/ha/dashboards", s.haDashboards)
+	// Exact-match route for the default dashboard without a trailing slash
+	// (gin does not 301 the no-slash variant to the wildcard route).
+	api.GET("/ha/dashboard", s.haDashboardConfig)
+	api.GET("/ha/dashboard/*path", s.haDashboardConfig)
 	api.POST("/hermes/chat", s.hermesChat)
 	api.POST("/hermes/push", s.hermesPush)
 	api.GET("/hermes/pushes", s.listPushes)
@@ -337,6 +345,84 @@ func (s *Server) entityJSON(st ha.EntityState) apiEntity {
 		e.LastChanged = &t
 	}
 	return e
+}
+
+// haEmbedURL returns the fully-formed URL for the "Home (full)" iframe, so
+// the frontend never has to assemble it (and never sees the token except in
+// this deliberately narrow response, when token_url is enabled).
+func (s *Server) haEmbedURL(c *gin.Context) {
+	if s.ha == nil {
+		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
+			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN")
+		return
+	}
+	u, err := url.Parse(s.cfg.HAURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
+			"HOMEASSISTANT_URL is not a valid URL")
+		return
+	}
+	embed := s.cfg.HAEmbed()
+	p := "/"
+	if embed != nil && embed.URLPath != nil {
+		if n := ha.NormalizeURLPath(*embed.URLPath); n != "" {
+			p = "/" + n
+		}
+	}
+	u.Path = p
+	u.RawQuery = ""
+	if embed != nil && embed.TokenURL {
+		q := u.Query()
+		q.Set("auth_long_lived", s.cfg.HAToken)
+		u.RawQuery = q.Encode()
+	}
+	c.JSON(http.StatusOK, gin.H{"url": u.String()})
+}
+
+// --- Home Assistant dashboards (read-only config proxy) -------------------
+
+// haDashboards lists the instance's dashboards (metadata only). ?reload=1
+// bypasses the server-side TTL cache.
+func (s *Server) haDashboards(c *gin.Context) {
+	if s.haDash == nil {
+		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
+			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN")
+		return
+	}
+	list, err := s.haDash.ListDashboards(c.Request.Context(), reloadRequested(c))
+	if err != nil {
+		fail(c, http.StatusBadGateway, "homeassistant_unavailable", err.Error())
+		return
+	}
+	if list == nil {
+		list = []ha.Dashboard{}
+	}
+	c.JSON(http.StatusOK, gin.H{"dashboards": list})
+}
+
+// haDashboardConfig passes through one dashboard's full config JSON.
+// The wildcard path segment is the dashboard url_path; empty (i.e.
+// /api/ha/dashboard or /api/ha/dashboard/) is the default dashboard.
+// ?reload=1 bypasses the server-side TTL cache. Read-only: nothing here
+// writes to Home Assistant.
+func (s *Server) haDashboardConfig(c *gin.Context) {
+	if s.haDash == nil {
+		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
+			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN")
+		return
+	}
+	path := ha.NormalizeURLPath(c.Param("path"))
+	raw, err := s.haDash.GetDashboardConfig(c.Request.Context(), path, reloadRequested(c))
+	if err != nil {
+		fail(c, http.StatusBadGateway, "homeassistant_unavailable", err.Error())
+		return
+	}
+	c.Data(http.StatusOK, "application/json", raw)
+}
+
+// reloadRequested reports whether the explicit ?reload query param is set.
+func reloadRequested(c *gin.Context) bool {
+	return c.Query("reload") != ""
 }
 
 // --- Hermes chat ----------------------------------------------------------
