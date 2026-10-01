@@ -16,8 +16,8 @@ import (
 // It is deliberately kept separate from secrets (which come from the
 // environment) so it can be edited freely. See dashhome.example.json.
 type Board struct {
-	// HAEntityIDs is the set of Home Assistant entity IDs shown on the
-	// dashboard, in display order. Empty means "show every entity".
+	// HAEntityIDs is the set of Home Assistant entity IDs the entity API
+	// returns (GET /api/ha/entities), in order. Empty means "all entities".
 	HAEntityIDs []string `json:"ha_entities"`
 	// HALabels maps an entity ID to a friendlier display label.
 	HALabels map[string]string `json:"ha_labels"`
@@ -37,10 +37,9 @@ type CalendarRef struct {
 	Label string `json:"label"`
 }
 
-// HAEmbed configures the "Home (full)" section, which embeds the real Home
-// Assistant dashboard in an iframe. The token itself never appears in the
-// board file: when TokenURL is set, the backend assembles it into the
-// embed URL server-side (GET /api/ha/embed-url).
+// HAEmbed configures the Home section's dashboard iframe. The token itself
+// never appears in the board file: when TokenURL is set, the backend
+// assembles it into the embed URL server-side (GET /api/ha/embed-url).
 type HAEmbed struct {
 	// URLPath selects the dashboard to embed. nil means Home Assistant's
 	// default dashboard. Leading/trailing slashes are ignored.
@@ -103,7 +102,7 @@ type Config struct {
 	boardMu sync.RWMutex
 }
 
-// Refresh interval bounds: sane polling cadence for the dashboard panels
+// Refresh interval bounds: sane polling cadence for the Hermes push panel
 // (no faster than hammering the upstream services, no slower than "live").
 const (
 	RefreshSecondsMin = 5

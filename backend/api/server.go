@@ -347,7 +347,7 @@ func (s *Server) entityJSON(st ha.EntityState) apiEntity {
 	return e
 }
 
-// haEmbedURL returns the fully-formed URL for the "Home (full)" iframe, so
+// haEmbedURL returns the fully-formed URL for the Home card's iframe, so
 // the frontend never has to assemble it (and never sees the token except in
 // this deliberately narrow response, when token_url is enabled).
 func (s *Server) haEmbedURL(c *gin.Context) {

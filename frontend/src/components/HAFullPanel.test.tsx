@@ -9,6 +9,9 @@ function json(body: Record<string, unknown>, status = 200) {
   })
 }
 
+const embedUrlCalls = (fetchMock: { mock: { calls: unknown[][] } }) =>
+  fetchMock.mock.calls.filter(([u]) => String(u) === '/api/ha/embed-url').length
+
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
@@ -17,7 +20,7 @@ afterEach(() => {
 describe('HAFullPanel', () => {
   it('mounts the iframe with the server-assembled URL and an open-in-new-tab link', async () => {
     const url = 'https://ha.local/energy?auth_long_lived=tok'
-    const fetchMock = vi.fn(async (_input: unknown) => json({ url }))
+    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => json({ url }))
     vi.stubGlobal('fetch', fetchMock)
     render(<HAFullPanel />)
 
@@ -27,8 +30,8 @@ describe('HAFullPanel', () => {
     expect(link.getAttribute('href')).toBe(url)
     expect(link.getAttribute('target')).toBe('_blank')
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/ha/embed-url')
+    // The embed URL is fetched once on mount.
+    expect(embedUrlCalls(fetchMock)).toBe(1)
   })
 
   it('shows a friendly setup note when HA is not configured (no iframe)', async () => {
@@ -43,6 +46,8 @@ describe('HAFullPanel', () => {
 
     expect(await screen.findByText(/Home Assistant is not configured/)).toBeTruthy()
     expect(screen.queryByTitle('Home Assistant dashboard')).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/ha/embed-url')
   })
 
   it('refetches the embed URL when Reload is clicked', async () => {
@@ -52,8 +57,8 @@ describe('HAFullPanel', () => {
     await screen.findByTitle('Home Assistant dashboard')
 
     fireEvent.click(screen.getByRole('button', { name: 'Reload' }))
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    // The refetched URL is applied to the iframe.
+    await vi.waitFor(() => expect(embedUrlCalls(fetchMock)).toBe(2))
+    // The refetched URL is applied to the (re-keyed) iframe.
     await vi.waitFor(() =>
       expect((screen.getByTitle('Home Assistant dashboard') as HTMLIFrameElement).src).toBe(
         'https://ha.local/',

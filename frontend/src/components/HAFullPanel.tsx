@@ -3,11 +3,16 @@ import { ApiError, api } from '../api'
 import Note from './Note'
 
 /**
- * The "Home (full)" section: the real Home Assistant dashboard in an
- * iframe, pointing at the viewer's browser's own HA origin (the URL comes
- * from /api/ha/embed-url, assembled server-side). Mounted lazily by
- * HAPanel: the fetch + iframe only exist once the user switches to the
- * Full tab.
+ * The "Home" section: the real Home Assistant dashboard in an iframe,
+ * pointing at the viewer's browser's own HA origin (the URL comes from
+ * /api/ha/embed-url, assembled server-side). The section's card shell and
+ * header live in HAPanel; this component owns the embed bar (note,
+ * "Open in new tab", Reload) and the iframe.
+ *
+ * A cross-origin frame can fail in ways the page cannot see — the browser
+ * renders its own error page (e.g. "10.10.20.243 refused the connection")
+ * inside the iframe and fires no error event — so the bar carries a static
+ * note pointing at the Open-in-new-tab path as the way out.
  */
 export default function HAFullPanel() {
   const [url, setUrl] = useState<string | null>(null)
@@ -42,7 +47,8 @@ export default function HAFullPanel() {
       <div className="ha-full-bar">
         <span className="ha-full-note">
           Loads Home Assistant directly in this frame — log in there once if
-          it asks.
+          it asks. If the frame shows a connection error, use Open in new tab
+          (same URL).
         </span>
         <div className="ha-full-actions">
           <a className="btn small" href={url} target="_blank" rel="noreferrer">

@@ -47,7 +47,7 @@ afterEach(() => {
 describe('settings: services in use', () => {
   it('renders one row per configured source with its status', () => {
     renderPanel()
-    for (const label of ['Google Calendar', 'Home Assistant', 'Home Assistant (full)', 'Hermes chat', 'Hermes push']) {
+    for (const label of ['Google Calendar', 'Home Assistant', 'Hermes chat', 'Hermes push']) {
       expect(screen.getByText(label)).toBeTruthy()
     }
     // Google is configured but awaiting the one-time sign-in.
@@ -63,7 +63,8 @@ describe('settings: services in use', () => {
   it('summarizes the full-dashboard embed config (default dashboard)', () => {
     renderPanel()
     expect(screen.getByText(/Embeds the default dashboard/)).toBeTruthy()
-    expect(screen.getByText('Available')).toBeTruthy()
+    // The Home Assistant row (full-dashboard embed) reports as configured.
+    expect(screen.getAllByText('Configured')).toHaveLength(2)
   })
 
   it('summarizes a configured embed path and token in URL', () => {
@@ -89,7 +90,7 @@ describe('settings: services in use', () => {
         },
       },
     })
-    expect(screen.getAllByText('Not configured')).toHaveLength(5)
+    expect(screen.getAllByText('Not configured')).toHaveLength(4)
   })
 })
 
@@ -116,7 +117,7 @@ describe('settings: updates interval round-trip', () => {
     fireEvent.change(input, { target: { value: '12' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    await screen.findByText(/Saved — panels now poll every 12 seconds\./)
+    await screen.findByText(/Saved — the Hermes push panel now polls every 12 seconds\./)
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]

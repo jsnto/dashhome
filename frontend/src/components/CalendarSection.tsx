@@ -88,7 +88,7 @@ export default function CalendarSection() {
       {calErr ? (
         <Note err={calErr} />
       ) : (
-        <>
+        <div className="card-scroll">
           <div className="month-nav">
             <button className="btn" onClick={() => shiftMonth(-1)}>
               ‹
@@ -113,7 +113,7 @@ export default function CalendarSection() {
           ) : (
             <MonthGrid year={year} month={month} events={events} multi={active === SUMMARY} />
           )}
-        </>
+        </div>
       )}
     </section>
   )

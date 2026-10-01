@@ -43,19 +43,13 @@ function serviceRows(cfg: ApiConfig): ServiceRow[] {
     },
     {
       label: 'Home Assistant',
-      desc: 'Entity states shown in the Home panel.',
+      desc: `Real HA dashboard in an iframe in the Home panel. ${embedDesc}`,
       state: cfg.integrations.homeassistant ? 'ok' : 'off',
       stateText: cfg.integrations.homeassistant ? 'Configured' : 'Not configured',
     },
     {
-      label: 'Home Assistant (full)',
-      desc: `Real HA dashboard in an iframe, next to the entity board. ${embedDesc}`,
-      state: cfg.integrations.homeassistant ? 'ok' : 'off',
-      stateText: cfg.integrations.homeassistant ? 'Available' : 'Not configured',
-    },
-    {
       label: 'Hermes chat',
-      desc: 'Chat box in the side panel.',
+      desc: 'Chat box in the dashboard.',
       state: cfg.integrations.hermes_chat ? 'ok' : 'off',
       stateText: cfg.integrations.hermes_chat ? 'Configured' : 'Not configured',
     },
@@ -93,8 +87,8 @@ export default function SettingsPanel({ cfg, theme, onThemeChange, onClose }: Pr
       const board = await api.setRefreshSeconds(n)
       const applied = board.refresh_seconds || n
       setSeconds(String(applied))
-      setSavedMsg(`Saved — panels now poll every ${applied} seconds.`)
-      // Let the polling panels re-arm their timers without a reload.
+      setSavedMsg(`Saved — the Hermes push panel now polls every ${applied} seconds.`)
+      // Let the polling panel (Hermes push) re-arm its timer without a reload.
       emitRefreshSeconds(applied)
     } catch (err) {
       setSaveErr(
@@ -178,9 +172,9 @@ export default function SettingsPanel({ cfg, theme, onThemeChange, onClose }: Pr
             <div>
               <div className="settings-row-label">Live-update interval</div>
               <div className="settings-row-desc">
-                How often the panels re-fetch from their services (5–3600
-                seconds). Saved to the dashboard config; panels adopt the new
-                cadence immediately.
+                How often the Hermes push panel re-fetches from the backend
+                (5–3600 seconds). Saved to the dashboard config; the panel
+                adopts the new cadence immediately.
               </div>
             </div>
             <form className="settings-interval" onSubmit={save}>

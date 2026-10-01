@@ -1,6 +1,7 @@
 /**
  * Tiny in-page bus: when the settings screen saves a new polling interval,
- * the panels re-arm their setInterval to the new cadence without a reload.
+ * the polling panel (Hermes push) re-arms its setInterval to the new cadence
+ * without a reload.
  */
 export const REFRESH_SECONDS_EVENT = 'dashhome:refresh-seconds'
 
