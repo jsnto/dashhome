@@ -4,7 +4,6 @@ import type {
   ApiEvent,
   CalendarInfo,
   ChatMessage,
-  HAEntity,
   Push,
 } from './types'
 
@@ -65,9 +64,6 @@ export const api = {
       `/events?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}` +
         (calendar ? `&calendar=${encodeURIComponent(calendar)}` : ''),
     ).then((b) => b.events),
-
-  getHAEntities: () =>
-    request<{ entities: HAEntity[] }>('/ha/entities').then((b) => b.entities),
 
   /**
    * Fully-formed iframe URL for the Home card's dashboard embed, assembled
