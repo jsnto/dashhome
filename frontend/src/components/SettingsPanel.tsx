@@ -43,19 +43,13 @@ function serviceRows(cfg: ApiConfig): ServiceRow[] {
     },
     {
       label: 'Home Assistant',
-      desc: 'Entity states shown in the Home panel.',
+      desc: `Real HA dashboard in an iframe in the Home panel. ${embedDesc}`,
       state: cfg.integrations.homeassistant ? 'ok' : 'off',
       stateText: cfg.integrations.homeassistant ? 'Configured' : 'Not configured',
     },
     {
-      label: 'Home Assistant (full)',
-      desc: `Real HA dashboard in an iframe, next to the entity board. ${embedDesc}`,
-      state: cfg.integrations.homeassistant ? 'ok' : 'off',
-      stateText: cfg.integrations.homeassistant ? 'Available' : 'Not configured',
-    },
-    {
       label: 'Hermes chat',
-      desc: 'Chat box in the side panel.',
+      desc: 'Chat box in the dashboard.',
       state: cfg.integrations.hermes_chat ? 'ok' : 'off',
       stateText: cfg.integrations.hermes_chat ? 'Configured' : 'Not configured',
     },

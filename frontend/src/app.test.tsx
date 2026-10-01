@@ -55,6 +55,24 @@ afterEach(() => {
   delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
 })
 
+describe('app: section layout', () => {
+  it('puts Calendar and Hermes chat in the main column, Home and Hermes push in the side column', () => {
+    vi.stubGlobal('fetch', stubServer(30).fetchMock)
+    render(<App />)
+
+    const main = document.querySelector('.col-main') as HTMLElement
+    const side = document.querySelector('.col-side') as HTMLElement
+    expect(main).toBeTruthy()
+    expect(side).toBeTruthy()
+
+    const headingsIn = (el: HTMLElement) => [...el.querySelectorAll('h2')].map((h) => h.textContent)
+    // The mobile single-column fallback stacks the columns in this same
+    // DOM order, so it presents the same relative order.
+    expect(headingsIn(main)).toEqual(['Calendar', 'Hermes'])
+    expect(headingsIn(side)).toEqual(['Home', 'Hermes push'])
+  })
+})
+
 describe('app: settings screen shows the persisted interval', () => {
   it('reopens with the saved interval, not the mount-time value', async () => {
     const { fetchMock, board } = stubServer(30)

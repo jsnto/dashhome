@@ -34,7 +34,7 @@ export default function App() {
         {
           label: 'HA',
           ok: cfg.integrations.homeassistant,
-          title: 'Home Assistant',
+          title: 'Home Assistant dashboard',
         },
         {
           label: 'Cal',
@@ -82,10 +82,10 @@ export default function App() {
       <main className="layout">
         <div className="col-main">
           <CalendarSection />
-          <HAPanel />
+          <ChatPanel />
         </div>
         <div className="col-side">
-          <ChatPanel />
+          <HAPanel />
           <PushPanel />
         </div>
       </main>

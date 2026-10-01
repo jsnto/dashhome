@@ -1,15 +1,14 @@
 # dashhome
 
-A home dashboard: your calendars, your Home Assistant states, and Hermes —
+A home dashboard: your calendars, your Home Assistant, and Hermes —
 on one page.
 
 dashhome is a single Go process (Gin) on port **3000** that integrates with
 
 - **Google Calendar** — every visible calendar in its own tab, plus a
   **Summary** tab that combines all of them into one month view;
-- **Home Assistant** — the current state of a configurable set of entities,
-  plus a **Full** view that embeds the real HA dashboard in an iframe
-  (Board/Full switch in the Home card), and a read-only API proxy for the
+- **Home Assistant** — the real HA dashboard embedded in an iframe in the
+  Home card, the entity-state API, and a read-only API proxy for the
   dashboard inventory and their config;
 - **Hermes (chat)** — a chat box that forwards messages to your Hermes API
   and keeps the conversation thread visible; the mic button also accepts
@@ -42,7 +41,7 @@ the backend.
 |        ──► Hermes chat       (POST message, get reply)        |
 |        ◄── Hermes push       (POST markdown, token-auth)      |
 |                                                               |
-|  /     ──► React (Vite) build: calendar tabs, HA board/full,  |
+|  /     ──► React (Vite) build: calendar tabs, HA dashboard,   |
 |            chat box, markdown panel + push history tabs       |
 +--------------------------------------------------------------+
 ```
@@ -115,18 +114,22 @@ optional dashboard config file. Never commit real credentials.
 | `HOMEASSISTANT_URL` | Base URL, e.g. `https://ha.example.com` |
 | `HOMEASSISTANT_TOKEN` | Long-lived access token (HA → Profile → Security) |
 
-Which entities the dashboard shows is **driven by `dashhome.json`**, not code
-— edit `ha_entities` (and optional `ha_labels`) and restart (or reload) to
-change the dashboard without a code change. With an empty or missing
-`ha_entities`, all entities are shown.
+Which entities the entity API shows is **driven by `dashhome.json`**, not
+code — edit `ha_entities` (and optional `ha_labels`) and restart (or
+reload) to change what `GET /api/ha/entities` returns without a code
+change. With an empty or missing `ha_entities`, all entities are
+returned.
 
-**Full dashboard (iframe).** The Home card has a Board/Full switch; **Full**
-embeds the real HA dashboard in an iframe at the `HOMEASSISTANT_URL` origin
+**Home (iframe).** The Home card embeds the real HA dashboard in an iframe
+at the `HOMEASSISTANT_URL` origin
 (the viewer's browser loads HA directly — dashhome's backend being reachable
 does not make HA reachable to the viewer's browser). Two deployment notes:
 
 - Home Assistant sends `X-Frame-Options: SAMEORIGIN` by default, which makes
-  browsers refuse the cross-origin iframe. On instances that send the
+  browsers refuse the cross-origin iframe. The refusal renders inside the
+  frame as a "refused to connect" page naming the HA host, while the same
+  URL opens fine in a new tab (a top-level page is not subject to framing
+  rules) — a useful tell that this is the cause. On instances that send the
   header, turn off **Send X-Frame-Options** (HA → Settings → System →
   Network). That weakens clickjacking protection for the HA UI on that
   origin — acceptable on a trusted home network.
