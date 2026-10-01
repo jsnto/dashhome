@@ -220,6 +220,43 @@ describe('app: window maximize', () => {
     fireEvent.click(screen.getByRole('heading', { name: 'Hermes push' }))
     expect(layoutEl().getAttribute('data-max')).toBeNull()
   })
+
+  it('a content heading inside a window body does not toggle maximize', async () => {
+    const { fetchMock } = stubServer(30)
+    const push = {
+      id: 'p1',
+      received_at: new Date().toISOString(),
+      markdown: '## Heading\n\nSome body.',
+    }
+    const json = (body: Record<string, unknown>) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    vi.stubGlobal(
+      'fetch',
+      async (input: unknown, init?: RequestInit) => {
+        const url = String(input)
+        if (url === '/api/hermes/pushes/latest') return json({ push })
+        if (url.startsWith('/api/hermes/pushes?')) return json({ pushes: [push] })
+        return fetchMock(input, init)
+      },
+    )
+    render(<App />)
+
+    // A markdown h2 rendered in the push window body: inside the push
+    // window but outside its .card-head title row.
+    const content = await screen.findByRole('heading', { name: 'Heading' })
+    expect(content.closest('.card-head')).toBeNull()
+    expect(content.closest('[data-win="push"]')).toBeTruthy()
+
+    fireEvent.click(content)
+    expect(layoutEl().getAttribute('data-max')).toBeNull()
+
+    // The real title of the same window still toggles.
+    fireEvent.click(screen.getByRole('heading', { name: 'Hermes push' }))
+    expect(layoutEl().getAttribute('data-max')).toBe('push')
+  })
 })
 
 describe('app: settings screen shows the persisted interval', () => {

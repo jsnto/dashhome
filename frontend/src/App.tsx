@@ -145,7 +145,7 @@ export default function App() {
   // which is kept in state so the proportions come back exactly.
   const handleLayoutClick = (e: React.MouseEvent) => {
     const h2 = (e.target as HTMLElement).closest('h2')
-    if (!h2) return
+    if (!h2?.closest('.card-head')) return
     const raw = h2.closest<HTMLElement>('[data-win]')?.dataset.win
     // Only the four dashboard windows are maximizable; ignore anything else
     // (and this narrows raw to WinId).
