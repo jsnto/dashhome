@@ -102,7 +102,7 @@ type Config struct {
 	boardMu sync.RWMutex
 }
 
-// Refresh interval bounds: sane polling cadence for the dashboard panels
+// Refresh interval bounds: sane polling cadence for the Hermes push panel
 // (no faster than hammering the upstream services, no slower than "live").
 const (
 	RefreshSecondsMin = 5

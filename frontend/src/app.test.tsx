@@ -85,7 +85,7 @@ describe('app: settings screen shows the persisted interval', () => {
 
     fireEvent.change(input, { target: { value: '120' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await screen.findByText(/Saved — panels now poll every 120 seconds\./)
+    await screen.findByText(/Saved — the Hermes push panel now polls every 120 seconds\./)
     expect(board.refresh_seconds).toBe(120)
 
     const configGets = () =>

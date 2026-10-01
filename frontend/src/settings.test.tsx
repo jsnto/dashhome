@@ -117,7 +117,7 @@ describe('settings: updates interval round-trip', () => {
     fireEvent.change(input, { target: { value: '12' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    await screen.findByText(/Saved — panels now poll every 12 seconds\./)
+    await screen.findByText(/Saved — the Hermes push panel now polls every 12 seconds\./)
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
