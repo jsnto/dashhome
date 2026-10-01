@@ -22,12 +22,13 @@ The dashboard has a **settings screen** (header → *Settings*): light/dark
 theme (persisted per browser, defaults to the OS preference), a read-only
 summary of which integrations are actually configured (including the
 full-dashboard embed settings), and the live-update
-interval (how often the panels poll the backend, persisted to
+interval (how often the Hermes push panel polls the backend, persisted to
 `dashhome.json`). A header button toggles the browser's full-screen mode.
 
-Live updates: panels poll the backend on the configured interval; the backend
-fetches fresh data from each configured service on every request — except the
-read-only HA dashboard-config proxy, which caches with a short TTL.
+Live updates: the Hermes push panel polls the backend on the configured
+interval; the backend fetches fresh data from each configured service on
+every request — except the read-only HA dashboard-config proxy, which caches
+with a short TTL.
 
 The React frontend talks only to the backend API; all integrations live in
 the backend.
@@ -254,7 +255,8 @@ the History tabs open any previous one.
 }
 ```
 
-- `ha_entities` — entity IDs to show, in order. Empty/missing = show all.
+- `ha_entities` — entity IDs the entity API returns, in order.
+  Empty/missing = all entities.
 - `ha_labels` — friendly labels per entity (falls back to the entity's
   `friendly_name`).
 - `calendars` — calendar IDs to show as tabs, in order. Empty/missing =
@@ -289,7 +291,7 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 | `GET /api/calendars` | Calendars visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
 | `GET /api/ha/entities` | Configured entities with current states |
-| `GET /api/ha/embed-url` | Fully-formed iframe URL for the "Home (full)" section (token only when `ha_embed.token_url`) |
+| `GET /api/ha/embed-url` | Fully-formed iframe URL for the Home card's dashboard embed (token only when `ha_embed.token_url`) |
 | `GET /api/ha/dashboards?reload=1` | Dashboard inventory (metadata only; `reload` bypasses the TTL cache) |
 | `GET /api/ha/dashboard/:path?reload=1` | One dashboard's full config JSON (pass-through); `:path` empty (i.e. `/api/ha/dashboard[/]`) = default dashboard |
 | `POST /api/hermes/chat` | `{message, conversation}` → `{reply}` |
