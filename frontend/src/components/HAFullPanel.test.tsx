@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import HAFullPanel, { HA_LOAD_WATCHDOG_MS } from './HAFullPanel'
+import HAFullPanel from './HAFullPanel'
 
 function json(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -15,7 +15,6 @@ const embedUrlCalls = (fetchMock: { mock: { calls: unknown[][] } }) =>
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
-  vi.useRealTimers()
 })
 
 describe('HAFullPanel', () => {
@@ -31,15 +30,11 @@ describe('HAFullPanel', () => {
     expect(link.getAttribute('href')).toBe(url)
     expect(link.getAttribute('target')).toBe('_blank')
 
-    // The embed URL is fetched once; the load probe then replays the frame's
-    // request against the full URL as a no-cors fetch.
+    // The embed URL is fetched once on mount.
     expect(embedUrlCalls(fetchMock)).toBe(1)
-    const probe = fetchMock.mock.calls.find(([u]) => String(u) === url)
-    expect(probe).toBeTruthy()
-    expect(probe![1]?.mode).toBe('no-cors')
   })
 
-  it('shows a friendly setup note when HA is not configured (no iframe, no probe)', async () => {
+  it('shows a friendly setup note when HA is not configured (no iframe)', async () => {
     const fetchMock = vi.fn(async (_input: unknown) =>
       json(
         { error: 'homeassistant_not_configured', detail: 'set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN' },
@@ -69,55 +64,5 @@ describe('HAFullPanel', () => {
         'https://ha.local/',
       ),
     )
-  })
-
-  it('surfaces a failed load as an actionable note with the URL and open-in-new-tab path', async () => {
-    const url = 'https://ha.local/'
-    const fetchMock = vi.fn(async (input: unknown) => {
-      const u = String(input)
-      if (u === '/api/ha/embed-url') return json({ url })
-      // Network error on the frame's (unauthenticated) request: a refused
-      // hop or unreachable host, as the frame would show it.
-      throw new TypeError('fetch failed')
-    })
-    vi.stubGlobal('fetch', fetchMock)
-    render(<HAFullPanel />)
-
-    const note = (await screen.findByRole('alert')) as HTMLElement
-    expect(note.textContent).toContain(url)
-    const link = within(note).getByRole('link', { name: url })
-    expect(link.getAttribute('href')).toBe(url)
-    expect(link.getAttribute('target')).toBe('_blank')
-    // The bar's own open-in-new-tab path is still there.
-    expect(screen.getByRole('link', { name: /open in new tab/i })).toBeTruthy()
-  })
-
-  it('surfaces a frame whose load event never arrives, and clears it once load fires', async () => {
-    vi.useFakeTimers()
-    const url = 'https://ha.local/'
-    const fetchMock = vi.fn(async (input: unknown) =>
-      String(input) === '/api/ha/embed-url' ? json({ url }) : new Response(''),
-    )
-    vi.stubGlobal('fetch', fetchMock)
-    const { unmount } = render(<HAFullPanel />)
-
-    // Let the embed URL and the probe settle (the probe resolves: the
-    // browser can reach HA). No failure note yet.
-    await vi.advanceTimersByTimeAsync(1)
-    expect(screen.queryByRole('alert')).toBeNull()
-
-    // The load event never fires: after the watchdog the note appears.
-    await vi.advanceTimersByTimeAsync(HA_LOAD_WATCHDOG_MS)
-    const note = screen.getByRole('alert')
-    expect(note.textContent).toContain(url)
-
-    // The load event fires late: the note is cleared.
-    const iframe = document.querySelector(
-      'iframe[title="Home Assistant dashboard"]',
-    ) as HTMLIFrameElement
-    fireEvent.load(iframe)
-    expect(screen.queryByRole('alert')).toBeNull()
-
-    unmount()
   })
 })

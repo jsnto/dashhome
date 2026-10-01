@@ -75,6 +75,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 8px;
   padding: 6px 2px 16px;
 }
 
@@ -97,6 +99,7 @@ body {
 .head-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -518,64 +521,6 @@ body {
   white-space: pre-wrap;
 }
 
-/* home assistant */
-
-.ha-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 10px;
-}
-
-.ha-card {
-  background: var(--bg-card-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
-}
-
-.ha-state-wrap {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-}
-
-.ha-state {
-  font-size: 21px;
-  font-weight: 650;
-}
-
-.ha-state.good {
-  color: var(--good);
-}
-
-.ha-state.mid {
-  color: var(--text);
-}
-
-.ha-state.dim {
-  color: var(--text-dim);
-}
-
-.ha-state.num {
-  color: var(--accent);
-}
-
-.ha-unit {
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
-.ha-label {
-  font-size: 13px;
-  margin-top: 3px;
-}
-
-.ha-meta {
-  color: var(--text-dim);
-  font-size: 11px;
-  margin-top: 3px;
-}
-
 /* home assistant: full dashboard in an iframe (fills the card height) */
 
 .ha-full {
@@ -602,10 +547,6 @@ body {
 .ha-full-actions {
   display: flex;
   gap: 6px;
-}
-
-.ha-load-note a {
-  word-break: break-all;
 }
 
 .ha-iframe {
