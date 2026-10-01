@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import HAPanel from './HAPanel'
 
@@ -32,6 +32,9 @@ function stubServer(haConfigured: boolean) {
   return fetchMock
 }
 
+const embedUrlCalls = (fetchMock: { mock: { calls: unknown[][] } }) =>
+  fetchMock.mock.calls.filter(([u]) => String(u) === '/api/ha/embed-url').length
+
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
@@ -50,16 +53,27 @@ describe('HAPanel', () => {
     const iframe = (await screen.findByTitle('Home Assistant dashboard')) as HTMLIFrameElement
     expect(iframe.src).toBe('https://ha.local/')
 
-    // The embed's own bar is kept.
-    expect(screen.getByRole('link', { name: /open in new tab/i })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Reload' })).toBeTruthy()
+    // The embed's actions live in the card's title row, on the right of the
+    // title: "Open in new tab" (same URL) and Reload.
+    const head = screen.getByRole('heading', { name: 'Home' }).parentElement as HTMLElement
+    expect(head.classList.contains('card-head')).toBeTruthy()
+    const link = screen.getByRole('link', { name: /open in new tab/i })
+    expect(link.closest('.card-head-actions')).toBeTruthy()
+    expect(link.getAttribute('href')).toBe('https://ha.local/')
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(screen.getByRole('button', { name: 'Reload' }).closest('.card-head-actions')).toBeTruthy()
+
+    // The static embed-bar note is gone, so no bar sits under the title:
+    // the iframe fills the card body directly.
+    expect(screen.queryByText(/Loads Home Assistant directly in this frame/i)).toBeNull()
+    expect(document.querySelector('.ha-full-bar')).toBeNull()
+    expect(iframe.closest('.card')).toBe(document.querySelector('.card'))
 
     // The board view is gone: no Board/Full switch and no entity grid.
     expect(screen.queryByRole('button', { name: 'Board' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Full' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
-    const calls = fetchMock.mock.calls.map(([u]) => String(u))
-    expect(calls.filter((u) => u === '/api/ha/embed-url')).toHaveLength(1)
+    expect(embedUrlCalls(fetchMock)).toBe(1)
   })
 
   it('shows a setup note instead of an iframe when HA is not configured', async () => {
@@ -70,5 +84,25 @@ describe('HAPanel', () => {
     expect(screen.queryByTitle('Home Assistant dashboard')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Board' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Full' })).toBeNull()
+    // Without a URL the embed actions stay out of the title row.
+    expect(screen.queryByRole('link', { name: /open in new tab/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull()
+  })
+
+  it('refetches the embed URL and remounts the iframe when Reload is clicked', async () => {
+    const fetchMock = stubServer(true)
+    vi.stubGlobal('fetch', fetchMock)
+    render(<HAPanel />)
+    await screen.findByTitle('Home Assistant dashboard')
+    expect(embedUrlCalls(fetchMock)).toBe(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }))
+    await vi.waitFor(() => expect(embedUrlCalls(fetchMock)).toBe(2))
+    // The refetched URL is applied to the (re-keyed) iframe.
+    await vi.waitFor(() =>
+      expect((screen.getByTitle('Home Assistant dashboard') as HTMLIFrameElement).src).toBe(
+        'https://ha.local/',
+      ),
+    )
   })
 })
