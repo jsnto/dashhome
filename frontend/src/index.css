@@ -132,12 +132,16 @@ body {
   text-decoration: underline;
 }
 
-/* layout */
+/* layout: a flex row of the two columns with a draggable handle between
+   them; each column stacks its two windows with a draggable handle between
+   them too. All splits are flex-grow ratios driven by the --col / --main /
+   --side custom properties that React sets on .layout from state (live
+   while dragging, kept on release, reset on reload). On the stacked mobile
+   fallback the same properties split the rows instead, so the handles keep
+   working there (the column handle resizes the stacked rows). */
 
 .layout {
-  display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-  grid-template-rows: minmax(0, 1fr);
+  display: flex;
   gap: 16px;
   flex: 1;
   min-height: 0;
@@ -152,7 +156,40 @@ body {
   min-height: 0;
 }
 
-/* the dashboard's section cards fill their column and clip; the settings
+.col-main {
+  flex: var(--col) 1 0;
+}
+
+.col-side {
+  flex: var(--col-r) 1 0;
+}
+
+/* each window sits in a .win wrapper that owns its share of the column
+   (named .win to avoid colliding with the calendar's day-cell .cell) */
+.win {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.win[data-win='calendar'] {
+  flex: var(--main) 1 0;
+}
+
+.win[data-win='chat'] {
+  flex: var(--main-r) 1 0;
+}
+
+.win[data-win='home'] {
+  flex: var(--side) 1 0;
+}
+
+.win[data-win='push'] {
+  flex: var(--side-r) 1 0;
+}
+
+/* the dashboard's section cards fill their window and clip; the settings
    overlay's card (outside .layout) keeps its natural height */
 .layout .card {
   flex: 1 1 0;
@@ -165,6 +202,133 @@ body {
   flex: none;
 }
 
+/* a window's title maximizes it: hide the other windows and columns and
+   let the chosen window stretch to the whole layout; the title row (with
+   its actions) stays at the top of the card, so it remains reachable. The
+   flex: 1 1 0 overrides matter: with the siblings hidden, the column's and
+   window's fractional grow alone would leave the free space undistributed
+   (the grow values sum to < 1), so the survivors are forced to full size. */
+.layout[data-max] .win,
+.layout[data-max] .divider {
+  display: none;
+}
+
+.layout[data-max='calendar'] .col-main,
+.layout[data-max='chat'] .col-main,
+.layout[data-max='home'] .col-side,
+.layout[data-max='push'] .col-side {
+  flex: 1 1 0;
+}
+
+.layout[data-max='calendar'] .win[data-win='calendar'],
+.layout[data-max='chat'] .win[data-win='chat'],
+.layout[data-max='home'] .win[data-win='home'],
+.layout[data-max='push'] .win[data-win='push'] {
+  display: flex;
+  flex: 1 1 0;
+}
+
+.layout[data-max='calendar'] .col-side,
+.layout[data-max='chat'] .col-side {
+  display: none;
+}
+
+.layout[data-max='home'] .col-main,
+.layout[data-max='push'] .col-main {
+  display: none;
+}
+
+/* titles are clickable (maximize toggle) */
+.layout .card-head h2 {
+  cursor: pointer;
+}
+
+/* draggable split handles: zero-size flex items whose negative margins
+   absorb the surrounding gaps, so the visual 16px spacing is unchanged;
+   ::before is the wide invisible hit area, ::after the line that lights up
+   on hover/press */
+.divider {
+  position: relative;
+  flex: none;
+  z-index: 2;
+  touch-action: none;
+}
+
+.divider::before {
+  content: '';
+  position: absolute;
+}
+
+.divider::after {
+  content: '';
+  position: absolute;
+  border-radius: 1px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.divider:hover::after,
+.divider:active::after {
+  opacity: 1;
+}
+
+/* between the columns: a vertical line (col-resize) */
+.divider-v {
+  width: 0;
+  margin: 0 -8px;
+  cursor: col-resize;
+}
+
+.divider-v::before {
+  left: -12px;
+  right: -12px;
+  top: 0;
+  bottom: 0;
+}
+
+.divider-v::after {
+  left: -1px;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+}
+
+/* between the stacked windows inside a column: a horizontal line (row-resize) */
+.divider-h {
+  height: 0;
+  margin: -8px 0;
+  cursor: row-resize;
+}
+
+.divider-h::before {
+  left: 0;
+  right: 0;
+  top: -12px;
+  bottom: -12px;
+}
+
+.divider-h::after {
+  left: 8px;
+  right: 8px;
+  top: -1px;
+  height: 2px;
+}
+
+/* while dragging, the resize cursor follows the pointer everywhere */
+body.resizing-x,
+body.resizing-y {
+  user-select: none;
+}
+
+body.resizing-x {
+  cursor: col-resize;
+}
+
+body.resizing-y {
+  cursor: row-resize;
+}
+
 /* scrollable content region inside a card */
 .card-scroll {
   flex: 1;
@@ -175,8 +339,32 @@ body {
 
 @media (max-width: 980px) {
   .layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    flex-direction: column;
+  }
+
+  /* the column handle becomes the horizontal split between the two stacked
+     column groups; its drag axis flips with it (see App.tsx) */
+  .divider-v {
+    width: auto;
+    height: 0;
+    margin: -8px 0;
+    cursor: row-resize;
+  }
+
+  .divider-v::before {
+    left: 0;
+    right: 0;
+    top: -12px;
+    bottom: -12px;
+  }
+
+  .divider-v::after {
+    left: 8px;
+    right: 8px;
+    top: -1px;
+    bottom: auto;
+    width: auto;
+    height: 2px;
   }
 }
 
@@ -521,33 +709,8 @@ body {
   white-space: pre-wrap;
 }
 
-/* home assistant: full dashboard in an iframe (fills the card height) */
-
-.ha-full {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: 1;
-  min-height: 0;
-}
-
-.ha-full-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.ha-full-note {
-  color: var(--text-dim);
-  font-size: 11.5px;
-}
-
-.ha-full-actions {
-  display: flex;
-  gap: 6px;
-}
+/* home assistant: full dashboard in an iframe (fills the card body; the
+   embed actions live in the card header, to the right of the title) */
 
 .ha-iframe {
   width: 100%;
@@ -556,6 +719,14 @@ body {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-card-2);
+}
+
+/* actions pushed to the right side of a card's title row */
+.card-head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* chat (fills its card; the log scrolls inside) */
