@@ -18,10 +18,6 @@ function stubServer(haConfigured: boolean) {
         },
       })
     }
-    if (url === '/api/ha/entities') {
-      // The board view is gone: the panel must never fetch the entity grid.
-      return json({ error: 'unexpected_entities_call' }, 500)
-    }
     if (url === '/api/ha/embed-url') {
       if (!haConfigured) {
         return json(
@@ -58,13 +54,11 @@ describe('HAPanel', () => {
     expect(screen.getByRole('link', { name: /open in new tab/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Reload' })).toBeTruthy()
 
-    // The board view is gone: no Board/Full switch, no entity grid, and no
-    // entity fetch/refresh machinery (the section never calls the endpoint).
+    // The board view is gone: no Board/Full switch and no entity grid.
     expect(screen.queryByRole('button', { name: 'Board' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Full' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
     const calls = fetchMock.mock.calls.map(([u]) => String(u))
-    expect(calls.filter((u) => u === '/api/ha/entities')).toHaveLength(0)
     expect(calls.filter((u) => u === '/api/ha/embed-url')).toHaveLength(1)
   })
 

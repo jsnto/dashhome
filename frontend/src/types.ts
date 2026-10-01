@@ -49,16 +49,6 @@ export interface ApiEvent {
   all_day: boolean
 }
 
-export interface HAEntity {
-  entity_id: string
-  label: string
-  friendly_name?: string
-  state: string
-  attributes?: Record<string, unknown>
-  last_updated?: string
-  last_changed?: string
-}
-
 export interface Push {
   id: string
   received_at: string
