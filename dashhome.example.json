@@ -19,5 +19,9 @@
     { "id": "your.family@gmail.com", "label": "Family" },
     { "id": "your.work@gmail.com", "label": "Work" }
   ],
-  "refresh_seconds": 30
+  "refresh_seconds": 30,
+  "ha_embed": {
+    "url_path": null,
+    "token_url": false
+  }
 }

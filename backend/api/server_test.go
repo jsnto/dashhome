@@ -3,11 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,6 +72,48 @@ type fakeHA struct{ states []ha.EntityState }
 
 func (f *fakeHA) GetStates(ctx context.Context) ([]ha.EntityState, error) { return f.states, nil }
 
+// fakeDash implements ha.DashboardsClient and records every call so tests
+// can assert force/reload handling without a real WS server.
+type fakeDash struct {
+	mu        sync.Mutex
+	list      []ha.Dashboard
+	listErr   error
+	configRaw json.RawMessage
+	configErr error
+	calls     []string
+}
+
+func (f *fakeDash) ListDashboards(ctx context.Context, force bool) ([]ha.Dashboard, error) {
+	f.record(fmt.Sprintf("list:force=%v", force))
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.list, nil
+}
+
+func (f *fakeDash) GetDashboardConfig(ctx context.Context, urlPath string, force bool) (json.RawMessage, error) {
+	f.record(fmt.Sprintf("config:%q:force=%v", urlPath, force))
+	if f.configErr != nil {
+		return nil, f.configErr
+	}
+	if f.configRaw == nil {
+		return json.RawMessage(`{"views":[{"title":"Overview"}]}`), nil
+	}
+	return f.configRaw, nil
+}
+
+func (f *fakeDash) record(call string) {
+	f.mu.Lock()
+	f.calls = append(f.calls, call)
+	f.mu.Unlock()
+}
+
+func (f *fakeDash) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
 type fakeHermes struct {
 	reply   string
 	err     error
@@ -82,13 +127,13 @@ func (f *fakeHermes) Chat(ctx context.Context, req hermes.ChatRequest) (string, 
 
 // --- helpers ---------------------------------------------------------------
 
-func newServer(t *testing.T, cfg *config.Config, google GoogleAPI, haC ha.StatesClient, herm hermes.Chatter) *gin.Engine {
+func newServer(t *testing.T, cfg *config.Config, google GoogleAPI, haC ha.StatesClient, herm hermes.Chatter, haDash ha.DashboardsClient) *gin.Engine {
 	t.Helper()
 	pushes, err := store.NewFileStore(filepath.Join(t.TempDir(), "pushes"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewServer(cfg, google, haC, herm, pushes).Engine()
+	return NewServer(cfg, google, haC, haDash, herm, pushes).Engine()
 }
 
 func do(r *gin.Engine, method, path string, body any, hdr map[string]string) *httptest.ResponseRecorder {
@@ -135,7 +180,7 @@ func testTime(s string) time.Time {
 // --- config / health ---------------------------------------------------------
 
 func TestHealthz(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "GET", "/healthz", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d", w.Code)
@@ -147,7 +192,7 @@ func TestGetConfig(t *testing.T) {
 	cfg.HAURL, cfg.HAToken = "https://ha.local", "tok"
 	cfg.HermesBaseURL = "https://hermes.local"
 	g := &fakeGoogle{hasToken: true, cals: []calendar.Calendar{{ID: "personal@example.com", Summary: "Personal"}}}
-	r := newServer(t, cfg, g, &fakeHA{}, &fakeHermes{})
+	r := newServer(t, cfg, g, &fakeHA{}, &fakeHermes{}, nil)
 	w := do(r, "GET", "/api/config", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -179,7 +224,7 @@ func TestGetConfig(t *testing.T) {
 }
 
 func TestGetConfigUnconfiguredGoogle(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "GET", "/api/config", nil, nil)
 	var resp struct {
 		Integrations struct {
@@ -207,7 +252,7 @@ func TestGetConfigSecretFree(t *testing.T) {
 	cfg.Google.ClientSecret = "super-secret-google-client"
 	cfg.Google.AccessToken = "ya29.super-secret-google-access"
 	g := &fakeGoogle{hasToken: true, cals: []calendar.Calendar{{ID: "personal@example.com", Summary: "Personal"}}}
-	r := newServer(t, cfg, g, &fakeHA{}, &fakeHermes{})
+	r := newServer(t, cfg, g, &fakeHA{}, &fakeHermes{}, nil)
 	w := do(r, "GET", "/api/config", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -234,7 +279,7 @@ func TestPutConfigRefresh(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.BoardFile = file
-	r := newServer(t, cfg, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil)
 
 	// Valid update: accepted, in-memory and on-disk, and visible via GET.
 	w := do(r, "PUT", "/api/config/refresh", map[string]any{"refresh_seconds": 45}, nil)
@@ -280,7 +325,7 @@ func TestPutConfigRefreshInvalid(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.BoardFile = file
-	r := newServer(t, cfg, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil)
 
 	cases := []struct {
 		name string
@@ -312,7 +357,7 @@ func TestPutConfigRefreshInvalid(t *testing.T) {
 func TestPutConfigRefreshNoBoardFile(t *testing.T) {
 	cfg := cfgFor(t)
 	cfg.BoardFile = ""
-	r := newServer(t, cfg, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil)
 	w := do(r, "PUT", "/api/config/refresh", map[string]any{"refresh_seconds": 45}, nil)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("code = %d, want 503: %s", w.Code, w.Body.String())
@@ -332,7 +377,7 @@ func eventCal(id, calID, summary string, start, end string, allDay bool) calenda
 }
 
 func TestListCalendarsNotConfigured(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "GET", "/api/calendars", nil, nil)
 	if w.Code != 503 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -346,7 +391,7 @@ func TestListCalendarsNotConfigured(t *testing.T) {
 
 func TestListCalendarsLoginRequired(t *testing.T) {
 	g := &fakeGoogle{hasToken: false, loginURL: "https://accounts.google.example/login"}
-	r := newServer(t, cfgFor(t), g, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil)
 	w := do(r, "GET", "/api/calendars", nil, nil)
 	if w.Code != 503 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -366,7 +411,7 @@ func TestListCalendarsFilterAndLabels(t *testing.T) {
 		},
 	}
 	cfg := cfgFor(t)
-	r := newServer(t, cfg, g, nil, nil)
+	r := newServer(t, cfg, g, nil, nil, nil)
 	w := do(r, "GET", "/api/calendars", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -405,7 +450,7 @@ func TestListEventsSummaryCombined(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.Board.Calendars = []config.CalendarRef{} // no filter: all calendars
-	r := newServer(t, cfg, g, nil, nil)
+	r := newServer(t, cfg, g, nil, nil, nil)
 
 	w := do(r, "GET", "/api/events?start=2026-03-01T00:00:00Z&end=2026-03-31T23:59:59Z", nil, nil)
 	if w.Code != 200 {
@@ -435,7 +480,7 @@ func TestListEventsSummaryCombined(t *testing.T) {
 	}
 	// Date-only inputs must be accepted and mapped onto a sane range.
 	g2 := &fakeGoogle{hasToken: true, cals: g.cals, events: g.events}
-	r2 := newServer(t, cfg, g2, nil, nil)
+	r2 := newServer(t, cfg, g2, nil, nil, nil)
 	w2 := do(r2, "GET", "/api/events?start=2026-03-01&end=2026-03-31", nil, nil)
 	if w2.Code != 200 {
 		t.Fatalf("date-only range: code = %d: %s", w2.Code, w2.Body.String())
@@ -457,7 +502,7 @@ func TestListEventsSingleCalendar(t *testing.T) {
 			},
 		},
 	}
-	r := newServer(t, cfgFor(t), g, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil)
 	w := do(r, "GET", "/api/events?calendar=work%40example.com&start=2026-03-01T00:00:00Z&end=2026-03-31T23:59:59Z", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -475,7 +520,7 @@ func TestListEventsSingleCalendar(t *testing.T) {
 }
 
 func TestListEventsNotConfigured(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "GET", "/api/events", nil, nil)
 	if w.Code != 503 {
 		t.Fatalf("code = %d", w.Code)
@@ -484,7 +529,7 @@ func TestListEventsNotConfigured(t *testing.T) {
 
 func TestListEventsBadRange(t *testing.T) {
 	g := &fakeGoogle{hasToken: true}
-	r := newServer(t, cfgFor(t), g, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil)
 	w := do(r, "GET", "/api/events?start=garbage", nil, nil)
 	if w.Code != 400 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -493,7 +538,7 @@ func TestListEventsBadRange(t *testing.T) {
 
 func TestListEventsAllFail(t *testing.T) {
 	g := &fakeGoogle{hasToken: true, err: context.DeadlineExceeded}
-	r := newServer(t, cfgFor(t), g, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil)
 	w := do(r, "GET", "/api/events", nil, nil)
 	if w.Code != 502 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -509,7 +554,7 @@ func TestHAEntitiesAll(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.Board.HAEntityIDs = nil // no filter
-	r := newServer(t, cfg, nil, &fakeHA{states: states}, nil)
+	r := newServer(t, cfg, nil, &fakeHA{states: states}, nil, nil)
 	w := do(r, "GET", "/api/ha/entities", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -549,7 +594,7 @@ func TestHAEntitiesFiltered(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.Board.HAEntityIDs = []string{"binary_sensor.door", "climate.thermo", "sensor.missing"}
-	r := newServer(t, cfg, nil, &fakeHA{states: states}, nil)
+	r := newServer(t, cfg, nil, &fakeHA{states: states}, nil, nil)
 	w := do(r, "GET", "/api/ha/entities", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -573,12 +618,212 @@ func TestHAEntitiesFiltered(t *testing.T) {
 }
 
 func TestHANotConfigured(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "GET", "/api/ha/entities", nil, nil)
 	if w.Code != 503 {
 		t.Fatalf("code = %d", w.Code)
 	}
+	// The new HA endpoints share the same not-configured contract.
+	for _, path := range []string{"/api/ha/embed-url", "/api/ha/dashboards", "/api/ha/dashboard", "/api/ha/dashboard/"} {
+		w := do(r, "GET", path, nil, nil)
+		if w.Code != 503 {
+			t.Fatalf("%s: code = %d, want 503: %s", path, w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp["error"] != "homeassistant_not_configured" {
+			t.Errorf("%s: error = %q", path, resp["error"])
+		}
+	}
 }
+
+// --- Home Assistant embed URL --------------------------------------------------
+
+func haCfg(t *testing.T) *config.Config {
+	cfg := cfgFor(t)
+	cfg.HAURL, cfg.HAToken = "https://ha.local", "super-secret-ha-token"
+	return cfg
+}
+
+func TestHAEmbedURLDefault(t *testing.T) {
+	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, nil)
+	w := do(r, "GET", "/api/ha/embed-url", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		URL string `json:"url"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.URL != "https://ha.local/" {
+		t.Errorf("url = %q, want default dashboard", resp.URL)
+	}
+}
+
+func TestHAEmbedURLPathAndToken(t *testing.T) {
+	cfg := haCfg(t)
+	cfg.Board.HAEmbed = &config.HAEmbed{URLPath: spStr("/energy/"), TokenURL: true}
+	r := newServer(t, cfg, nil, &fakeHA{}, nil, nil)
+	w := do(r, "GET", "/api/ha/embed-url", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		URL string `json:"url"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.URL != "https://ha.local/energy?auth_long_lived=super-secret-ha-token" {
+		t.Errorf("url = %q", resp.URL)
+	}
+}
+
+func TestHAEmbedURLNoTokenByDefault(t *testing.T) {
+	cfg := haCfg(t)
+	cfg.Board.HAEmbed = &config.HAEmbed{URLPath: spStr("energy")} // token_url unset = false
+	r := newServer(t, cfg, nil, &fakeHA{}, nil, nil)
+	w := do(r, "GET", "/api/ha/embed-url", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "super-secret-ha-token") {
+		t.Errorf("token leaked with token_url=false: %s", body)
+	}
+	if !strings.Contains(body, "https://ha.local/energy") {
+		t.Errorf("url = %s", body)
+	}
+}
+
+func TestHAEmbedURLNullPath(t *testing.T) {
+	cfg := haCfg(t)
+	cfg.Board.HAEmbed = &config.HAEmbed{URLPath: nil, TokenURL: true} // explicit null = default dashboard
+	r := newServer(t, cfg, nil, &fakeHA{}, nil, nil)
+	w := do(r, "GET", "/api/ha/embed-url", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		URL string `json:"url"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.URL != "https://ha.local/?auth_long_lived=super-secret-ha-token" {
+		t.Errorf("url = %q", resp.URL)
+	}
+}
+
+// --- Home Assistant dashboards --------------------------------------------------
+
+func TestHADashboards(t *testing.T) {
+	d := &fakeDash{list: []ha.Dashboard{
+		{ID: "default", Title: "My Home", Mode: "storage"},
+		{ID: "energy", URLPath: spStr("energy"), Title: "Energy", RequireAdmin: true, Mode: "yaml"},
+	}}
+	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, d)
+	w := do(r, "GET", "/api/ha/dashboards", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Dashboards []ha.Dashboard `json:"dashboards"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Dashboards) != 2 || resp.Dashboards[1].ID != "energy" || !resp.Dashboards[1].RequireAdmin {
+		t.Errorf("dashboards = %+v", resp.Dashboards)
+	}
+	if got := d.calls[len(d.calls)-1]; got != "list:force=false" {
+		t.Errorf("upstream call = %q", got)
+	}
+
+	// ?reload=1 forces a re-fetch upstream.
+	w = do(r, "GET", "/api/ha/dashboards?reload=1", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("reload code = %d: %s", w.Code, w.Body.String())
+	}
+	if got := d.calls[len(d.calls)-1]; got != "list:force=true" {
+		t.Errorf("upstream call = %q", got)
+	}
+}
+
+func TestHADashboardsUpstreamError(t *testing.T) {
+	d := &fakeDash{listErr: context.DeadlineExceeded}
+	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, d)
+	w := do(r, "GET", "/api/ha/dashboards", nil, nil)
+	if w.Code != 502 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "homeassistant_unavailable" {
+		t.Errorf("error = %q", resp["error"])
+	}
+}
+
+func TestHADashboardConfigPassthrough(t *testing.T) {
+	raw := json.RawMessage(`{"views":[{"title":"Overview","cards":[{"type":"entities"}]}]}`)
+	d := &fakeDash{configRaw: raw}
+	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, d)
+
+	w := do(r, "GET", "/api/ha/dashboard/energy", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != string(raw) {
+		t.Errorf("body = %s, want raw pass-through", got)
+	}
+	if got := d.calls[len(d.calls)-1]; got != `config:"energy":force=false` {
+		t.Errorf("upstream call = %q", got)
+	}
+
+	// Default dashboard: exact-match route without a trailing slash.
+	w = do(r, "GET", "/api/ha/dashboard", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("no-slash default: code = %d: %s", w.Code, w.Body.String())
+	}
+	if got := d.calls[len(d.calls)-1]; got != `config:"":force=false` {
+		t.Errorf("upstream call = %q", got)
+	}
+
+	// Default dashboard: empty wildcard path segment.
+	w = do(r, "GET", "/api/ha/dashboard/", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("default code = %d: %s", w.Code, w.Body.String())
+	}
+	if got := d.calls[len(d.calls)-1]; got != `config:"":force=false` {
+		t.Errorf("upstream call = %q", got)
+	}
+
+	// url_path is normalized on the way up.
+	w = do(r, "GET", "/api/ha/dashboard//energy/", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("normalized code = %d: %s", w.Code, w.Body.String())
+	}
+	if got := d.calls[len(d.calls)-1]; got != `config:"energy":force=false` {
+		t.Errorf("upstream call = %q", got)
+	}
+
+	// ?reload=1 forces a re-fetch upstream.
+	w = do(r, "GET", "/api/ha/dashboard/energy?reload=1", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("reload code = %d: %s", w.Code, w.Body.String())
+	}
+	if got := d.calls[len(d.calls)-1]; got != `config:"energy":force=true` {
+		t.Errorf("upstream call = %q", got)
+	}
+}
+
+func TestHADashboardConfigUpstreamError(t *testing.T) {
+	d := &fakeDash{configErr: errors.New("home assistant lovelace/config failed: No dashboard found")}
+	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, d)
+	w := do(r, "GET", "/api/ha/dashboard/nope", nil, nil)
+	if w.Code != 502 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "No dashboard found") {
+		t.Errorf("detail = %s", w.Body.String())
+	}
+}
+
+func spStr(s string) *string { return &s }
 
 // --- Hermes chat ------------------------------------------------------------------
 
@@ -586,7 +831,7 @@ func TestHermesChat(t *testing.T) {
 	h := &fakeHermes{reply: "hi from hermes"}
 	cfg := cfgFor(t)
 	cfg.HermesBaseURL = "https://hermes.local"
-	r := newServer(t, cfg, nil, nil, h)
+	r := newServer(t, cfg, nil, nil, h, nil)
 	w := do(r, "POST", "/api/hermes/chat", map[string]any{
 		"message":      "hello",
 		"conversation": []map[string]string{{"role": "user", "content": "earlier"}},
@@ -607,7 +852,7 @@ func TestHermesChat(t *testing.T) {
 }
 
 func TestHermesChatNotConfigured(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "POST", "/api/hermes/chat", map[string]string{"message": "hi"}, nil)
 	if w.Code != 503 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -616,7 +861,7 @@ func TestHermesChatNotConfigured(t *testing.T) {
 
 func TestHermesChatEmptyMessage(t *testing.T) {
 	h := &fakeHermes{reply: "x"}
-	r := newServer(t, cfgFor(t), nil, nil, h)
+	r := newServer(t, cfgFor(t), nil, nil, h, nil)
 	w := do(r, "POST", "/api/hermes/chat", map[string]string{"message": "  "}, nil)
 	if w.Code != 400 {
 		t.Fatalf("code = %d", w.Code)
@@ -627,7 +872,7 @@ func TestHermesChatUpstreamError(t *testing.T) {
 	h := &fakeHermes{err: context.DeadlineExceeded}
 	cfg := cfgFor(t)
 	cfg.HermesBaseURL = "https://hermes.local"
-	r := newServer(t, cfg, nil, nil, h)
+	r := newServer(t, cfg, nil, nil, h, nil)
 	w := do(r, "POST", "/api/hermes/chat", map[string]string{"message": "hi"}, nil)
 	if w.Code != 502 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -647,7 +892,7 @@ func pushJSON(markdown, source string) map[string]string {
 func TestPushNotConfigured(t *testing.T) {
 	cfg := cfgFor(t)
 	cfg.PushToken = ""
-	r := newServer(t, cfg, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil)
 	w := do(r, "POST", "/api/hermes/push", pushJSON("# hi", ""), map[string]string{"Authorization": "Bearer whatever"})
 	if w.Code != 503 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -655,7 +900,7 @@ func TestPushNotConfigured(t *testing.T) {
 }
 
 func TestPushUnauthorized(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "POST", "/api/hermes/push", pushJSON("# hi", ""), map[string]string{"Authorization": "Bearer wrong"})
 	if w.Code != 401 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -669,7 +914,7 @@ func TestPushAuthStyles(t *testing.T) {
 		{"X-Token-Query": ""}, // use ?token=
 	}
 	for i, hdr := range modes {
-		r := newServer(t, cfgFor(t), nil, nil, nil)
+		r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 		var w *httptest.ResponseRecorder
 		if i == 2 {
 			w = do(r, "POST", "/api/hermes/push?token=push-tok", pushJSON("# via query", ""), map[string]string{"Content-Type": "application/json"})
@@ -683,7 +928,7 @@ func TestPushAuthStyles(t *testing.T) {
 }
 
 func TestPushEmptyMarkdown(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "POST", "/api/hermes/push", pushJSON("", ""), map[string]string{"Authorization": "Bearer push-tok"})
 	if w.Code != 400 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -691,7 +936,7 @@ func TestPushEmptyMarkdown(t *testing.T) {
 }
 
 func TestPushLifecycle(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	hdr := map[string]string{"Authorization": "Bearer push-tok"}
 
 	w1 := do(r, "POST", "/api/hermes/push", pushJSON("# one", "hermes"), hdr)
@@ -776,7 +1021,7 @@ func TestPushLifecycle(t *testing.T) {
 }
 
 func TestPushLatestEmpty(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "GET", "/api/hermes/pushes/latest", nil, nil)
 	if w.Code != 404 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -784,7 +1029,7 @@ func TestPushLatestEmpty(t *testing.T) {
 }
 
 func TestPushListEmpty(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "GET", "/api/hermes/pushes", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d", w.Code)
@@ -819,7 +1064,7 @@ func TestGoogleCallbackFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newTestGoogleOAuth: %v", err)
 	}
-	r := newServer(t, cfgFor(t), g, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil)
 
 	// Missing code.
 	w := do(r, "GET", "/api/auth/google/callback", nil, nil)
@@ -841,7 +1086,7 @@ func TestGoogleCallbackFlow(t *testing.T) {
 }
 
 func TestGoogleLoginEndpointUnconfigured(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
 	w := do(r, "GET", "/api/auth/google/login", nil, nil)
 	if w.Code != 404 {
 		t.Fatalf("code = %d (route should not exist without google): %s", w.Code, w.Body.String())
@@ -850,7 +1095,7 @@ func TestGoogleLoginEndpointUnconfigured(t *testing.T) {
 
 func TestGoogleLoginAlreadyAuthorized(t *testing.T) {
 	g := &fakeGoogle{hasToken: true}
-	r := newServer(t, cfgFor(t), g, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil)
 	w := do(r, "GET", "/api/auth/google/login", nil, nil)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "already_authorized") {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -876,7 +1121,7 @@ func TestStaticServing(t *testing.T) {
 	}
 
 	cfg := cfgFor(t)
-	r := NewServer(cfg, nil, nil, nil, mustStore(t)).Engine()
+	r := NewServer(cfg, nil, nil, nil, nil, mustStore(t)).Engine()
 	ServeStatic(r, dist)
 
 	// API still works.
@@ -912,7 +1157,7 @@ func TestStaticServing(t *testing.T) {
 }
 
 func TestStaticMissing(t *testing.T) {
-	r := NewServer(cfgFor(t), nil, nil, nil, mustStore(t)).Engine()
+	r := NewServer(cfgFor(t), nil, nil, nil, nil, mustStore(t)).Engine()
 	ServeStatic(r, filepath.Join(t.TempDir(), "nope"))
 	w := do(r, "GET", "/", nil, nil)
 	if w.Code != 404 {

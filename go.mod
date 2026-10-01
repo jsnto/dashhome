@@ -6,6 +6,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	golang.org/x/oauth2 v0.37.0
 	google.golang.org/api v0.299.0
+	nhooyr.io/websocket v1.8.17
 )
 
 require (

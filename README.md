@@ -7,7 +7,10 @@ dashhome is a single Go process (Gin) on port **3000** that integrates with
 
 - **Google Calendar** — every visible calendar in its own tab, plus a
   **Summary** tab that combines all of them into one month view;
-- **Home Assistant** — the current state of a configurable set of entities;
+- **Home Assistant** — the current state of a configurable set of entities,
+  plus a **Full** view that embeds the real HA dashboard in an iframe
+  (Board/Full switch in the Home card), and a read-only API proxy for the
+  dashboard inventory and their config;
 - **Hermes (chat)** — a chat box that forwards messages to your Hermes API
   and keeps the conversation thread visible; the mic button also accepts
   spoken commands (browser speech recognition), which go through the same
@@ -18,12 +21,14 @@ dashhome is a single Go process (Gin) on port **3000** that integrates with
 
 The dashboard has a **settings screen** (header → *Settings*): light/dark
 theme (persisted per browser, defaults to the OS preference), a read-only
-summary of which integrations are actually configured, and the live-update
+summary of which integrations are actually configured (including the
+full-dashboard embed settings), and the live-update
 interval (how often the panels poll the backend, persisted to
 `dashhome.json`). A header button toggles the browser's full-screen mode.
 
 Live updates: panels poll the backend on the configured interval; the backend
-fetches fresh data from each configured service on every request.
+fetches fresh data from each configured service on every request — except the
+read-only HA dashboard-config proxy, which caches with a short TTL.
 
 The React frontend talks only to the backend API; all integrations live in
 the backend.
@@ -33,11 +38,11 @@ the backend.
 | dashhome (Go + Gin, :3000)                                   |
 |                                                               |
 |  /api  ──► Google Calendar   (list calendars, list events)    |
-|        ──► Home Assistant    (entity states)                  |
+|        ──► Home Assistant    (entity states, dashboards)      |
 |        ──► Hermes chat       (POST message, get reply)        |
 |        ◄── Hermes push       (POST markdown, token-auth)      |
 |                                                               |
-|  /     ──► React (Vite) build: calendar tabs, HA grid,        |
+|  /     ──► React (Vite) build: calendar tabs, HA board/full,  |
 |            chat box, markdown panel + push history tabs       |
 +--------------------------------------------------------------+
 ```
@@ -114,6 +119,31 @@ Which entities the dashboard shows is **driven by `dashhome.json`**, not code
 — edit `ha_entities` (and optional `ha_labels`) and restart (or reload) to
 change the dashboard without a code change. With an empty or missing
 `ha_entities`, all entities are shown.
+
+**Full dashboard (iframe).** The Home card has a Board/Full switch; **Full**
+embeds the real HA dashboard in an iframe at the `HOMEASSISTANT_URL` origin
+(the viewer's browser loads HA directly — dashhome's backend being reachable
+does not make HA reachable to the viewer's browser). Two deployment notes:
+
+- Home Assistant sends `X-Frame-Options: SAMEORIGIN` by default, which makes
+  browsers refuse the cross-origin iframe. On instances that send the
+  header, turn off **Send X-Frame-Options** (HA → Settings → System →
+  Network). That weakens clickjacking protection for the HA UI on that
+  origin — acceptable on a trusted home network.
+- Auth: by default the iframe relies on the browser's own HA session — the
+  first visit shows HA's login page inside the frame and the (partitioned)
+  browser storage keeps it logged in afterwards. If the HA version still
+  supports URL-token auth and you prefer that, set
+  `"ha_embed": { "token_url": true }` in `dashhome.json`: the embed URL is
+  assembled **server-side** with `?auth_long_lived=…` (same
+  `HOMEASSISTANT_TOKEN`), so the token never lands in `dashhome.json` or
+  browser storage — only in the iframe's own URL (visible in that context's
+  history).
+
+The backend also proxies the read-only dashboard config API (WS
+`lovelace/dashboards/list` + `lovelace/config`, with the older
+`get_dashboards`/`get_dashboard` names probed automatically): see
+`GET /api/ha/dashboards` and `GET /api/ha/dashboard/:path` below.
 
 ### Google Calendar
 
@@ -216,7 +246,8 @@ the History tabs open any previous one.
     { "id": "family@gmail.com", "label": "Family" },
     { "id": "work@gmail.com", "label": "Work" }
   ],
-  "refresh_seconds": 30
+  "refresh_seconds": 30,
+  "ha_embed": { "url_path": null, "token_url": false }
 }
 ```
 
@@ -227,6 +258,13 @@ the History tabs open any previous one.
   show every visible calendar.
 - `refresh_seconds` — UI polling interval hint (default 30, range 5–3600).
   Editable from the dashboard's settings screen, which persists it here.
+- `ha_embed` — the full-dashboard iframe (optional; missing = default
+dashboard, no token in the URL):
+  - `url_path` — dashboard `url_path` to embed (`null` = the default
+    dashboard; find the value in the HA UI sidebar or via
+    `GET /api/ha/dashboards`).
+  - `token_url` — put the long-lived token in the embed URL (server-side
+    only). Default `false`. See the notes above.
 
 Path: `CONFIG_FILE` (default `./dashhome.json`).
 
@@ -248,6 +286,9 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 | `GET /api/calendars` | Calendars visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
 | `GET /api/ha/entities` | Configured entities with current states |
+| `GET /api/ha/embed-url` | Fully-formed iframe URL for the "Home (full)" section (token only when `ha_embed.token_url`) |
+| `GET /api/ha/dashboards?reload=1` | Dashboard inventory (metadata only; `reload` bypasses the TTL cache) |
+| `GET /api/ha/dashboard/:path?reload=1` | One dashboard's full config JSON (pass-through); `:path` empty (i.e. `/api/ha/dashboard[/]`) = default dashboard |
 | `POST /api/hermes/chat` | `{message, conversation}` → `{reply}` |
 | `POST /api/hermes/push` | Authenticated markdown push → `201 {push}` |
 | `GET /api/hermes/pushes?limit=` | Previous pushes, newest first |
@@ -270,7 +311,14 @@ into friendly setup notes.
   raw-HTML support, so pushed content cannot inject HTML.
 - `GET /api/config` exposes only non-secret board settings and per-integration
   booleans; tokens and credentials (env vars only) are never included in API
-  responses.
+  responses. One deliberate exception: `GET /api/ha/embed-url` returns the
+  embed URL with `?auth_long_lived=<token>` **only when `ha_embed.token_url`
+  is set** — the token is assembled server-side for the iframe and never
+  written to `dashhome.json` or browser storage.
+- The dashboard-config proxy (`/api/ha/dashboards`,
+  `/api/ha/dashboard/:path`) is read-only: dashhome never writes to Home
+  Assistant through it (no service calls, no config saves) and caches the
+  results in memory with a TTL (`?reload=1` forces a re-fetch).
 - Secrets live only in env vars / your secrets store; `.env`, `data/`, and
   `dashhome.json` are git-ignored.
 

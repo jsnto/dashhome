@@ -1,10 +1,18 @@
 // Shared API types mirroring the Go backend JSON.
 
+export interface HAEmbed {
+  /** Dashboard url_path to embed; null/absent = Home Assistant's default dashboard. */
+  url_path: string | null
+  /** Embed the long-lived token in the URL (assembled server-side). Default false. */
+  token_url?: boolean
+}
+
 export interface ApiBoard {
   ha_entities: string[]
   ha_labels: Record<string, string>
   calendars: { id: string; label: string }[]
   refresh_seconds: number
+  ha_embed?: HAEmbed | null
 }
 
 export interface ApiConfig {

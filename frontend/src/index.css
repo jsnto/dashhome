@@ -543,6 +543,40 @@ body {
   margin-top: 3px;
 }
 
+/* home assistant: full dashboard in an iframe */
+
+.ha-full {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ha-full-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ha-full-note {
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.ha-full-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.ha-iframe {
+  width: 100%;
+  height: 640px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card-2);
+}
+
 /* chat */
 
 .chat {

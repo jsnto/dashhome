@@ -69,6 +69,13 @@ export const api = {
   getHAEntities: () =>
     request<{ entities: HAEntity[] }>('/ha/entities').then((b) => b.entities),
 
+  /**
+   * Fully-formed iframe URL for the "Home (full)" section, assembled
+   * server-side (token only when token_url is enabled, so the token never
+   * lands in the board file or browser storage).
+   */
+  getHAAEmbedURL: () => request<{ url: string }>('/ha/embed-url').then((b) => b.url),
+
   chat: (message: string, conversation: ChatMessage[]) =>
     request<{ reply: string }>('/hermes/chat', {
       method: 'POST',

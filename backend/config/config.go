@@ -26,12 +26,29 @@ type Board struct {
 	Calendars []CalendarRef `json:"calendars"`
 	// RefreshSeconds is a hint for UI polling intervals. Default 30.
 	RefreshSeconds int `json:"refresh_seconds"`
+	// HAEmbed configures the full-dashboard iframe section. Optional;
+	// missing means "embed the default dashboard, no token in the URL".
+	HAEmbed *HAEmbed `json:"ha_embed,omitempty"`
 }
 
 // CalendarRef names one Google calendar by ID with an optional label.
 type CalendarRef struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+}
+
+// HAEmbed configures the "Home (full)" section, which embeds the real Home
+// Assistant dashboard in an iframe. The token itself never appears in the
+// board file: when TokenURL is set, the backend assembles it into the
+// embed URL server-side (GET /api/ha/embed-url).
+type HAEmbed struct {
+	// URLPath selects the dashboard to embed. nil means Home Assistant's
+	// default dashboard. Leading/trailing slashes are ignored.
+	URLPath *string `json:"url_path"`
+	// TokenURL appends ?auth_long_lived=<token> to the embed URL. Default
+	// false: the iframe relies on the browser's HA session (one-time
+	// in-iframe login) instead of a URL token.
+	TokenURL bool `json:"token_url"`
 }
 
 // GoogleConfig carries the Google Calendar credential settings.
@@ -201,6 +218,18 @@ func (c *Config) CalendarLabel(id, summary string) string {
 		return summary
 	}
 	return id
+}
+
+// HAEmbed returns a copy of the configured embed settings (nil when the
+// board does not set ha_embed). Safe to read while the board mutates.
+func (c *Config) HAEmbed() *HAEmbed {
+	c.boardMu.RLock()
+	defer c.boardMu.RUnlock()
+	if c.Board.HAEmbed == nil {
+		return nil
+	}
+	e := *c.Board.HAEmbed
+	return &e
 }
 
 // HAEntityLabel returns the configured label for an entity ID, or the

@@ -51,3 +51,20 @@ describe('api.setRefreshSeconds', () => {
     })
   })
 })
+
+describe('api.getHAAEmbedURL', () => {
+  it('GETs the server-assembled embed URL', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ url: 'https://ha.local/' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const url = await api.getHAAEmbedURL()
+    expect(url).toBe('https://ha.local/')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/ha/embed-url')
+  })
+})

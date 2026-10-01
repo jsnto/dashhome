@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ApiError, api } from '../api'
 import { onRefreshSeconds } from '../refreshBus'
 import type { HAEntity } from '../types'
+import HAFullPanel from './HAFullPanel'
 import Note from './Note'
 
 function stateClass(state: string): string {
@@ -18,11 +19,18 @@ export default function HAPanel() {
   const [err, setErr] = useState<ApiError | null>(null)
   const [refreshSec, setRefreshSec] = useState(30)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [haConfigured, setHaConfigured] = useState(false)
+  // 'board' is the default view (the styled at-a-glance grid); 'full' lazy-
+  // mounts the real HA dashboard in an iframe.
+  const [tab, setTab] = useState<'board' | 'full'>('board')
 
   useEffect(() => {
     api
       .getConfig()
-      .then((c) => setRefreshSec(c.board.refresh_seconds || 30))
+      .then((c) => {
+        setRefreshSec(c.board.refresh_seconds || 30)
+        setHaConfigured(c.integrations.homeassistant)
+      })
       .catch(() => {})
   }, [])
 
@@ -55,11 +63,31 @@ export default function HAPanel() {
     <section className="card">
       <div className="card-head">
         <h2>Home</h2>
+        {haConfigured && (
+          <div className="tabs tabs-small" role="group" aria-label="Home view">
+            <button
+              className={tab === 'board' ? 'tab on' : 'tab'}
+              onClick={() => setTab('board')}
+              aria-pressed={tab === 'board'}
+            >
+              Board
+            </button>
+            <button
+              className={tab === 'full' ? 'tab on' : 'tab'}
+              onClick={() => setTab('full')}
+              aria-pressed={tab === 'full'}
+            >
+              Full
+            </button>
+          </div>
+        )}
         <button className="btn ghost small" onClick={() => setRefreshKey((k) => k + 1)}>
           Refresh
         </button>
       </div>
-      {err ? (
+      {tab === 'full' && haConfigured ? (
+        <HAFullPanel />
+      ) : err ? (
         <Note err={err} />
       ) : entities === null ? (
         <p className="note">Loading…</p>
