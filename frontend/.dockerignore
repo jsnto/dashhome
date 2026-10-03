@@ -1,0 +1,3 @@
+# build artifacts (rebuilt inside the image)
+node_modules/
+dist/

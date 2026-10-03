@@ -7,7 +7,9 @@
 data/
 dashhome.json
 
+# the frontend image builds its own (frontend/Dockerfile); the backend
+# needs none of the frontend source.
+frontend/
+
 # build artifacts (rebuilt inside the image)
 bin/
-frontend/node_modules/
-frontend/dist/
