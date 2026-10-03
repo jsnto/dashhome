@@ -13,3 +13,10 @@ frontend/
 
 # build artifacts (rebuilt inside the image)
 bin/
+dist/
+
+# android build artifacts (rebuilt inside the image)
+android/.gradle/
+android/build/
+android/app/build/
+android/.kotlin/
