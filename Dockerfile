@@ -1,18 +1,14 @@
-# dashhome — single-container dashboard.
+# dashhome backend — the Go API.
 #
-# Three stages:
-#   frontend — Node builds the React frontend into frontend/dist
+# Two stages:
 #   go       — Go builds the static binary
-#   final    — small image carrying both (the binary serves frontend/dist
-#              from its working directory)
-
-# --- frontend: build the React frontend ------------------------------------
-FROM node:22-alpine AS frontend
-WORKDIR /src/frontend
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
-COPY frontend/ ./
-RUN npm run build
+#   final    — small image carrying just the binary
+#
+# The frontend is a separate image (frontend/Dockerfile: nginx serves the
+# built React app and proxies /api/ to this service). The binary still
+# serves frontend/dist when it happens to sit next to it (local dev via
+# `make run`); without it the API keeps working and non-API paths answer
+# a JSON 404 (see api.ServeStatic).
 
 # --- go: build the static binary -------------------------------------------
 FROM golang:1.26-alpine AS go
@@ -26,7 +22,6 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/dashhome ./cmd/das
 FROM alpine:3.22
 WORKDIR /app
 COPY --from=go /out/dashhome ./dashhome
-COPY --from=frontend /src/frontend/dist ./frontend/dist
 RUN addgroup -S dashhome && adduser -S -G dashhome dashhome \
     && mkdir -p /app/data \
     && chown -R dashhome:dashhome /app

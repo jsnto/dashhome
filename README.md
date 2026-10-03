@@ -35,15 +35,17 @@ the backend.
 
 ```
 +--------------------------------------------------------------+
+| nginx (:8000) — serves the React (Vite) build: calendar tabs,|
+|   HA dashboard, chat box, markdown panel + push history tabs.|
+|   /api/* is proxied same-origin to the backend; /assets/     |
+|   bundles are immutable; the client router owns other paths. |
++--------------------------------------------------------------+
 | dashhome (Go + Gin, :3000)                                   |
 |                                                               |
 |  /api  ──► Google Calendar   (list calendars, list events)    |
 |        ──► Home Assistant    (entity states, dashboards)      |
 |        ──► Hermes chat       (POST message, get reply)        |
 |        ◄── Hermes push       (POST markdown, token-auth)      |
-|                                                               |
-|  /     ──► React (Vite) build: calendar tabs, HA dashboard,   |
-|            chat box, markdown panel + push history tabs       |
 +--------------------------------------------------------------+
 ```
 
@@ -76,24 +78,31 @@ make run-web      # Vite dev server on :5173 (proxies /api to :3000)
 
 ## Docker
 
-Or run the whole app as one container with Docker Compose. The image is
-built in three stages (Node builds `frontend/dist`, Go builds the static
-binary, a small final image carries both):
+Or run the whole app with Docker Compose. There are two services:
+`backend` builds the Go binary from the root `Dockerfile` (the API, on a
+fixed internal port 3000) and `frontend` builds the React app and serves
+it with nginx from `frontend/Dockerfile` (on 8000). The frontend proxies
+`/api/` to the backend same-origin, so the app's relative `/api/...`
+calls need no changes and there is no CORS:
 
 ```sh
 cp .env.example .env    # then edit the values
 docker compose up -d --build
 ```
 
-- The app's environment variables are passed into the container from
-  `.env`; set `PORT` there to move both the published host port and the
-  container's listen port (default `3000`). No credentials are stored in
-  the image or the compose file.
+Open http://localhost:8000 for the dashboard; the API is on
+http://localhost:3000.
+
+- The app's environment variables are passed into the backend container
+  from `.env`. Set `BACKEND_PORT` / `FRONTEND_PORT` in `.env` to move
+  the published host ports (defaults `3000` / `8000`); the
+  container-side ports stay fixed. No credentials are stored in the
+  images or the compose file.
 - Push records and the Google token cache live in the `data` named
-  volume, so they survive container rebuilds.
+  volume on the backend, so they survive container rebuilds.
 - To use a dashboard config file, set `CONFIG_FILE` in `.env` and add a
-  volume entry mounting the file (e.g. `./dashhome.json:/dashhome.json`
-  with `CONFIG_FILE=/dashhome.json`).
+  volume entry on the backend mounting the file (e.g.
+  `./dashhome.json:/dashhome.json` with `CONFIG_FILE=/dashhome.json`).
 - In the service-account mode (the `.env.example` default), the app exits
   at startup unless the key file at `GOOGLE_APPLICATION_CREDENTIALS`
   (default `/secrets/google-sa.json`) is present; add a volume entry
@@ -277,7 +286,9 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PORT` | `3000` | Listen port |
+| `PORT` | `3000` | Listen port (the Docker backend is pinned to this) |
+| `BACKEND_PORT` | `3000` | Docker: published host port for the backend (API) service |
+| `FRONTEND_PORT` | `8000` | Docker: published host port for the frontend (dashboard) service |
 | `DATA_DIR` | `./data` | Push records + Google token cache |
 | `CONFIG_FILE` | `./dashhome.json` | Dashboard config |
 
