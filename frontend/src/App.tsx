@@ -247,8 +247,6 @@ export default function App() {
           onClose={() => setShowSettings(false)}
         />
       )}
-
-      <footer className="foot">dashhome — your home, on one dashboard</footer>
     </div>
   )
 }

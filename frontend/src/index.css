@@ -389,14 +389,6 @@ body.resizing-y {
   font-weight: 600;
 }
 
-.foot {
-  flex: none;
-  margin-top: 10px;
-  color: var(--text-dim);
-  font-size: 12.5px;
-  text-align: center;
-}
-
 /* buttons & notes */
 
 .btn {
