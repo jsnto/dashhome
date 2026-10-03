@@ -79,6 +79,13 @@ dependencies {
     // JVM unit tests.
     testImplementation(libs.org.json)
 
+    // Robolectric render tests: run the real Compose + Markwon stack on the
+    // JVM (no emulator) to prove the push-feed body is drawn visibly.
+    testImplementation(libs.robolectric)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

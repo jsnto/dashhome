@@ -61,7 +61,13 @@ app verifies the server with `GET /api/config` before saving it.
 ## Unit tests
 
 The parsing/state logic (API JSON parsing, month grid, event formatting,
-push feed ordering, chat thread state) is covered by JVM unit tests:
+push feed ordering, chat thread state) is covered by JVM unit tests, and
+the markdown push feed is covered by a Robolectric render test that runs
+the real Compose + Markwon stack and asserts the body TextView is painted
+with the theme's visible text color (regression guard for the
+"invisible body" bug: Compose packs the ARGB in the top 32 bits of
+`Color.value`, so a platform `TextView` needs `toArgb()`, not
+`value.toInt()`):
 
 ```sh
 docker run --rm -v "$HOME/.gradle":/home/gradle/.gradle -w /src/android \
@@ -69,8 +75,9 @@ docker run --rm -v "$HOME/.gradle":/home/gradle/.gradle -w /src/android \
 ```
 
 (or the same `./gradlew testDebugUnitTest` inside the build image).
-These run without a device; they use the `org.json:json` artifact to
-mirror the platform `org.json` on the JVM.
+These run without a device; the pure-JVM tests use the `org.json:json`
+artifact to mirror the platform `org.json`, and the Robolectric test
+uses the `android-all` framework jar Robolectric downloads on first run.
 
 ## Stack
 

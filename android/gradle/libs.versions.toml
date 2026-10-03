@@ -9,6 +9,7 @@ okhttp = "4.12.0"
 coroutines = "1.9.0"
 markwon = "4.6.2"
 junit = "4.13.2"
+robolectric = "4.14.1"
 orgJson = "20240303"
 androidxTestExt = "1.2.1"
 espresso = "3.6.1"
@@ -32,6 +33,7 @@ markwon-core = { group = "io.noties.markwon", name = "core", version.ref = "mark
 markwon-ext-tables = { group = "io.noties.markwon", name = "ext-tables", version.ref = "markwon" }
 markwon-ext-strikethrough = { group = "io.noties.markwon", name = "ext-strikethrough", version.ref = "markwon" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExt" }
 androidx-test-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }

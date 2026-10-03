@@ -7,6 +7,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -22,11 +23,14 @@ fun MarkdownText(
 ) {
     val context = LocalContext.current
     val spanned = remember(markdown) { Markdown.render(context, markdown) }
-    val contentColor = MaterialTheme.colorScheme.onSurface
+    // Compose packs the ARGB in the TOP 32 bits of Color.value (the low
+    // 32 bits hold the color-space tag), so toArgb() - not value.toInt() -
+    // yields the paint color the platform TextView needs.
+    val contentColor = MaterialTheme.colorScheme.onSurface.toArgb()
     AndroidView(
         factory = { ctx ->
             TextView(ctx).apply {
-                setTextColor(contentColor.value.toInt())
+                setTextColor(contentColor)
                 textSize = 15f
                 setLineSpacing(6f * ctx.resources.displayMetrics.density, 1.15f)
                 setPadding(
