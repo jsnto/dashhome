@@ -2,6 +2,7 @@ package com.jsnto.dashhome.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +51,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    BackHandler(onBack = onBack)
     var url by remember { mutableStateOf(DashApi.baseUrl) }
     var urlMsg by remember { mutableStateOf<String?>(null) }
 
