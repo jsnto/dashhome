@@ -209,12 +209,13 @@ fun PushPane(configured: Boolean) {
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
     var open by remember { mutableStateOf<Push?>(null) }
     var err by remember { mutableStateOf<ApiException?>(null) }
-    var refreshSec by remember { mutableIntStateOf(30) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(DashApi.baseUrl, refreshSec) {
-        // The board's polling interval hint (Settings can change it).
-        refreshSec = try {
+    LaunchedEffect(DashApi.baseUrl) {
+        // The board's polling interval hint, read once per (re)connect: the
+        // loop delays by it, and making it a key would restart the effect
+        // (re-fetching the feed) right after this read sets it.
+        val refreshSec = try {
             DashApi.getConfig().board.refreshSeconds.coerceIn(5, 3600)
         } catch (e: ApiException) {
             30

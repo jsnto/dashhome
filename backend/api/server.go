@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -87,6 +88,22 @@ func fail(c *gin.Context, status int, code, detail string) {
 	c.JSON(status, body)
 }
 
+// requireGoogle fails the request (and reports false) when Google Calendar
+// is not configured or not authorized yet.
+func (s *Server) requireGoogle(c *gin.Context) bool {
+	if s.google == nil {
+		fail(c, http.StatusServiceUnavailable, "google_not_configured",
+			"set GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET, or GOOGLE_ACCESS_TOKEN")
+		return false
+	}
+	if !s.google.HasToken() {
+		fail(c, http.StatusServiceUnavailable, "google_login_required",
+			"visit "+s.google.LoginURL()+" to authorize dashhome")
+		return false
+	}
+	return true
+}
+
 // --- /api/config -------------------------------------------------------
 
 func (s *Server) getConfig(c *gin.Context) {
@@ -148,14 +165,7 @@ type apiCalendar struct {
 }
 
 func (s *Server) listCalendars(c *gin.Context) {
-	if s.google == nil {
-		fail(c, http.StatusServiceUnavailable, "google_not_configured",
-			"set GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET, or GOOGLE_ACCESS_TOKEN")
-		return
-	}
-	if !s.google.HasToken() {
-		fail(c, http.StatusServiceUnavailable, "google_login_required",
-			"visit "+s.google.LoginURL()+" to authorize dashhome")
+	if !s.requireGoogle(c) {
 		return
 	}
 	cals, err := s.google.ListCalendars(c.Request.Context())
@@ -167,7 +177,7 @@ func (s *Server) listCalendars(c *gin.Context) {
 	filter := s.cfg.CalendarFilter()
 	var shown []apiCalendar
 	for _, cal := range cals {
-		if filter != nil && !contains(filter, cal.ID) {
+		if filter != nil && !slices.Contains(filter, cal.ID) {
 			continue
 		}
 		shown = append(shown, apiCalendar{
@@ -198,14 +208,7 @@ type apiEvent struct {
 }
 
 func (s *Server) listEvents(c *gin.Context) {
-	if s.google == nil {
-		fail(c, http.StatusServiceUnavailable, "google_not_configured",
-			"set GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET, or GOOGLE_ACCESS_TOKEN")
-		return
-	}
-	if !s.google.HasToken() {
-		fail(c, http.StatusServiceUnavailable, "google_login_required",
-			"visit "+s.google.LoginURL()+" to authorize dashhome")
+	if !s.requireGoogle(c) {
 		return
 	}
 
@@ -301,11 +304,6 @@ func (s *Server) haEntities(c *gin.Context) {
 		return
 	}
 
-	byID := make(map[string]ha.EntityState, len(states))
-	for _, st := range states {
-		byID[st.EntityID] = st
-	}
-
 	filter := s.cfg.HAFilter()
 	var out []apiEntity
 	if filter == nil {
@@ -313,6 +311,10 @@ func (s *Server) haEntities(c *gin.Context) {
 			out = append(out, s.entityJSON(st))
 		}
 	} else {
+		byID := make(map[string]ha.EntityState, len(states))
+		for _, st := range states {
+			byID[st.EntityID] = st
+		}
 		for _, id := range filter {
 			st, ok := byID[id]
 			if !ok {
@@ -628,22 +630,27 @@ func parseTimeParam(v string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
-
+// sortEvents orders events by start time. The RFC3339 start strings are
+// parsed once up front: a comparator runs O(n log n) times, so parsing
+// inside it would re-parse the same strings again and again.
 func sortEvents(evs []apiEvent) {
-	sort.Slice(evs, func(i, j int) bool {
-		a, errA := time.Parse(time.RFC3339, evs[i].Start)
-		b, errB := time.Parse(time.RFC3339, evs[j].Start)
-		if errA != nil || errB != nil {
-			return evs[i].Start < evs[j].Start
+	type decorated struct {
+		ev    apiEvent
+		start time.Time
+		ok    bool
+	}
+	ds := make([]decorated, len(evs))
+	for i := range evs {
+		t, err := time.Parse(time.RFC3339, evs[i].Start)
+		ds[i] = decorated{ev: evs[i], start: t, ok: err == nil}
+	}
+	sort.Slice(ds, func(i, j int) bool {
+		if ds[i].ok && ds[j].ok {
+			return ds[i].start.Before(ds[j].start)
 		}
-		return a.Before(b)
+		return ds[i].ev.Start < ds[j].ev.Start
 	})
+	for i := range ds {
+		evs[i] = ds[i].ev
+	}
 }

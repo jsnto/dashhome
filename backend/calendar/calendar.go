@@ -18,7 +18,6 @@ type Calendar struct {
 type Event struct {
 	ID          string
 	CalendarID  string
-	CalendarLbl string
 	Summary     string
 	Description string
 	Location    string

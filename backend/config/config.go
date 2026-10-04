@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+
+	"github.com/jsnto/dashhome/backend/calendar"
 )
 
 // Board is the local dashboard configuration: what the dashboard shows.
@@ -50,26 +52,10 @@ type HAEmbed struct {
 	TokenURL bool `json:"token_url"`
 }
 
-// GoogleConfig carries the Google Calendar credential settings.
-type GoogleConfig struct {
-	// Endpoint optionally overrides the Google Calendar API base URL
-	// (advanced: API proxy or tests).
-	Endpoint string
-	// AccessToken is a static OAuth access token (development only).
-	AccessToken string
-	// ServiceAccountFile is the path to a service account JSON key file
-	// (usually $GOOGLE_APPLICATION_CREDENTIALS).
-	ServiceAccountFile string
-	// Domain enables domain-wide delegation: events are fetched as the
-	// given user in the Google Workspace domain.
-	Domain string
-	// OAuth 3-legged settings.
-	ClientID     string
-	ClientSecret string
-	RedirectURI  string
-	// TokenCache is where the OAuth token JSON is stored.
-	TokenCache string
-}
+// GoogleConfig carries the Google Calendar credential settings. It is a
+// type alias for calendar.GoogleSettings so the loaded config and the
+// calendar client share one type instead of a field-for-field copy.
+type GoogleConfig = calendar.GoogleSettings
 
 // Config is the full runtime configuration.
 type Config struct {

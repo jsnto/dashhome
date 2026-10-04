@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -111,12 +112,15 @@ func NewGoogle(ctx context.Context, g GoogleSettings) (*GoogleClient, error) {
 			Endpoint:     oauthEndpoint,
 		}
 		c := &GoogleClient{mode: ModeOAuth, oauthCfg: oc, tokenPath: g.TokenCache}
-		if tok := loadTokenOrNil(g.TokenCache); tok != nil {
+		// One token-cache read: the has-token check and the service's token
+		// source share the loaded token.
+		tok := loadTokenOrNil(g.TokenCache)
+		if tok != nil {
 			c.hasTok = true
 		} else {
 			c.loginURL = c.newLoginURL()
 		}
-		return newGoogleService(g, oc.TokenSource(ctx, loadTokenOrNil(g.TokenCache)), c)
+		return newGoogleService(g, oc.TokenSource(ctx, tok), c)
 
 	default:
 		return nil, nil // no credentials configured
@@ -291,17 +295,8 @@ func saveToken(path string, t *oauth2.Token) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dirOf(path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
-}
-
-func dirOf(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' {
-			return path[:i]
-		}
-	}
-	return ""
 }
