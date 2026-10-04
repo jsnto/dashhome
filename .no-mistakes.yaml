@@ -3,3 +3,25 @@
 # This repository has no CI workflows or check-runs; the pipeline CI step
 # must not babysit an open PR for checks that will never register.
 no_ci: true
+
+# Deterministic Test-step baseline: the pipeline's Test step runs this command
+# before its agent turn. It covers the backend (Go unit tests), the frontend
+# (typecheck/build + unit tests via the canonical Makefile target, with npm ci
+# for fresh run worktrees), and the Android app unit tests (including the
+# Robolectric markdown render test) through the Docker builder image, since the
+# host has no Android SDK. The Android app's on-device validation was performed
+# separately; its screenshots are committed under android/docs/screenshots/.
+commands:
+  test: 'cd frontend && npm ci && cd .. && make test && docker run --rm -v dashhome-gradle-cache:/home/gradle/.gradle -v "$PWD":/src dashhome-apk-builder:1 bash -c "cd /src/android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest --no-daemon"'
+
+test:
+  instructions: |
+    The configured baseline (commands.test) already runs the deterministic
+    suites: Go unit tests, frontend typecheck/build/unit tests (make test), and
+    the Android app unit tests including the Robolectric markdown render test
+    (Docker builder image). Do not probe for, pair with, or drive ADB devices
+    (phones or tablets): the Android app's on-device validation was performed
+    separately and its screenshots are committed under android/docs/screenshots/.
+    If the baseline passes, confirm nothing else is needed for the changed paths
+    and report the baseline result as the test evidence; do not build a live
+    scratch stack and do not capture device screenshots.
