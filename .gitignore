@@ -16,6 +16,8 @@ android/.gradle/
 android/build/
 android/app/build/
 android/.kotlin/
+# the Kotlin source package named `data` is code, not runtime state
+!android/app/src/main/kotlin/com/jsnto/dashhome/data/
 
 # editor
 .vscode/
