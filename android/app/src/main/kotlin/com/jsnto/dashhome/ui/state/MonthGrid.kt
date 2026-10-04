@@ -122,7 +122,7 @@ object MonthGrid {
 object Palette {
     val colors = listOf(
         0xFF4CC2FFL, 0xFFFFB84CL, 0xFF8DE04CL, 0xFFFF6B81L, 0xFFC792EAL,
-        0xFFFFD166L, 0xFF7BFFF2L, 0xFFF78C6CL, 0xFF95E6C9L, 0xFFD7A7FFL,
+        0xFFFFD166L, 0xFF7BDFF2L, 0xFFF78C6CL, 0xFF95E6C9L, 0xFFD7A7FFL,
     )
 
     fun colorFor(calendarId: String, order: List<String>): Long {
