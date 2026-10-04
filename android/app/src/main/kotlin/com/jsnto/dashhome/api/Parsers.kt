@@ -48,7 +48,7 @@ object Parsers {
                     CalendarRef(c.optString("id"), c.optString("label"))
                 }
             } ?: emptyList(),
-            refreshSeconds = b?.optInt("refresh_seconds", 30) ?: 30,
+            refreshSeconds = (b?.optInt("refresh_seconds", 30) ?: 30).takeIf { it > 0 } ?: 30,
             haEmbedUrlPath = b?.optJSONObject("ha_embed")
                 ?.let { if (it.isNull("url_path")) null else it.optString("url_path", "").ifEmpty { null } },
             haEmbedTokenUrl = b?.optJSONObject("ha_embed")?.optBoolean("token_url", false) ?: false,
@@ -89,7 +89,7 @@ object Parsers {
                     CalendarRef(c.optString("id"), c.optString("label"))
                 }
             } ?: emptyList(),
-            refreshSeconds = j.optInt("refresh_seconds", 30),
+            refreshSeconds = j.optInt("refresh_seconds", 30).takeIf { it > 0 } ?: 30,
             haEmbedUrlPath = j.optJSONObject("ha_embed")
                 ?.let { if (it.isNull("url_path")) null else it.optString("url_path", "").ifEmpty { null } },
             haEmbedTokenUrl = j.optJSONObject("ha_embed")?.optBoolean("token_url", false) ?: false,

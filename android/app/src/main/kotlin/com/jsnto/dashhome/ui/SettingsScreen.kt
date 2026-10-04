@@ -204,7 +204,11 @@ fun SettingsScreen(
                     OutlinedButton(
                         onClick = {
                             val u = c.google.loginUrl ?: (DashApi.baseUrl + "/api/auth/google/login")
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
+                            try {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
+                            } catch (e: Exception) {
+                                // No browser available; the web dashboard's sign-in still works.
+                            }
                         },
                         modifier = Modifier.padding(top = 4.dp),
                     ) {

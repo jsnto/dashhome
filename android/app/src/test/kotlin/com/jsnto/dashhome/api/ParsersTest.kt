@@ -71,6 +71,20 @@ class ParsersTest {
     }
 
     @Test
+    fun `config zero refresh_seconds is the 30 second default`() {
+        val cfg = Parsers.config("""{"board": {"refresh_seconds": 0}, "integrations": {}}""")
+        assertEquals(30, cfg.board.refreshSeconds)
+    }
+
+    @Test
+    fun `board zero refresh_seconds is the 30 second default`() {
+        val board = Parsers.board(
+            """{"board": {"ha_entities": [], "ha_labels": {}, "calendars": [], "refresh_seconds": 0}}""",
+        )
+        assertEquals(30, board.refreshSeconds)
+    }
+
+    @Test
     fun `config null ha_embed url_path stays null`() {
         val cfg = Parsers.config(
             """
