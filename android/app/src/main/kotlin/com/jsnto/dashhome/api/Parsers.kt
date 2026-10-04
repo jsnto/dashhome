@@ -34,28 +34,9 @@ object Parsers {
     /** GET /api/config */
     fun config(body: String): ApiConfig = parse("config") {
         val j = JSONObject(body)
-        val b = j.optJSONObject("board")
-        val board = Board(
-            haEntities = b?.optJSONArray("ha_entities")?.let { arr ->
-                (0 until arr.length()).map { arr.getString(it) }
-            } ?: emptyList(),
-            haLabels = b?.optJSONObject("ha_labels")?.let { o ->
-                buildMap { for (k in o.keys()) put(k, o.getString(k)) }
-            } ?: emptyMap(),
-            calendars = b?.optJSONArray("calendars")?.let { arr ->
-                (0 until arr.length()).map {
-                    val c = arr.getJSONObject(it)
-                    CalendarRef(c.optString("id"), c.optString("label"))
-                }
-            } ?: emptyList(),
-            refreshSeconds = (b?.optInt("refresh_seconds", 30) ?: 30).takeIf { it > 0 } ?: 30,
-            haEmbedUrlPath = b?.optJSONObject("ha_embed")
-                ?.let { if (it.isNull("url_path")) null else it.optString("url_path", "").ifEmpty { null } },
-            haEmbedTokenUrl = b?.optJSONObject("ha_embed")?.optBoolean("token_url", false) ?: false,
-        )
         val g = j.optJSONObject("integrations")?.optJSONObject("google")
         ApiConfig(
-            board = board,
+            board = boardFrom(j.optJSONObject("board")),
             homeAssistant = j.optJSONObject("integrations")?.optBoolean("homeassistant", false) ?: false,
             google = if (g != null) {
                 GoogleStatus(
@@ -74,27 +55,31 @@ object Parsers {
 
     /** The board object as returned by PUT /api/config/refresh ({board}). */
     fun board(body: String): Board = parse("board") {
-        val j = JSONObject(body).optJSONObject("board")
-            ?: throw Exception("missing board object")
-        Board(
-            haEntities = j.optJSONArray("ha_entities")?.let { arr ->
-                (0 until arr.length()).map { arr.getString(it) }
-            } ?: emptyList(),
-            haLabels = j.optJSONObject("ha_labels")?.let { o ->
-                buildMap { for (k in o.keys()) put(k, o.getString(k)) }
-            } ?: emptyMap(),
-            calendars = j.optJSONArray("calendars")?.let { arr ->
-                (0 until arr.length()).map {
-                    val c = arr.getJSONObject(it)
-                    CalendarRef(c.optString("id"), c.optString("label"))
-                }
-            } ?: emptyList(),
-            refreshSeconds = j.optInt("refresh_seconds", 30).takeIf { it > 0 } ?: 30,
-            haEmbedUrlPath = j.optJSONObject("ha_embed")
-                ?.let { if (it.isNull("url_path")) null else it.optString("url_path", "").ifEmpty { null } },
-            haEmbedTokenUrl = j.optJSONObject("ha_embed")?.optBoolean("token_url", false) ?: false,
+        boardFrom(
+            JSONObject(body).optJSONObject("board")
+                ?: throw Exception("missing board object"),
         )
     }
+
+    /** The board wire shape, shared by the config and refresh responses. */
+    private fun boardFrom(b: JSONObject?): Board = Board(
+        haEntities = b?.optJSONArray("ha_entities")?.let { arr ->
+            (0 until arr.length()).map { arr.getString(it) }
+        } ?: emptyList(),
+        haLabels = b?.optJSONObject("ha_labels")?.let { o ->
+            buildMap { for (k in o.keys()) put(k, o.getString(k)) }
+        } ?: emptyMap(),
+        calendars = b?.optJSONArray("calendars")?.let { arr ->
+            (0 until arr.length()).map {
+                val c = arr.getJSONObject(it)
+                CalendarRef(c.optString("id"), c.optString("label"))
+            }
+        } ?: emptyList(),
+        refreshSeconds = (b?.optInt("refresh_seconds", 30) ?: 30).takeIf { it > 0 } ?: 30,
+        haEmbedUrlPath = b?.optJSONObject("ha_embed")
+            ?.let { if (it.isNull("url_path")) null else it.optString("url_path", "").ifEmpty { null } },
+        haEmbedTokenUrl = b?.optJSONObject("ha_embed")?.optBoolean("token_url", false) ?: false,
+    )
 
     /** GET /api/calendars → the calendars list. */
     fun calendars(body: String): List<CalendarInfo> = parse("calendars") {
