@@ -136,8 +136,8 @@ class Handler(BaseHTTPRequestHandler):
             cal_id = unquote(m.group(1))
             if cal_id not in {c["id"] for c in CALENDARS}:
                 return self._send({"error": {"code": 404, "message": "not found"}}, 404)
-            time_min = datetime.datetime.fromisoformat(qs["timeMin"][0]) if "timeMin" in qs else None
-            time_max = datetime.datetime.fromisoformat(qs["timeMax"][0]) if "timeMax" in qs else None
+            time_min = datetime.datetime.fromisoformat(qs["timeMin"][0].replace("Z", "+00:00")) if "timeMin" in qs else None
+            time_max = datetime.datetime.fromisoformat(qs["timeMax"][0].replace("Z", "+00:00")) if "timeMax" in qs else None
             items = []
             for ev in build_events():
                 if ev["calendar"] != cal_id or not overlaps(ev, time_min, time_max):
