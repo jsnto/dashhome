@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.method.LinkMovementMethod
 import android.text.style.ClickableSpan
 import android.text.style.URLSpan
 import android.view.View
@@ -40,6 +41,7 @@ fun MarkdownText(
                 setTextColor(contentColor)
                 textSize = 15f
                 setLineSpacing(6f * ctx.resources.displayMetrics.density, 1.15f)
+                movementMethod = LinkMovementMethod.getInstance()
                 setPadding(
                     (12 * ctx.resources.displayMetrics.density).toInt(),
                     (8 * ctx.resources.displayMetrics.density).toInt(),

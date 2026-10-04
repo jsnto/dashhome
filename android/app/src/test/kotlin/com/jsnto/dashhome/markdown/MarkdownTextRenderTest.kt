@@ -1,9 +1,11 @@
 package com.jsnto.dashhome.markdown
 
+import android.content.Intent
 import android.text.Spanned
 import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.URLSpan
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -19,6 +21,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
@@ -127,5 +130,52 @@ class MarkdownTextRenderTest {
             "open the tracker",
             spanned.subSequence(spanned.getSpanStart(links[0]), spanned.getSpanEnd(links[0])).toString(),
         )
+    }
+
+    /**
+     * A tap on the rendered link dispatches through the guarded span:
+     * the TextView's movement method routes the touch to the span, which
+     * raises the ACTION_VIEW intent (recorded by Robolectric) instead of
+     * an unguarded platform URLSpan launch.
+     */
+    @Test
+    fun linkTapFiresTheGuardedViewIntent() {
+        composeRule.setContent {
+            DashhomeTheme {
+                MarkdownText("Morning standup\n\n[open the tracker](mailto:ops@example.com)")
+            }
+        }
+        composeRule.waitForIdle()
+
+        val tv = findMarkdownView()
+        val spanned = tv.text as Spanned
+        val link = spanned.getSpans(0, spanned.length, ClickableSpan::class.java).first()
+        val offset = spanned.getSpanStart(link)
+
+        if (tv.layout == null) {
+            tv.measure(
+                View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.AT_MOST),
+            )
+            tv.layout(0, 0, 800, tv.measuredHeight)
+        }
+        val layout = tv.layout!!
+        val line = layout.getLineForOffset(offset)
+        val x = (layout.getPrimaryHorizontal(offset) + tv.paddingLeft).toFloat()
+        val lineTop = layout.getLineTop(line)
+        val y = (lineTop + (layout.getLineBottom(line) - lineTop) / 2f + tv.paddingTop).toFloat()
+
+        val down = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_UP, x, y, 0)
+        tv.onTouchEvent(down)
+        val handled = tv.onTouchEvent(up)
+        down.recycle()
+        up.recycle()
+
+        assertTrue("a tap on the link must be handled by the view", handled)
+        val started = shadowOf(composeRule.activity).nextStartedActivity
+        assertNotNull("tapping the link must raise the view intent", started)
+        assertEquals(Intent.ACTION_VIEW, started.action)
+        assertEquals("mailto:ops@example.com", started.dataString)
     }
 }
