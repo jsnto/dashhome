@@ -95,6 +95,9 @@ fun HomeScreen() {
                 AndroidView(
                     factory = {
                         WebView(context).apply {
+                            // The HA dashboard is a JavaScript app (same as
+                            // the web's iframe) - without JS it renders
+                            // nothing; domStorage keeps HA's own session.
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             // Stay in-app for http(s) navigation (HA routes);
