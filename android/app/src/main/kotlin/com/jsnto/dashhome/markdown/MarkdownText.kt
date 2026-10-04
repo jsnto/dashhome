@@ -1,5 +1,12 @@
 package com.jsnto.dashhome.markdown
 
+import android.content.Intent
+import android.net.Uri
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ClickableSpan
+import android.text.style.URLSpan
+import android.view.View
 import android.widget.TextView
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -43,6 +50,7 @@ fun MarkdownText(
         },
         update = {
             it.text = spanned
+            it.guardLinkSpans()
             // New content can be taller than the previous push; make sure
             // the view is remeasured so the text is not clipped.
             it.requestLayout()
@@ -51,4 +59,37 @@ fun MarkdownText(
             .fillMaxWidth()
             .padding(horizontal = 12.dp),
     )
+}
+
+/** A markdown link that opens its URL without crashing when no app handles the scheme. */
+private class SafeUrlSpan(private val url: String) : ClickableSpan() {
+    override fun onClick(widget: View) {
+        try {
+            widget.context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: Exception) {
+            // No app handles this scheme; the push feed keeps working.
+        }
+    }
+}
+
+/**
+ * Swaps the rendered link spans (Markwon's LinkSpan is a URLSpan the
+ * platform TextView would otherwise handle itself, unguarded) for
+ * [SafeUrlSpan] over the same ranges, so a link tap opens the URL through
+ * the guarded intent. Markwon's render output is an immutable Spanned,
+ * so the text is copied (spans included) into a SpannableStringBuilder
+ * first.
+ */
+private fun TextView.guardLinkSpans() {
+    val src = text as? Spanned ?: return
+    val urls = src.getSpans(0, src.length, URLSpan::class.java)
+    if (urls.isEmpty()) return
+    val out = SpannableStringBuilder(src)
+    urls.forEach { span ->
+        val start = src.getSpanStart(span)
+        val end = src.getSpanEnd(span)
+        out.removeSpan(span)
+        out.setSpan(SafeUrlSpan(span.url), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+    text = out
 }

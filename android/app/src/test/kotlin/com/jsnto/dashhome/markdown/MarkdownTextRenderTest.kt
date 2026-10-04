@@ -1,7 +1,9 @@
 package com.jsnto.dashhome.markdown
 
 import android.text.Spanned
+import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
+import android.text.style.URLSpan
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -101,5 +103,29 @@ class MarkdownTextRenderTest {
                     (c and 0xFF000000.toInt()) != 0 && (c and 0xFFFFFF) != 0,
                 )
             }
+    }
+
+    @Test
+    fun markdownLinkIsTheGuardedClickableSpanNotARawUrlSpan() {
+        composeRule.setContent {
+            DashhomeTheme {
+                MarkdownText("Morning standup\n\n[open the tracker](mailto:ops@example.com)")
+            }
+        }
+        composeRule.waitForIdle()
+
+        val tv = findMarkdownView()
+        val spanned = tv.text as Spanned
+        assertEquals(
+            "a raw URLSpan lets the platform TextView open the link unguarded",
+            0,
+            spanned.getSpans(0, spanned.length, URLSpan::class.java).size,
+        )
+        val links = spanned.getSpans(0, spanned.length, ClickableSpan::class.java)
+        assertEquals(1, links.size)
+        assertEquals(
+            "open the tracker",
+            spanned.subSequence(spanned.getSpanStart(links[0]), spanned.getSpanEnd(links[0])).toString(),
+        )
     }
 }

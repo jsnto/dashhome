@@ -238,8 +238,12 @@ fun SectionCard(
     MaterialTheme(
         colorScheme = MaterialTheme.colorScheme.copy(surface = MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        Surface(shape = MaterialTheme.shapes.medium, tonalElevation = 0.dp) {
-            Column(modifier = modifier.padding(12.dp)) {
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            tonalElevation = 0.dp,
+            modifier = modifier,
+        ) {
+            Column(modifier = Modifier.fillMaxHeight().padding(12.dp)) {
                 Row {
                     Text(
                         text = title,
