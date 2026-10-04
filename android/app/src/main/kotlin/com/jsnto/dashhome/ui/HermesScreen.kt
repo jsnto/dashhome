@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -154,6 +155,12 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
                 placeholder = { Text("Message Hermes…") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(
+                    onSend = {
+                        send()
+                        defaultKeyboardAction(ImeAction.Send)
+                    }
+                ),
                 enabled = !state.busy,
                 modifier = Modifier.weight(1f),
             )
