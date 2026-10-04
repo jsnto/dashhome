@@ -7,9 +7,20 @@
 data/
 dashhome.json
 
+# host-specific Android SDK path (the build image resolves the SDK from ANDROID_HOME)
+local.properties
+android/local.properties
+
 # the frontend image builds its own (frontend/Dockerfile); the backend
 # needs none of the frontend source.
 frontend/
 
 # build artifacts (rebuilt inside the image)
 bin/
+dist/
+
+# android build artifacts (rebuilt inside the image)
+android/.gradle/
+android/build/
+android/app/build/
+android/.kotlin/

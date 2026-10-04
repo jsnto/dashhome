@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- House outline with a calendar tick under the roof: home dashboard. -->
+    <path
+        android:fillColor="#4CC2FF"
+        android:pathData="M54,26 L28,48 L36,48 L36,78 L72,78 L72,48 L80,48 Z" />
+    <path
+        android:fillColor="#0B1220"
+        android:pathData="M42,44 h6 v6 h-6 Z M54,44 h6 v6 h-6 Z M42,54 h6 v6 h-6 Z M54,54 h6 v6 h-6 Z M66,44 h-6 v6 h6 Z M66,54 h-6 v6 h6 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,64 h20 v4 h-20 Z" />
+</vector>
