@@ -634,16 +634,23 @@ func parseTimeParam(v string) (time.Time, bool) {
 // parsed once up front: a comparator runs O(n log n) times, so parsing
 // inside it would re-parse the same strings again and again.
 func sortEvents(evs []apiEvent) {
-	starts := make([]time.Time, len(evs))
-	parsed := make([]bool, len(evs))
+	type decorated struct {
+		ev    apiEvent
+		start time.Time
+		ok    bool
+	}
+	ds := make([]decorated, len(evs))
 	for i := range evs {
 		t, err := time.Parse(time.RFC3339, evs[i].Start)
-		starts[i], parsed[i] = t, err == nil
+		ds[i] = decorated{ev: evs[i], start: t, ok: err == nil}
 	}
-	sort.Slice(evs, func(i, j int) bool {
-		if parsed[i] && parsed[j] {
-			return starts[i].Before(starts[j])
+	sort.Slice(ds, func(i, j int) bool {
+		if ds[i].ok && ds[j].ok {
+			return ds[i].start.Before(ds[j].start)
 		}
-		return evs[i].Start < evs[j].Start
+		return ds[i].ev.Start < ds[j].ev.Start
 	})
+	for i := range ds {
+		evs[i] = ds[i].ev
+	}
 }
