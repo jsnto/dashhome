@@ -360,4 +360,5 @@ make test   # go test ./...  +  frontend typecheck & build  +  vitest
 - Layout: `cmd/dashhome` (entrypoint), `backend/api` (Gin handlers),
   `backend/calendar` (Google client), `backend/ha` (HA client),
   `backend/hermes` (Hermes client), `backend/store` (push persistence),
-  `backend/config` (env + board config), `frontend/` (React app).
+  `backend/config` (env + board config), `frontend/` (React app),
+  `android/` (native Android app).
