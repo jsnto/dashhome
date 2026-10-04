@@ -50,11 +50,6 @@ class ChatState {
         _messages.add(Msg(Role.ASSISTANT, text, error))
     }
 
-    fun clear() {
-        _messages.clear()
-        busy = false
-    }
-
     /**
      * The thread as sent in the `conversation` payload (oldest first,
      * including any error notes - the web sends its whole msg list).

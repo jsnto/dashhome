@@ -119,9 +119,6 @@ object DashApi {
     suspend fun getPushes(limit: Int = 50): List<Push> =
         Parsers.pushes(get("/api/hermes/pushes?limit=$limit").toString())
 
-    /** GET /api/hermes/pushes/latest (404 no_pushes when none exist). */
-    suspend fun getLatestPush(): Push = Parsers.push(get("/api/hermes/pushes/latest").toString())
-
     /** GET /api/hermes/pushes/:id */
     suspend fun getPush(id: String): Push =
         Parsers.push(get("/api/hermes/pushes/${enc(id)}").toString())

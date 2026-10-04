@@ -51,9 +51,6 @@ object PushFeed {
         return "$whenText$source${if (latest) " (latest)" else " (previous push)"}"
     }
 
-    /** Whether the history is empty (drives the "waiting for a push" note). */
-    fun isEmpty(pushes: List<Push>): Boolean = pushes.isEmpty()
-
     private fun parseInstant(iso: String): Instant? =
         try {
             Instant.parse(iso)

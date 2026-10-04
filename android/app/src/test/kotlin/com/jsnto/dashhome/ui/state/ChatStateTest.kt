@@ -82,14 +82,4 @@ class ChatStateTest {
         assertFalse(s.busy)
         assertTrue(s.canSend("hi"))
     }
-
-    @Test
-    fun `clear resets the thread and the busy flag`() {
-        val s = ChatState()
-        s.beginSend()
-        s.addUserMessage("hi")
-        s.clear()
-        assertEquals(0, s.messages.size)
-        assertFalse(s.busy)
-    }
 }
