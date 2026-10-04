@@ -75,6 +75,8 @@ dependencies {
     implementation(libs.markwon.ext.strikethrough)
 
     testImplementation(libs.junit)
+    // Deterministic test dispatcher for the ChatState send tests.
+    testImplementation(libs.kotlinx.coroutines.test)
     // org.json ships with the Android runtime; the artifact mirrors it in
     // JVM unit tests.
     testImplementation(libs.org.json)

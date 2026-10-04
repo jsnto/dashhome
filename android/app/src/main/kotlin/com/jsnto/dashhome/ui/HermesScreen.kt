@@ -39,6 +39,7 @@ import com.jsnto.dashhome.api.Push
 import com.jsnto.dashhome.markdown.MarkdownText
 import com.jsnto.dashhome.ui.state.ChatState
 import com.jsnto.dashhome.ui.state.PushFeed
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -47,9 +48,8 @@ import kotlinx.coroutines.launch
  * and PushPanel as two tabs on the phone, side by side on wide displays).
  */
 @Composable
-fun HermesScreen(wide: Boolean = false) {
+fun HermesScreen(chat: ChatState, chatScope: CoroutineScope, wide: Boolean = false) {
     var tab by rememberSaveable { mutableIntStateOf(0) } // 0 = chat, 1 = push
-    val chat = remember { ChatState() }
     // Integration flags from /api/config (drive friendly setup notes).
     var hermesChat by remember { mutableStateOf(true) }
     var hermesPush by remember { mutableStateOf(true) }
@@ -72,7 +72,7 @@ fun HermesScreen(wide: Boolean = false) {
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
-                ChatPane(state = chat, configured = hermesChat)
+                ChatPane(state = chat, scope = chatScope, configured = hermesChat)
             }
             Column(
                 modifier = Modifier
@@ -102,7 +102,7 @@ fun HermesScreen(wide: Boolean = false) {
             TabChip(label = "Push feed", selected = tab == 1, onClick = { tab = 1 })
         }
         when (tab) {
-            0 -> ChatPane(state = chat, configured = hermesChat)
+            0 -> ChatPane(state = chat, scope = chatScope, configured = hermesChat)
             else -> PushPane(configured = hermesPush)
         }
     }
@@ -114,30 +114,14 @@ fun HermesScreen(wide: Boolean = false) {
  * message, same as the web.
  */
 @Composable
-fun ChatPane(state: ChatState, configured: Boolean) {
-    val scope = rememberCoroutineScope()
+fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
     var input by remember { mutableStateOf("") }
 
     fun send() {
         val text = input.trim()
-        if (!state.canSend(text)) return
+        if (text.isBlank()) return
         input = ""
-        val history = state.history() // thread BEFORE the new user message
-        state.addUserMessage(text)
-        state.beginSend()
-        scope.launch {
-            try {
-                val reply = DashApi.chat(text, history)
-                state.addAssistantMessage(reply)
-            } catch (e: ApiException) {
-                state.addAssistantMessage(
-                    if (e.detail.isNullOrBlank()) e.code else "${e.code} — ${e.detail}",
-                    error = true,
-                )
-            } finally {
-                state.endSend()
-            }
-        }
+        state.send(text, scope) { history -> DashApi.chat(text, history) }
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(top = 12.dp)) {

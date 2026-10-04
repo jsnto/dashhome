@@ -1,10 +1,16 @@
 package com.jsnto.dashhome.ui.state
 
+import com.jsnto.dashhome.api.ApiException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ChatStateTest {
 
     @Test
@@ -73,12 +79,97 @@ class ChatStateTest {
     }
 
     @Test
-    fun `busy blocks sending until the reply lands`() {
+    fun `send captures the thread before the user turn and appends the reply when it lands`() =
+        runTest {
+            val s = ChatState()
+            s.addUserMessage("first")
+            s.addAssistantMessage("reply one")
+
+            val gate = CompletableDeferred<Unit>()
+            var sent: List<String>? = null
+            s.send("second", this) {
+                sent = it.map { m -> m.content }
+                gate.await()
+                "reply two"
+            }
+            advanceUntilIdle() // the request starts, captures the thread, suspends on the gate
+            // The captured conversation excludes the new user turn (web
+            // parity); the turn itself is already in the thread.
+            assertEquals(listOf("first", "reply one"), sent)
+            assertEquals(3, s.messages.size)
+            assertEquals("second", s.messages.last().content)
+            assertTrue(s.busy)
+            assertFalse(s.canSend("third"))
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertFalse(s.busy)
+            assertTrue(s.canSend("third"))
+            assertEquals(4, s.messages.size)
+            assertEquals("reply two", s.messages.last().content)
+        }
+
+    @Test
+    fun `a second send supersedes the in-flight one instead of racing`() = runTest {
         val s = ChatState()
-        s.beginSend()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        var started = 0
+
+        s.send("one", this) {
+            started++
+            entered.complete(Unit)
+            gate.await()
+            "reply one"
+        }
+        entered.await()
         assertTrue(s.busy)
-        assertFalse(s.canSend("hi"))
-        s.endSend()
+
+        s.send("two", this) {
+            started++
+            "reply two"
+        }
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        // The superseded request was cancelled mid-flight, so its reply
+        // never lands and the newest reply is the only assistant turn.
+        assertEquals(
+            listOf(
+                ChatState.Role.USER to "one",
+                ChatState.Role.USER to "two",
+                ChatState.Role.ASSISTANT to "reply two",
+            ),
+            s.messages.map { it.role to it.content },
+        )
+        assertFalse(s.messages.any { it.content == "reply one" })
+        assertEquals(2, started)
+        assertFalse(s.busy)
+        assertTrue(s.canSend("three"))
+    }
+
+    @Test
+    fun `a failed request appends an error note and clears busy`() = runTest {
+        val s = ChatState()
+        s.send("hi", this) { throw ApiException(502, "hermes_unavailable", "no hermes") }
+        advanceUntilIdle()
+
+        assertFalse(s.busy)
+        assertEquals(2, s.messages.size)
+        val note = s.messages.last()
+        assertTrue(note.error)
+        assertEquals("hermes_unavailable — no hermes", note.content)
+        assertEquals("assistant", s.history().last().role)
+    }
+
+    @Test
+    fun `blank text is a no-op`() = runTest {
+        val s = ChatState()
+        s.send("   ", this) { "reply" }
+        advanceUntilIdle()
+
+        assertTrue(s.messages.isEmpty())
         assertFalse(s.busy)
         assertTrue(s.canSend("hi"))
     }

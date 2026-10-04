@@ -34,6 +34,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -42,6 +44,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.jsnto.dashhome.api.DashApi
 import com.jsnto.dashhome.data.Prefs
+import com.jsnto.dashhome.ui.state.ChatState
+import kotlinx.coroutines.CoroutineScope
 
 /** The three dashboard sections, mirroring the web dashboard's cards. */
 private enum class Section { CALENDAR, HOME, HERMES }
@@ -73,6 +77,12 @@ fun DashhomeRoot() {
 
     var section by rememberSaveable { mutableIntStateOf(Section.CALENDAR.ordinal) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+
+    // The chat thread and its send scope live at the root, not in the
+    // Hermes section, so an in-flight reply lands even when the section
+    // (or just its chat pane) leaves composition.
+    val chat = remember { ChatState() }
+    val chatScope = rememberCoroutineScope()
 
     if (showSettings) {
         SettingsScreen(
@@ -123,7 +133,7 @@ fun DashhomeRoot() {
                     )
                 }
                 Surface(modifier = Modifier.fillMaxSize().padding(padding)) {
-                    SectionContent(section, wide = true)
+                    SectionContent(section, chat, chatScope, wide = true)
                 }
             }
         }
@@ -179,7 +189,7 @@ fun DashhomeRoot() {
             },
         ) { padding ->
             Surface(modifier = Modifier.fillMaxSize().padding(padding)) {
-                SectionContent(section, wide = false)
+                SectionContent(section, chat, chatScope, wide = false)
             }
         }
     }
@@ -187,11 +197,11 @@ fun DashhomeRoot() {
 
 /** The three sections, with wide (tablet) layouts when [wide]. */
 @Composable
-private fun SectionContent(section: Int, wide: Boolean) {
+private fun SectionContent(section: Int, chat: ChatState, chatScope: CoroutineScope, wide: Boolean) {
     when (Section.values()[section]) {
         Section.CALENDAR -> CalendarScreen(wide = wide)
         Section.HOME -> HomeScreen()
-        Section.HERMES -> HermesScreen(wide = wide)
+        Section.HERMES -> HermesScreen(chat = chat, chatScope = chatScope, wide = wide)
     }
 }
 
