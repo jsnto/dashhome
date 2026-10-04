@@ -34,7 +34,7 @@ func main() {
 	defer stop()
 
 	var cal *calendar.GoogleClient
-	if cal, err = calendar.NewGoogle(ctx, toCalendarSettings(cfg.Google)); err != nil {
+	if cal, err = calendar.NewGoogle(ctx, cfg.Google); err != nil {
 		log.Fatalf("google calendar: %v", err)
 	}
 	if cal == nil {
@@ -85,19 +85,6 @@ func main() {
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
-	}
-}
-
-func toCalendarSettings(g config.GoogleConfig) calendar.GoogleSettings {
-	return calendar.GoogleSettings{
-		Endpoint:           g.Endpoint,
-		AccessToken:        g.AccessToken,
-		ServiceAccountFile: g.ServiceAccountFile,
-		Domain:             g.Domain,
-		ClientID:           g.ClientID,
-		ClientSecret:       g.ClientSecret,
-		RedirectURI:        g.RedirectURI,
-		TokenCache:         g.TokenCache,
 	}
 }
 
