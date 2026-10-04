@@ -111,9 +111,13 @@ fun HomeScreen() {
                                     return if (uri.scheme == "http" || uri.scheme == "https") {
                                         false
                                     } else {
-                                        context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, uri),
-                                        )
+                                        try {
+                                            context.startActivity(
+                                                Intent(Intent.ACTION_VIEW, uri),
+                                            )
+                                        } catch (e: Exception) {
+                                            // Unhandled scheme; the WebView keeps working.
+                                        }
                                         true
                                     }
                                 }
@@ -123,6 +127,7 @@ fun HomeScreen() {
                             loadUrl(u)
                         }
                     },
+                    onRelease = { it.destroy() },
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),

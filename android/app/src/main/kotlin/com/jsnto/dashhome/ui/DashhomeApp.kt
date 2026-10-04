@@ -1,6 +1,7 @@
 package com.jsnto.dashhome.ui
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -232,7 +233,7 @@ fun SectionCard(
     title: String,
     actions: @Composable () -> Unit = {},
     modifier: Modifier = Modifier.fillMaxWidth(),
-    content: @Composable () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     MaterialTheme(
         colorScheme = MaterialTheme.colorScheme.copy(surface = MaterialTheme.colorScheme.surfaceVariant),

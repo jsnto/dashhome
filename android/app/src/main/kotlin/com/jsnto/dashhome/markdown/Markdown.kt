@@ -18,8 +18,9 @@ object Markdown {
     @Synchronized
     fun renderer(context: Context): Markwon =
         cache.getOrPut(context.applicationContext) {
-            Markwon.builder(context)
-                .usePlugin(TablePlugin.create(context))
+            val app = context.applicationContext
+            Markwon.builder(app)
+                .usePlugin(TablePlugin.create(app))
                 .usePlugin(StrikethroughPlugin.create())
                 .build()
         }
