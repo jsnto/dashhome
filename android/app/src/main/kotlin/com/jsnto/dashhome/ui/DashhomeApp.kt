@@ -24,8 +24,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -51,11 +49,13 @@ import kotlinx.coroutines.CoroutineScope
 private enum class Section { CALENDAR, HOME, HERMES }
 
 /**
- * App root: a setup screen until a server URL is saved, then the three
- * sections. Phones use a bottom navigation bar; wide displays (tablets,
- * screenWidthDp >= 600) get a navigation rail instead, and the Calendar
- * and Hermes sections split into side-by-side panes so the layout reads
- * as a wide dashboard rather than a stretched phone screen.
+ * App root: a setup screen until a server URL is saved, then the sections.
+ * Phones use a bottom navigation bar; wide displays (tablets,
+ * screenWidthDp >= 600) get a one-page board instead - every section at a
+ * glance as tappable cards, each opening its existing full-screen view
+ * (drill down, back returns to the board) - with the Calendar and Hermes
+ * sections splitting into side-by-side panes inside that view so the
+ * layout reads as a wide dashboard rather than a stretched phone screen.
  */
 private const val WIDE_SCREEN_DP = 600
 
@@ -77,6 +77,10 @@ fun DashhomeRoot() {
 
     var section by rememberSaveable { mutableIntStateOf(Section.CALENDAR.ordinal) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    // Tablet drill-down: -1 = the one-page board, otherwise the ordinal of
+    // the open [TabletItem]. Saved so rotation/process death keeps the
+    // opened full-screen view.
+    var openItem by rememberSaveable { mutableIntStateOf(-1) }
 
     // The chat thread and its send scope live at the root, not in the
     // Hermes section, so an in-flight reply lands even when the section
@@ -98,44 +102,25 @@ fun DashhomeRoot() {
     }
 
     if (wide) {
-        // Tablet: a navigation rail (M3's Scaffold has no rail slot, so the
-        // rail sits inside the content area) + wide section layouts.
-        Scaffold(
-            topBar = {
-                TopAppBar(title = { Text("dashhome") })
-            },
-        ) { padding ->
-            Row(modifier = Modifier.fillMaxSize()) {
-                NavigationRail(modifier = Modifier.fillMaxHeight()) {
-                    RailSectionItem(
-                        selected = section == Section.CALENDAR.ordinal,
-                        onClick = { section = Section.CALENDAR.ordinal },
-                        icon = Icons.Filled.CalendarMonth,
-                        label = "Calendar",
-                    )
-                    RailSectionItem(
-                        selected = section == Section.HOME.ordinal,
-                        onClick = { section = Section.HOME.ordinal },
-                        icon = Icons.Filled.Home,
-                        label = "Home",
-                    )
-                    RailSectionItem(
-                        selected = section == Section.HERMES.ordinal,
-                        onClick = { section = Section.HERMES.ordinal },
-                        icon = Icons.Filled.SmartToy,
-                        label = "Hermes",
-                    )
-                    RailSectionItem(
-                        selected = false,
-                        onClick = { showSettings = true },
-                        icon = Icons.Filled.Settings,
-                        label = "Settings",
-                    )
-                }
-                Surface(modifier = Modifier.fillMaxSize().padding(padding)) {
-                    SectionContent(section, chat, chatScope, wide = true)
-                }
-            }
+        // Tablet: the one-page board of the four items (what the previous
+        // navigation rail showed); tapping an item opens its existing
+        // full-screen view, and back returns to the board.
+        val open = if (openItem in 0 until TabletItem.entries.size) TabletItem.entries[openItem] else null
+        if (open == null) {
+            TabletBoard(onOpen = { openItem = it.ordinal })
+        } else {
+            TabletDrillDown(
+                item = open,
+                chat = chat,
+                chatScope = chatScope,
+                onBack = { openItem = -1 },
+                onClearServer = {
+                    Prefs.clear(context)
+                    DashApi.baseUrl = ""
+                    openItem = -1
+                    connected = false
+                },
+            )
         }
     } else {
         // Phone: bottom navigation bar.
@@ -203,22 +188,6 @@ private fun SectionContent(section: Int, chat: ChatState, chatScope: CoroutineSc
         Section.HOME -> HomeScreen()
         Section.HERMES -> HermesScreen(chat = chat, chatScope = chatScope, wide = wide)
     }
-}
-
-/** A navigation rail entry for one of the dashboard sections. */
-@Composable
-private fun RailSectionItem(
-    selected: Boolean,
-    onClick: () -> Unit,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-) {
-    NavigationRailItem(
-        selected = selected,
-        onClick = onClick,
-        icon = { Icon(imageVector = icon, contentDescription = label) },
-        label = { Text(label) },
-    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
