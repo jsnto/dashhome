@@ -21,7 +21,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -37,13 +36,12 @@ import com.jsnto.dashhome.api.CalendarInfo
 import com.jsnto.dashhome.api.DashApi
 import com.jsnto.dashhome.ui.state.MonthGrid
 import com.jsnto.dashhome.ui.state.Palette
+import com.jsnto.dashhome.ui.state.SUMMARY
+import com.jsnto.dashhome.ui.state.TabletSectionState
 import com.jsnto.dashhome.ui.state.shortLabel
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-
-/** The web dashboard's Summary tab id. */
-private const val SUMMARY = "__summary__"
 
 private const val MAX_CHIPS = 3
 
@@ -55,18 +53,28 @@ private const val WEEKS = 6
  * calendar, over a month grid with day detail. On wide displays the
  * month grid and the selected day's events sit side by side instead of
  * stacked.
+ *
+ * [shared] is the tablet's shared section state: the board window and the
+ * full-screen drill-down both read and write it, so the drill-down opens
+ * on exactly the state the board's window was showing. When absent the
+ * screen owns its own saveable state.
  */
 @Composable
-fun CalendarScreen(wide: Boolean = false) {
+fun CalendarScreen(wide: Boolean = false, shared: TabletSectionState? = null) {
     val zone = remember { ZoneId.systemDefault() }
     val today = remember { LocalDate.now(zone) }
 
-    var year by rememberSaveable { mutableIntStateOf(today.year) }
-    var month by rememberSaveable { mutableIntStateOf(today.monthValue) } // 1-based
-    var active by rememberSaveable { mutableStateOf(SUMMARY) }
-    // On wide displays the day detail lives in its own pane, so start with
-    // today selected for an immediately useful two-pane view.
-    var selectedDay by rememberSaveable { mutableStateOf(if (wide) MonthGrid.dayKey(today) else null) }
+    val section = shared ?: rememberSaveable(saver = TabletSectionState.Saver) {
+        TabletSectionState(
+            year = today.year,
+            month = today.monthValue,
+            calendarTab = SUMMARY,
+            // On wide displays the day detail lives in its own pane, so
+            // start with today selected for an immediately useful
+            // two-pane view.
+            selectedDay = if (wide) MonthGrid.dayKey(today) else null,
+        )
+    }
 
     // Visible calendars (the tabs).
     var calendars by remember { mutableStateOf<List<CalendarInfo>?>(null) }
@@ -81,17 +89,21 @@ fun CalendarScreen(wide: Boolean = false) {
     }
 
     // Events for the visible month (summary = all configured calendars).
-    val firstDay = LocalDate.of(year, month, 1)
+    val firstDay = LocalDate.of(section.year, section.month, 1)
     val startDay = MonthGrid.dayKey(firstDay)
     val endDay = MonthGrid.dayKey(firstDay.withDayOfMonth(firstDay.lengthOfMonth()))
     var events by remember { mutableStateOf<List<ApiEvent>?>(null) }
     var eventsErr by remember { mutableStateOf<ApiException?>(null) }
     var loading by remember { mutableStateOf(false) }
-    LaunchedEffect(DashApi.baseUrl, startDay, endDay, active) {
+    LaunchedEffect(DashApi.baseUrl, startDay, endDay, section.calendarTab) {
         if (calErr != null) return@LaunchedEffect
         loading = true
         try {
-            events = DashApi.getEvents(startDay, endDay, if (active == SUMMARY) null else active)
+            events = DashApi.getEvents(
+                startDay,
+                endDay,
+                if (section.calendarTab == SUMMARY) null else section.calendarTab,
+            )
             eventsErr = null
         } catch (e: ApiException) {
             eventsErr = e
@@ -101,10 +113,10 @@ fun CalendarScreen(wide: Boolean = false) {
     }
 
     val shift = { delta: Int ->
-        val (y, m) = shiftedMonth(year, month, delta)
-        year = y
-        month = m
-        selectedDay = null
+        val (y, m) = shiftedMonth(section.year, section.month, delta)
+        section.year = y
+        section.month = m
+        section.selectedDay = null
     }
 
     val eventList = events ?: emptyList()
@@ -128,10 +140,10 @@ fun CalendarScreen(wide: Boolean = false) {
                 tabs.forEach { (id, label) ->
                     TabChip(
                         label = label,
-                        selected = active == id,
+                        selected = section.calendarTab == id,
                         onClick = {
-                            active = id
-                            selectedDay = null
+                            section.calendarTab = id
+                            section.selectedDay = null
                         },
                     )
                 }
@@ -146,7 +158,7 @@ fun CalendarScreen(wide: Boolean = false) {
         ) {
             TextButton(onClick = { shift(-1) }) { Text("‹") }
             Text(
-                text = monthTitle(year, month),
+                text = monthTitle(section.year, section.month),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f, fill = false),
@@ -154,9 +166,9 @@ fun CalendarScreen(wide: Boolean = false) {
             TextButton(onClick = { shift(1) }) { Text("›") }
             TextButton(
                 onClick = {
-                    year = today.year
-                    month = today.monthValue
-                    selectedDay = null
+                    section.year = today.year
+                    section.month = today.monthValue
+                    section.selectedDay = null
                 },
             ) {
                 Text("Today")
@@ -188,23 +200,23 @@ fun CalendarScreen(wide: Boolean = false) {
                         ErrorNote(eventsErr!!)
                     } else {
                         MonthGridBody(
-                            year = year,
-                            month = month,
+                            year = section.year,
+                            month = section.month,
                             zone = zone,
                             today = today,
                             byDay = byDay,
-                            multi = active == SUMMARY,
+                            multi = section.calendarTab == SUMMARY,
                             order = order,
-                            selectedDay = selectedDay,
-                            onDayClick = { key -> selectedDay = if (selectedDay == key) null else key },
+                            selectedDay = section.selectedDay,
+                            onDayClick = { key -> section.selectedDay = if (section.selectedDay == key) null else key },
                         )
                     }
                 }
                 CalendarDetailPane(
-                    key = selectedDay,
+                    key = section.selectedDay,
                     byDay = byDay,
                     eventsErr = eventsErr,
-                    multi = active == SUMMARY,
+                    multi = section.calendarTab == SUMMARY,
                     order = order,
                     zone = zone,
                     modifier = Modifier
@@ -217,16 +229,16 @@ fun CalendarScreen(wide: Boolean = false) {
                 ErrorNote(eventsErr!!)
             }
             MonthGridBody(
-                year = year,
-                month = month,
+                year = section.year,
+                month = section.month,
                 zone = zone,
                 today = today,
                 byDay = byDay,
-                multi = active == SUMMARY,
+                multi = section.calendarTab == SUMMARY,
                 order = order,
-                selectedDay = selectedDay,
+                selectedDay = section.selectedDay,
                 withDetail = true,
-                onDayClick = { key -> selectedDay = if (selectedDay == key) null else key },
+                onDayClick = { key -> section.selectedDay = if (section.selectedDay == key) null else key },
             )
         }
     }

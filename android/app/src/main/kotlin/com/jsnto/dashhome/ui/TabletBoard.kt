@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import com.jsnto.dashhome.api.ApiException
 import com.jsnto.dashhome.api.DashApi
 import com.jsnto.dashhome.ui.state.ChatState
+import com.jsnto.dashhome.ui.state.TabletSectionState
 import kotlinx.coroutines.CoroutineScope
 
 /**
@@ -70,12 +71,18 @@ enum class TabletItem(val title: String) {
  * scrolls inside its own window, and the board itself fits the display
  * with no board-level scrolling. Settings is reachable from the top bar,
  * the way the web's header carries its Settings button.
+ *
+ * [sections] is the shared section state the tablet root also hands the
+ * drill-downs, so a tapped window's full-screen view opens on exactly
+ * the state the window was showing, and the board (kept composed under
+ * the drill-down) and the drill-down always agree.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TabletBoard(
     chat: ChatState,
     chatScope: CoroutineScope,
+    sections: TabletSectionState,
     onOpen: (TabletItem) -> Unit,
 ) {
     // Integration flags from /api/config (the same call the Hermes section
@@ -122,7 +129,7 @@ fun TabletBoard(
                     onClick = { onOpen(TabletItem.CALENDAR) },
                     modifier = Modifier.weight(1f),
                 ) {
-                    CalendarScreen(wide = true)
+                    CalendarScreen(wide = true, shared = sections)
                 }
                 BoardWindow(
                     win = "hermes",
@@ -154,7 +161,7 @@ fun TabletBoard(
                     onClick = { onOpen(TabletItem.HERMES) },
                     modifier = Modifier.weight(1f),
                 ) {
-                    PushPane(configured = hermesPush)
+                    PushPane(configured = hermesPush, shared = sections)
                 }
             }
         }
@@ -221,7 +228,10 @@ private fun BoardWindow(
  * The full-screen drill-down for a tapped board window: the same view the
  * app has today - the Calendar's wide two-pane layout, the Home WebView,
  * the Hermes wide layout, or the Settings screen - now with a back
- * button (and system back) that returns to the board.
+ * button (and system back) that returns to the board. It composes over
+ * the still-mounted board and reads the shared [sections], so it opens
+ * on the state the tapped window was showing, and the board's live
+ * windows survive the round trip.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -229,6 +239,7 @@ fun TabletDrillDown(
     item: TabletItem,
     chat: ChatState,
     chatScope: CoroutineScope,
+    sections: TabletSectionState,
     onBack: () -> Unit,
     onClearServer: () -> Unit,
 ) {
@@ -251,9 +262,14 @@ fun TabletDrillDown(
                 .testTag("drilldown-${item.name.lowercase()}"),
         ) {
             when (item) {
-                TabletItem.CALENDAR -> CalendarScreen(wide = true)
+                TabletItem.CALENDAR -> CalendarScreen(wide = true, shared = sections)
                 TabletItem.HOME -> HomeScreen(showTitle = false)
-                TabletItem.HERMES -> HermesScreen(chat = chat, chatScope = chatScope, wide = true)
+                TabletItem.HERMES -> HermesScreen(
+                    chat = chat,
+                    chatScope = chatScope,
+                    wide = true,
+                    shared = sections,
+                )
                 TabletItem.SETTINGS -> Unit
             }
         }

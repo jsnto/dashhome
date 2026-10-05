@@ -40,6 +40,7 @@ import com.jsnto.dashhome.api.Push
 import com.jsnto.dashhome.markdown.MarkdownText
 import com.jsnto.dashhome.ui.state.ChatState
 import com.jsnto.dashhome.ui.state.PushFeed
+import com.jsnto.dashhome.ui.state.TabletSectionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -47,9 +48,18 @@ import kotlinx.coroutines.launch
 /**
  * The Hermes section: chat + the markdown push feed (the web's ChatPanel
  * and PushPanel as two tabs on the phone, side by side on wide displays).
+ *
+ * [shared] is the tablet's shared section state: the board's push window
+ * and this view's push pane then agree on the selected history tab. The
+ * chat thread is already shared at the root via [chat].
  */
 @Composable
-fun HermesScreen(chat: ChatState, chatScope: CoroutineScope, wide: Boolean = false) {
+fun HermesScreen(
+    chat: ChatState,
+    chatScope: CoroutineScope,
+    wide: Boolean = false,
+    shared: TabletSectionState? = null,
+) {
     var tab by rememberSaveable { mutableIntStateOf(0) } // 0 = chat, 1 = push
     // Integration flags from /api/config (drive friendly setup notes).
     var hermesChat by remember { mutableStateOf(true) }
@@ -86,7 +96,7 @@ fun HermesScreen(chat: ChatState, chatScope: CoroutineScope, wide: Boolean = fal
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
-                PushPane(configured = hermesPush)
+                PushPane(configured = hermesPush, shared = shared)
             }
         }
         return
@@ -104,7 +114,7 @@ fun HermesScreen(chat: ChatState, chatScope: CoroutineScope, wide: Boolean = fal
         }
         when (tab) {
             0 -> ChatPane(state = chat, scope = chatScope, configured = hermesChat)
-            else -> PushPane(configured = hermesPush)
+            else -> PushPane(configured = hermesPush, shared = shared)
         }
     }
 }
@@ -202,11 +212,22 @@ private fun ChatRow(m: ChatState.Msg) {
  * The push feed: the latest push is always available; previous pushes are
  * browsable in date tabs (newest first). Polls on the board's
  * refresh_seconds interval, same as the web's panel.
+ *
+ * [shared] is the tablet's shared section state: the board's push window
+ * and the drill-down's push pane then select the same history tab.
  */
 @Composable
-fun PushPane(configured: Boolean) {
+fun PushPane(configured: Boolean, shared: TabletSectionState? = null) {
     var history by remember { mutableStateOf<List<Push>>(emptyList()) }
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
+    // The tablet's board and drill-down share the selected tab; a
+    // standalone pane owns its own.
+    val openTab = shared?.pushTab ?: openId
+
+    fun selectTab(id: String?) {
+        if (shared != null) shared.pushTab = id else openId = id
+    }
+
     var open by remember { mutableStateOf<Push?>(null) }
     var err by remember { mutableStateOf<ApiException?>(null) }
     val scope = rememberCoroutineScope()
@@ -233,10 +254,10 @@ fun PushPane(configured: Boolean) {
 
     val latest = history.firstOrNull()
     val shown: Push? = when {
-        openId != null -> open ?: history.firstOrNull { it.id == openId }
+        openTab != null -> open ?: history.firstOrNull { it.id == openTab }
         else -> latest
     }
-    val isLatest = shown != null && openId == null && shown.id == latest?.id
+    val isLatest = shown != null && openTab == null && shown.id == latest?.id
 
     Column(modifier = Modifier.fillMaxSize().padding(top = 12.dp)) {
         if (!configured) {
@@ -252,20 +273,16 @@ fun PushPane(configured: Boolean) {
                 PushFeed.tabs(history).forEach { t ->
                     TabChip(
                         label = t.label,
-                        selected = if (t.id == null) openId == null else openId == t.id,
+                        selected = if (t.id == null) openTab == null else openTab == t.id,
                         onClick = {
-                            if (t.id == null) {
-                                openId = null
-                                open = null
-                            } else {
-                                val id = t.id
-                                openId = id
-                                open = null
+                            open = null
+                            selectTab(t.id)
+                            if (t.id != null) {
                                 scope.launch {
                                     open = try {
-                                        DashApi.getPush(id)
+                                        DashApi.getPush(t.id)
                                     } catch (e: ApiException) {
-                                        history.firstOrNull { it.id == id }
+                                        history.firstOrNull { it.id == t.id }
                                     }
                                 }
                             }
