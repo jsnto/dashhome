@@ -55,6 +55,54 @@ class PushFeedTest {
     }
 
     @Test
+    fun `shown uses the fetched push when it matches the selected tab`() {
+        val history = listOf(
+            push("p2", "2026-10-02T09:00:00Z", md = "list p2"),
+            push("p1", "2026-10-01T09:00:00Z"),
+        )
+        val fetched = push("p2", "2026-10-02T09:00:00Z", md = "detail p2")
+        assertEquals(fetched, PushFeed.shown(fetched, "p2", history))
+    }
+
+    @Test
+    fun `shown ignores a fetched push for a different tab`() {
+        // The pane fetched p3, then the selected tab moved to p2 (e.g.
+        // changed in the drill-down over the still-mounted board): the
+        // pane must show p2, not the stale p3 content.
+        val history = listOf(
+            push("p2", "2026-10-02T09:00:00Z", md = "list p2"),
+            push("p3", "2026-10-03T09:00:00Z", md = "list p3"),
+        )
+        val stale = push("p3", "2026-10-03T09:00:00Z", md = "detail p3")
+        assertEquals("p2", PushFeed.shown(stale, "p2", history)?.id)
+    }
+
+    @Test
+    fun `shown never renders a late fetch under a newer selection`() {
+        // A slow response for p2 lands after p3 was selected: it must not
+        // decide what is shown.
+        val history = listOf(
+            push("p3", "2026-10-03T09:00:00Z", md = "list p3"),
+            push("p2", "2026-10-02T09:00:00Z", md = "list p2"),
+        )
+        val late = push("p2", "2026-10-02T09:00:00Z", md = "detail p2")
+        assertEquals("p3", PushFeed.shown(late, "p3", history)?.id)
+    }
+
+    @Test
+    fun `shown shows the latest push when no tab is selected`() {
+        val history = listOf(push("p3", "2026-10-03T09:00:00Z"), push("p2", "2026-10-02T09:00:00Z"))
+        assertEquals("p3", PushFeed.shown(null, null, history)?.id)
+        // A stale fetch is ignored on the latest tab too.
+        assertEquals("p3", PushFeed.shown(push("p2", "2026-10-02T09:00:00Z"), null, history)?.id)
+    }
+
+    @Test
+    fun `shown is null when the selected tab is not in the history`() {
+        assertEquals(null, PushFeed.shown(null, "gone", emptyList()))
+    }
+
+    @Test
     fun `shortDate is a medium date label`() {
         assertEquals("Oct 3", PushFeed.shortDate("2026-10-03T09:41:00Z"))
     }

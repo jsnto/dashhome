@@ -35,6 +35,22 @@ object PushFeed {
         listOf(Tab(null, "Latest")) +
             newestFirst(history).take(HISTORY_TABS).map { Tab(it.id, shortDate(it.receivedAt)) }
 
+    /**
+     * The push the pane shows: with no tab selected, the latest push;
+     * otherwise the fetched detail for the selected tab when it is
+     * still current, else the selected push from the history list (the
+     * list carries the same markdown). A fetched push for a different
+     * tab is ignored, so the pane never renders content under the wrong
+     * tab - even when the selected tab moved in a shared pane while this
+     * one's fetch is still in flight.
+     */
+    fun shown(open: Push?, openTab: String?, history: List<Push>): Push? =
+        if (openTab == null) {
+            history.firstOrNull()
+        } else {
+            (open?.takeIf { it.id == openTab }) ?: history.firstOrNull { it.id == openTab }
+        }
+
     /** "Oct 3" from an RFC3339 timestamp. */
     fun shortDate(iso: String): String =
         parseInstant(iso)?.atZone(ZoneId.systemDefault())?.format(shortDateFmt) ?: iso

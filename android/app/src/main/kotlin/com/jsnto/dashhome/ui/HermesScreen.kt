@@ -253,10 +253,7 @@ fun PushPane(configured: Boolean, shared: TabletSectionState? = null) {
     }
 
     val latest = history.firstOrNull()
-    val shown: Push? = when {
-        openTab != null -> open ?: history.firstOrNull { it.id == openTab }
-        else -> latest
-    }
+    val shown = PushFeed.shown(open, openTab, history)
     val isLatest = shown != null && openTab == null && shown.id == latest?.id
 
     Column(modifier = Modifier.fillMaxSize().padding(top = 12.dp)) {
