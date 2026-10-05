@@ -41,8 +41,8 @@ import kotlinx.coroutines.CoroutineScope
 
 /**
  * The four items on the tablet one-page board, in the same order the
- * navigation rail showed them today: the three dashboard sections plus
- * Settings. The board is pure navigation - each card is a placeholder
+ * previous navigation rail showed them: the three dashboard sections
+ * plus Settings. The board is pure navigation - each card is a placeholder
  * (icon, title, one-line summary) and makes no API calls; the live
  * content, including the Home Assistant WebView, belongs to the
  * full-screen drill-down view.

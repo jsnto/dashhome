@@ -102,9 +102,9 @@ fun DashhomeRoot() {
     }
 
     if (wide) {
-        // Tablet: the one-page board of the four items (the rail's entries
-        // today); tapping an item opens its existing full-screen view, and
-        // back returns to the board.
+        // Tablet: the one-page board of the four items (what the previous
+        // navigation rail showed); tapping an item opens its existing
+        // full-screen view, and back returns to the board.
         val open = if (openItem in 0 until TabletItem.entries.size) TabletItem.entries[openItem] else null
         if (open == null) {
             TabletBoard(onOpen = { openItem = it.ordinal })

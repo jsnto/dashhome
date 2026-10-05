@@ -5,9 +5,12 @@ web dashboard shows, usable from a phone or a tablet.
 
 The layout adapts to the display: phones use a bottom navigation bar and
 stacked panes; wide displays (screen width ≥ 600 dp, e.g. tablets) get a
-navigation rail, the Calendar's month grid and selected day side by side,
-and the Hermes chat and push feed side by side — the same side-by-side
-reading as the web dashboard.
+one-page board — all four items (Calendar, Home, Hermes, Settings) as
+tappable cards, each opening that section's existing full-screen view,
+with back returning to the board. Inside those views the Calendar's
+month grid and selected day sit side by side, and the Hermes chat and
+push feed sit side by side — the same side-by-side reading as the web
+dashboard.
 
 - **Calendar** — the same tabs/summary as the web: a Summary tab combining
   every visible calendar plus one tab per calendar, over a month grid with
