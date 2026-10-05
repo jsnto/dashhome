@@ -6,6 +6,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -38,9 +39,13 @@ import com.jsnto.dashhome.api.DashApi
  * server-side, token only when the board enables token_url) and is shown
  * in a WebView - a top-level page, so HA's X-Frame-Options header does
  * not block it the way it can block the web's cross-origin iframe.
+ *
+ * [showTitle] hides the in-content "Home" title; the tablet drill-down
+ * shows the title in its own back app bar instead, so it does not appear
+ * twice. Phones use the default (the title stays in the content).
  */
 @Composable
-fun HomeScreen() {
+fun HomeScreen(showTitle: Boolean = true) {
     val context = LocalContext.current
 
     // Embed URL lifecycle: fetching / loaded / error; [embedKey] remounts
@@ -64,11 +69,17 @@ fun HomeScreen() {
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
         Row(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = "Home",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
+            if (showTitle) {
+                Text(
+                    text = "Home",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                // Title lives in the drill-down app bar; keep the actions
+                // right-aligned.
+                Spacer(Modifier.weight(1f))
+            }
             if (url != null && err == null) {
                 TextButton(onClick = { openInBrowser(context, url!!) }) {
                     Icon(
