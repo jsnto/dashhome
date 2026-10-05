@@ -40,9 +40,10 @@ import com.jsnto.dashhome.api.DashApi
  * in a WebView - a top-level page, so HA's X-Frame-Options header does
  * not block it the way it can block the web's cross-origin iframe.
  *
- * [showTitle] hides the in-content "Home" title; the tablet drill-down
- * shows the title in its own back app bar instead, so it does not appear
- * twice. Phones use the default (the title stays in the content).
+ * [showTitle] hides the in-content "Home" title; the tablet shows the
+ * title in the board window's title bar or the drill-down's back app bar
+ * instead, so it does not appear twice. Phones use the default (the
+ * title stays in the content).
  */
 @Composable
 fun HomeScreen(showTitle: Boolean = true) {

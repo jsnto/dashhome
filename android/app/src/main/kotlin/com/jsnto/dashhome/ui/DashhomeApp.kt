@@ -1,5 +1,6 @@
 package com.jsnto.dashhome.ui
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.jsnto.dashhome.api.DashApi
 import com.jsnto.dashhome.data.Prefs
 import com.jsnto.dashhome.ui.state.ChatState
+import com.jsnto.dashhome.ui.state.rememberTabletSectionState
 import kotlinx.coroutines.CoroutineScope
 
 /** The three dashboard sections, mirroring the web dashboard's cards. */
@@ -51,11 +53,15 @@ private enum class Section { CALENDAR, HOME, HERMES }
 /**
  * App root: a setup screen until a server URL is saved, then the sections.
  * Phones use a bottom navigation bar; wide displays (tablets,
- * screenWidthDp >= 600) get a one-page board instead - every section at a
- * glance as tappable cards, each opening its existing full-screen view
- * (drill down, back returns to the board) - with the Calendar and Hermes
- * sections splitting into side-by-side panes inside that view so the
- * layout reads as a wide dashboard rather than a stretched phone screen.
+ * screenWidthDp >= 600) get a one-page board instead - a single screen of
+ * live content windows (Calendar over the Hermes chat panel in the main
+ * column, the Home/HA embed over the Hermes push panel in the side
+ * column, like the web dashboard), every section visible at once, with a
+ * window title tap opening the section's existing full-screen view over
+ * the still-mounted board (drill down, back returns to the board) - and
+ * the Calendar and Hermes sections splitting into side-by-side panes
+ * inside that view so the layout reads as a wide dashboard rather than a
+ * stretched phone screen.
  */
 private const val WIDE_SCREEN_DP = 600
 
@@ -102,25 +108,39 @@ fun DashhomeRoot() {
     }
 
     if (wide) {
-        // Tablet: the one-page board of the four items (what the previous
-        // navigation rail showed); tapping an item opens its existing
-        // full-screen view, and back returns to the board.
+        // Tablet: the one-page board - a single screen of live content
+        // windows (the web dashboard's board composition); tapping a
+        // window's title opens the section's existing full-screen view,
+        // and back returns to the board. The board keeps composing under
+        // the drill-down (the web keeps a maximized window's live content
+        // mounted the same way), so the board's windows - the HA WebView,
+        // the push poll, the calendar's month - survive the round trip
+        // without reload or re-prompt, and the drill-down opens on the
+        // state the tapped window was showing (both read [sections]).
+        val sections = rememberTabletSectionState()
         val open = if (openItem in 0 until TabletItem.entries.size) TabletItem.entries[openItem] else null
-        if (open == null) {
-            TabletBoard(onOpen = { openItem = it.ordinal })
-        } else {
-            TabletDrillDown(
-                item = open,
+        Box(modifier = Modifier.fillMaxSize()) {
+            TabletBoard(
                 chat = chat,
                 chatScope = chatScope,
-                onBack = { openItem = -1 },
-                onClearServer = {
-                    Prefs.clear(context)
-                    DashApi.baseUrl = ""
-                    openItem = -1
-                    connected = false
-                },
+                sections = sections,
+                onOpen = { openItem = it.ordinal },
             )
+            if (open != null) {
+                TabletDrillDown(
+                    item = open,
+                    chat = chat,
+                    chatScope = chatScope,
+                    sections = sections,
+                    onBack = { openItem = -1 },
+                    onClearServer = {
+                        Prefs.clear(context)
+                        DashApi.baseUrl = ""
+                        openItem = -1
+                        connected = false
+                    },
+                )
+            }
         }
     } else {
         // Phone: bottom navigation bar.

@@ -5,12 +5,18 @@ web dashboard shows, usable from a phone or a tablet.
 
 The layout adapts to the display: phones use a bottom navigation bar and
 stacked panes; wide displays (screen width ≥ 600 dp, e.g. tablets) get a
-one-page board — all four items (Calendar, Home, Hermes, Settings) as
-tappable cards, each opening that section's existing full-screen view,
-with back returning to the board. Inside those views the Calendar's
-month grid and selected day sit side by side, and the Hermes chat and
-push feed sit side by side — the same side-by-side reading as the web
-dashboard.
+one-page board that shows everything on one screen at a time, like the web
+dashboard — a single screen of live content windows: the main column is
+the Calendar section over the Hermes chat panel, the side column is the
+Home Assistant embed over the Hermes push panel (the web's 7fr/5fr column
+split, fixed for the tablet). Every window shows its real section content
+inline and carries a title bar; tapping a window's title opens that
+section's existing full-screen view (drill down, back returns to the
+board) — inside those views the Calendar's month grid and selected day
+sit side by side, and the Hermes chat and push feed sit side by side — the
+same side-by-side reading as the web dashboard. Long content scrolls
+inside its own window; the board itself fits the display. Settings is
+reachable from the board's top bar, like the web header's Settings button.
 
 - **Calendar** — the same tabs/summary as the web: a Summary tab combining
   every visible calendar plus one tab per calendar, over a month grid with
@@ -48,8 +54,12 @@ daemon. The build mirrors the lumi Android Docker pattern:
 - Output: `dist/dashhome-android-debug.apk` (repo root).
 - The first run downloads the Android SDK (~500 MB) and the Gradle
   distribution into a Docker image; later runs reuse the
-  `dashhome-gradle-cache` volume for incremental builds.
-- Overrides: `DASHHOME_DOCKER_IMAGE=<image>`, `OUT_DIR=<dir>`.
+  `dashhome-gradle-cache` volume for incremental builds and the
+  `dashhome-android-keystore` volume for the debug signing key, so every
+  APK is signed with the same key and on-device updates don't fail with
+  a signature conflict.
+- Overrides: `DASHHOME_DOCKER_IMAGE=<image>`, `OUT_DIR=<dir>`,
+  `DASHHOME_KEYSTORE_VOLUME=<volume>`.
 
 Install on a device (USB or wireless ADB):
 
@@ -106,8 +116,8 @@ android/
       data/       # SharedPreferences (server URL)
       ui/         # Compose screens: Calendar, Home (WebView), Hermes,
                   # Settings, setup, shared components, theme
-      ui/state/   # pure, unit-tested state logic (month grid, push feed,
-                  # chat thread)
+      ui/state/   # state logic: pure, unit-tested (month grid, push feed,
+                  # chat thread), plus the shared tablet section state
       markdown/   # Markwon renderer + Compose MarkdownText
     src/test/kotlin/             # JVM unit tests
 ```
