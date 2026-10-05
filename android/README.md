@@ -54,8 +54,12 @@ daemon. The build mirrors the lumi Android Docker pattern:
 - Output: `dist/dashhome-android-debug.apk` (repo root).
 - The first run downloads the Android SDK (~500 MB) and the Gradle
   distribution into a Docker image; later runs reuse the
-  `dashhome-gradle-cache` volume for incremental builds.
-- Overrides: `DASHHOME_DOCKER_IMAGE=<image>`, `OUT_DIR=<dir>`.
+  `dashhome-gradle-cache` volume for incremental builds and the
+  `dashhome-android-keystore` volume for the debug signing key, so every
+  APK is signed with the same key and on-device updates don't fail with
+  a signature conflict.
+- Overrides: `DASHHOME_DOCKER_IMAGE=<image>`, `OUT_DIR=<dir>`,
+  `DASHHOME_KEYSTORE_VOLUME=<volume>`.
 
 Install on a device (USB or wireless ADB):
 
@@ -112,8 +116,8 @@ android/
       data/       # SharedPreferences (server URL)
       ui/         # Compose screens: Calendar, Home (WebView), Hermes,
                   # Settings, setup, shared components, theme
-      ui/state/   # pure, unit-tested state logic (month grid, push feed,
-                  # chat thread)
+      ui/state/   # state logic: pure, unit-tested (month grid, push feed,
+                  # chat thread), plus the shared tablet section state
       markdown/   # Markwon renderer + Compose MarkdownText
     src/test/kotlin/             # JVM unit tests
 ```
