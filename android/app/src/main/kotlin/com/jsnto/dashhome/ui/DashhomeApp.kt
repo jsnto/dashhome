@@ -51,9 +51,12 @@ private enum class Section { CALENDAR, HOME, HERMES }
 /**
  * App root: a setup screen until a server URL is saved, then the sections.
  * Phones use a bottom navigation bar; wide displays (tablets,
- * screenWidthDp >= 600) get a one-page board instead - every section at a
- * glance as tappable cards, each opening its existing full-screen view
- * (drill down, back returns to the board) - with the Calendar and Hermes
+ * screenWidthDp >= 600) get a one-page board instead - a single screen of
+ * live content windows (Calendar over the Hermes chat panel in the main
+ * column, the Home/HA embed over the Hermes push panel in the side
+ * column, like the web dashboard), every section visible at once, with a
+ * window title tap opening the section's existing full-screen view
+ * (drill down, back returns to the board) - and the Calendar and Hermes
  * sections splitting into side-by-side panes inside that view so the
  * layout reads as a wide dashboard rather than a stretched phone screen.
  */
@@ -102,12 +105,17 @@ fun DashhomeRoot() {
     }
 
     if (wide) {
-        // Tablet: the one-page board of the four items (what the previous
-        // navigation rail showed); tapping an item opens its existing
-        // full-screen view, and back returns to the board.
+        // Tablet: the one-page board - a single screen of live content
+        // windows (the web dashboard's board composition); tapping a
+        // window's title opens the section's existing full-screen view,
+        // and back returns to the board.
         val open = if (openItem in 0 until TabletItem.entries.size) TabletItem.entries[openItem] else null
         if (open == null) {
-            TabletBoard(onOpen = { openItem = it.ordinal })
+            TabletBoard(
+                chat = chat,
+                chatScope = chatScope,
+                onOpen = { openItem = it.ordinal },
+            )
         } else {
             TabletDrillDown(
                 item = open,

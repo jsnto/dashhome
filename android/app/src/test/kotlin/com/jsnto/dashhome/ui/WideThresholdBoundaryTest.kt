@@ -15,10 +15,12 @@ import org.robolectric.annotation.Config
 
 /**
  * Pins for the exact screenWidthDp >= 600 routing boundary:
- *  - w600dp (landscape) is wide: the one-page board is shown (top row of
- *    cards composed; the board's top bar, not the phone bottom nav);
+ *  - w600dp (landscape) is wide: the one-page board is shown (the board's
+ *    top bar and its live content windows composed, not the phone bottom
+ *    nav; the fixed two-column layout composes every window at once, as
+ *    it does on the real 1280x800dp tablet where all four fit);
  *  - w599dp (portrait) is not wide: the phone bottom nav is shown and no
- *    board card leaks in.
+ *    board window leaks in.
  */
 @RunWith(RobolectricTestRunner::class)
 class WideThresholdBoundaryTest {
@@ -37,13 +39,14 @@ class WideThresholdBoundaryTest {
     @Test
     fun exactlySixHundredDpRoutesToTheBoard() {
         startApp()
-        // Board routing at the boundary: the board's own top bar and the
-        // top row of cards (both fit in the 400dp-tall landscape canvas;
-        // the second row composes lazily on scroll, as on the real
-        // 1280x800dp tablet where all four cards fit).
+        // Board routing at the boundary: the board's own top bar and its
+        // live content windows (all four compose at once in the fixed
+        // two-column layout, as on the real 1280x800dp tablet).
         composeRule.onNodeWithText("dashhome").assertExists()
-        composeRule.onNodeWithTag("boardItem-calendar").assertExists()
-        composeRule.onNodeWithTag("boardItem-home").assertExists()
+        composeRule.onNodeWithTag("boardWin-calendar").assertExists()
+        composeRule.onNodeWithTag("boardWin-home").assertExists()
+        composeRule.onNodeWithTag("boardWin-hermes").assertExists()
+        composeRule.onNodeWithTag("boardWin-push").assertExists()
     }
 
     @Config(sdk = [35], qualifiers = "w599dp-h800dp")
@@ -54,10 +57,10 @@ class WideThresholdBoundaryTest {
         composeRule.onNodeWithText("Calendar").assertExists()
         composeRule.onNodeWithText("Home").assertExists()
         composeRule.onNodeWithText("Hermes").assertExists()
-        // No board card leaks into the phone layout.
-        composeRule.onNodeWithTag("boardItem-calendar").assertDoesNotExist()
-        composeRule.onNodeWithTag("boardItem-home").assertDoesNotExist()
-        composeRule.onNodeWithTag("boardItem-hermes").assertDoesNotExist()
-        composeRule.onNodeWithTag("boardItem-settings").assertDoesNotExist()
+        // No board window leaks into the phone layout.
+        composeRule.onNodeWithTag("boardWin-calendar").assertDoesNotExist()
+        composeRule.onNodeWithTag("boardWin-home").assertDoesNotExist()
+        composeRule.onNodeWithTag("boardWin-hermes").assertDoesNotExist()
+        composeRule.onNodeWithTag("boardWin-push").assertDoesNotExist()
     }
 }
