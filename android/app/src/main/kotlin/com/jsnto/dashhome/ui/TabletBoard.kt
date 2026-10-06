@@ -36,6 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -163,6 +165,7 @@ fun TabletBoard(
                 BoardHandle(
                     handle = "main",
                     axis = BoardAxis.Y,
+                    label = "Resize Calendar and Hermes",
                     initialFrac = { mainFrac },
                     splitSizePx = { mainColSize.height },
                     onFracChange = { mainFrac = it },
@@ -179,6 +182,7 @@ fun TabletBoard(
             BoardHandle(
                 handle = "col",
                 axis = BoardAxis.X,
+                label = "Resize columns",
                 initialFrac = { colFrac },
                 splitSizePx = { layoutSize.width },
                 onFracChange = { colFrac = it },
@@ -202,6 +206,7 @@ fun TabletBoard(
                 BoardHandle(
                     handle = "side",
                     axis = BoardAxis.Y,
+                    label = "Resize Home and Hermes push",
                     initialFrac = { sideFrac },
                     splitSizePx = { sideColSize.height },
                     onFracChange = { sideFrac = it },
@@ -258,6 +263,10 @@ private enum class BoardAxis {
  * [MAX_FRAC] so a window can never be dragged away. While a drag is
  * active it shows the web's accent line.
  *
+ * [label] is the handle's screen-reader name - the same aria-labels the
+ * web's dividers carry - so a screen reader can discover and operate
+ * the resize.
+ *
  * [initialFrac] and [splitSizePx] are read when the drag starts, so the
  * drag always starts from the proportions the board is showing (the web
  * keeps the drag session's startFrac the same way).
@@ -266,6 +275,7 @@ private enum class BoardAxis {
 private fun BoardHandle(
     handle: String,
     axis: BoardAxis,
+    label: String,
     initialFrac: () -> Float,
     splitSizePx: () -> Int,
     onFracChange: (Float) -> Unit,
@@ -300,6 +310,7 @@ private fun BoardHandle(
                     },
                 )
             }
+            .semantics { contentDescription = label }
             .testTag("boardHandle-$handle"),
     ) {
         if (dragging) {

@@ -3,6 +3,7 @@ package com.jsnto.dashhome.ui
 import android.view.ViewConfiguration
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
@@ -33,7 +34,10 @@ import kotlin.math.abs
  *  - an untouched handle keeps its proportions: a column drag leaves the
  *    in-column 1:1 splits, an in-column drag leaves the column split;
  *  - with no drag the default composition is unchanged: the web's 7/12
- *    column split and the 1:1 in-column splits.
+ *    column split and the 1:1 in-column splits;
+ *  - each handle names its resize the way the web's dividers do (the
+ *    aria-label on the web's role=separator dividers), so a screen reader
+ *    can discover and operate it.
  *
  * The proportions are session-only Compose state (the web keeps them in
  * React state): they reset to the defaults on restart and no resize
@@ -144,6 +148,27 @@ class TabletBoardResizeTest {
             "home vs push",
             abs(size("boardWin-home").height - size("boardWin-push").height) <= 1,
         )
+    }
+
+    // --- handle accessibility: the web dividers' aria-labels -------------
+
+    @Config(sdk = [35], qualifiers = "w800dp-h500dp")
+    @Test
+    fun theHandlesNameTheirResizeLikeTheWebDividers() {
+        startApp()
+
+        // The web's dividers expose role=separator plus an aria-label
+        // naming the two views they resize; the handles carry the same
+        // labels, so a screen reader can discover and operate the resize.
+        composeRule
+            .onNodeWithTag("boardHandle-main")
+            .assertContentDescriptionEquals("Resize Calendar and Hermes")
+        composeRule
+            .onNodeWithTag("boardHandle-col")
+            .assertContentDescriptionEquals("Resize columns")
+        composeRule
+            .onNodeWithTag("boardHandle-side")
+            .assertContentDescriptionEquals("Resize Home and Hermes push")
     }
 
     // --- the column handle: the column split --------------------------------
