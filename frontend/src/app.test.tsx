@@ -501,15 +501,24 @@ describe('app: board views layout (settings.views)', () => {
   })
 
   it('renders the calendar as a chronological schedule summary when the board says so', async () => {
-    stubBoardServer({
+    const { calls } = stubBoardServer({
       order: ['calendar', 'chat', 'home', 'push'],
       hidden: [],
       calendar_mode: 'schedule',
     })
     render(<App />)
 
+    // The events effect refetches once the calendar list lands (the
+    // calendars state is a fetch dependency), briefly re-showing the
+    // loading note; wait for the settled list — both events fetches
+    // recorded and the rows rendered — before asserting.
+    await vi.waitFor(() => {
+      expect(calls.filter((c) => c.startsWith('GET /api/events'))).toHaveLength(2)
+      expect(screen.getByText('Dinner with Sam')).toBeTruthy()
+    })
+
     // The month grid is not rendered; the schedule list is.
-    const standup = await screen.findByText('Standup')
+    const standup = screen.getByText('Standup')
     expect(standup.closest('.schedule-item')).toBeTruthy()
     expect(document.querySelector('.month-grid')).toBeNull()
     expect(screen.getByText('Dinner with Sam').closest('.schedule-item')).toBeTruthy()
