@@ -23,3 +23,5 @@ android/.kotlin/
 .vscode/
 .idea/
 .DS_Store
+
+.keys
