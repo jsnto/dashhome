@@ -99,6 +99,11 @@ const (
 // ErrNoBoardFile is returned when the board file path is not configured.
 var ErrNoBoardFile = errors.New("no board file configured (set CONFIG_FILE)")
 
+// ErrBoardFileNotWritable is returned when the board could not be persisted
+// to the board file (the path is a directory — Docker's auto-created source
+// for an absent bind-mounted file — or the file/mount is not writable).
+var ErrBoardFileNotWritable = errors.New("board file not writable")
+
 // HAConfigured reports whether Home Assistant is configured.
 func (c *Config) HAConfigured() bool { return c.HAURL != "" && c.HAToken != "" }
 
@@ -254,7 +259,9 @@ func ValidateRefreshSeconds(n int) error {
 
 // SetRefreshSeconds validates n, persists the whole board to the board file,
 // and updates the in-memory board only after the write succeeds, so a failed
-// write leaves the running config (and the file) unchanged.
+// write leaves the running config (and the file) unchanged. A persistence
+// failure is wrapped in ErrBoardFileNotWritable (a storage error, distinct
+// from a bad n).
 func (c *Config) SetRefreshSeconds(n int) error {
 	if err := ValidateRefreshSeconds(n); err != nil {
 		return err
@@ -270,7 +277,10 @@ func (c *Config) SetRefreshSeconds(n int) error {
 		c.Board = updated
 	}
 	c.boardMu.Unlock()
-	return err
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrBoardFileNotWritable, err)
+	}
+	return nil
 }
 
 // WriteBoardFile writes b to path as indented JSON. The write is atomic
@@ -332,17 +342,20 @@ func (c *Config) HAFilter() []string {
 	return out
 }
 
-// CalendarFilter returns the configured calendar IDs. A nil slice means
-// "all visible calendars".
+// CalendarFilter returns the configured calendar IDs, deduplicated (first
+// occurrence wins), in configured order. A nil slice means "all visible
+// calendars".
 func (c *Config) CalendarFilter() []string {
 	c.boardMu.RLock()
 	defer c.boardMu.RUnlock()
 	if len(c.Board.Calendars) == 0 {
 		return nil
 	}
+	seen := make(map[string]bool, len(c.Board.Calendars))
 	out := make([]string, 0, len(c.Board.Calendars))
 	for _, ref := range c.Board.Calendars {
-		if ref.ID != "" {
+		if ref.ID != "" && !seen[ref.ID] {
+			seen[ref.ID] = true
 			out = append(out, ref.ID)
 		}
 	}

@@ -147,6 +147,8 @@ func (s *Server) putConfigRefresh(c *gin.Context) {
 		code := "bad_refresh_seconds"
 		if errors.Is(err, config.ErrNoBoardFile) {
 			status, code = http.StatusServiceUnavailable, "no_board_file"
+		} else if errors.Is(err, config.ErrBoardFileNotWritable) {
+			status, code = http.StatusServiceUnavailable, "board_file_not_writable"
 		}
 		fail(c, status, code, err.Error())
 		return

@@ -102,10 +102,13 @@ http://localhost:3000.
   volume on the backend, so they survive container rebuilds.
 - To use a dashboard config file, create `./dashhome.json` at the stack
   root (see `dashhome.example.json`): the compose file already bind-mounts
-  it read-only into the backend at the `CONFIG_FILE` default path
-  (`/app/dashhome.json`). It is optional — if it is absent, Docker
-  auto-creates a directory at the host path and the backend logs one line
-  and runs unconfigured.
+  it read-write into the backend at the `CONFIG_FILE` default path
+  (`/app/dashhome.json`), because the settings screen persists the refresh
+  interval into it. It must exist on the host for settings persistence;
+  the calendar IDs inside are yours to edit. It is optional at startup —
+  if it is absent, Docker auto-creates a directory at the host path, the
+  backend logs one line and runs unconfigured, and a settings save reports
+  the board file as not writable.
 - In the service-account mode (the `.env.example` default), the app exits
   at startup unless the key file at `GOOGLE_APPLICATION_CREDENTIALS`
   (default `/secrets/google-sa.json`) is present; add a volume entry

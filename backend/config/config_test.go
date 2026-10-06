@@ -276,6 +276,31 @@ func TestBoardFileUnreadableIsTreatedAsAbsent(t *testing.T) {
 	}
 }
 
+// A duplicated calendar ID in the board file is collapsed to its first
+// occurrence in order: listCalendars and listEvents both read
+// CalendarFilter, so this one boundary keeps the tab list and the event
+// fetches duplicate-free.
+func TestCalendarFilterDedupesPreservingOrder(t *testing.T) {
+	cfg := &Config{Board: Board{Calendars: []CalendarRef{
+		{ID: "a@example.com"},
+		{ID: "b@example.com"},
+		{ID: "a@example.com", Label: "duplicate"},
+		{ID: ""},
+		{ID: "c@example.com"},
+		{ID: "b@example.com"},
+	}}}
+	got := cfg.CalendarFilter()
+	want := []string{"a@example.com", "b@example.com", "c@example.com"}
+	if len(got) != len(want) {
+		t.Fatalf("CalendarFilter = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("CalendarFilter = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestValidateRefreshSeconds(t *testing.T) {
 	for _, bad := range []int{0, -1, 4, RefreshSecondsMin - 1, RefreshSecondsMax + 1, 100000} {
 		if err := ValidateRefreshSeconds(bad); err == nil {
@@ -447,6 +472,25 @@ func TestWriteBoardFileRemovesTempWhenRenameFails(t *testing.T) {
 		if e.Name() != "dashhome.json" {
 			t.Errorf("leftover entry %q after failed write", e.Name())
 		}
+	}
+}
+
+// A board file path that is a directory (Docker's auto-created source for
+// an absent bind-mounted file) cannot be written: the error is
+// ErrBoardFileNotWritable so the API can report a storage failure, and the
+// in-memory board is left unchanged.
+func TestSetRefreshSecondsDirectoryPathIsNotWritable(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{BoardFile: file, Board: Board{RefreshSeconds: 30}}
+	if err := cfg.SetRefreshSeconds(45); !errors.Is(err, ErrBoardFileNotWritable) {
+		t.Fatalf("err = %v, want ErrBoardFileNotWritable", err)
+	}
+	if cfg.RefreshSeconds() != 30 {
+		t.Errorf("in-memory RefreshSeconds = %d, want unchanged 30", cfg.RefreshSeconds())
 	}
 }
 

@@ -20,11 +20,15 @@
 # one exception to "in .env": it is a file, bind-mounted read-only from
 # ./backend/.keys (gitignored) into the backend container, so it never
 # lands in an image layer either. The optional board config
-# (./dashhome.json, gitignored, not baked into the image) is likewise
-# bind-mounted read-only into the backend container at the path
-# CONFIG_FILE resolves to; if it is absent on the host, Docker
-# auto-creates a directory there and the backend treats that as "no
-# board file" (a one-line log, dashboard runs unconfigured).
+# (./dashhome.json, gitignored, not baked into the image) is bind-mounted
+# read-write at the path CONFIG_FILE resolves to: the settings screen
+# persists refresh_seconds into it, so the file is editable by the app and
+# must exist on the host for settings persistence (create it from
+# dashhome.example.json); the calendar IDs and the rest of the content are
+# yours to edit. If it is absent on the host, Docker auto-creates a
+# directory there and the backend treats that as "no board file" (a
+# one-line log, dashboard runs unconfigured); a settings save then reports
+# the board file as not writable.
 
 name: dashhome
 
@@ -52,12 +56,14 @@ services:
       # resolves to this mount. Host file must be world-readable (the
       # container runs as the non-root dashhome user).
       - ./backend/.keys:/app/backend/.keys:ro
-      # Optional dashboard config (board file), read-only. CONFIG_FILE
-      # defaults to ./dashhome.json, which resolves to /app/dashhome.json
-      # in the container. The file is gitignored and not baked into the
-      # image; if absent on the host, Docker auto-creates a directory at
-      # the host path and the backend logs and treats it as absent.
-      - ./dashhome.json:/app/dashhome.json:ro
+      # Optional dashboard config (board file), read-write: the settings
+      # screen persists refresh_seconds into it, so it must exist on the
+      # host (create it from dashhome.example.json); the calendar IDs
+      # inside are yours to edit. CONFIG_FILE defaults to ./dashhome.json,
+      # which resolves to /app/dashhome.json in the container. If absent
+      # on the host, Docker auto-creates a directory at the host path and
+      # the backend logs and treats it as absent at startup.
+      - ./dashhome.json:/app/dashhome.json
     restart: unless-stopped
 
   frontend:
