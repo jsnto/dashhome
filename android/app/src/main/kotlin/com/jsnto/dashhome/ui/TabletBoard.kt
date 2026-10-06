@@ -28,6 +28,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -112,9 +113,9 @@ fun TabletBoard(
     // the board width and the top window's share in each column.
     // Session-only (they reset to the defaults on restart) and kept in
     // [MIN_FRAC]..[MAX_FRAC] by the drag handles.
-    var colFrac by remember { mutableStateOf(DEFAULT_COL_FRAC) }
-    var mainFrac by remember { mutableStateOf(DEFAULT_ROW_FRAC) }
-    var sideFrac by remember { mutableStateOf(DEFAULT_ROW_FRAC) }
+    var colFrac by remember { mutableFloatStateOf(DEFAULT_COL_FRAC) }
+    var mainFrac by remember { mutableFloatStateOf(DEFAULT_ROW_FRAC) }
+    var sideFrac by remember { mutableFloatStateOf(DEFAULT_ROW_FRAC) }
 
     // The split sizes the handles divide pointer travel by (the web
     // divides by the layout rect for the column handle and by the column
