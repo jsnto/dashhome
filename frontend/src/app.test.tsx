@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
-import type { ApiBoard } from './types'
+import type { ApiBoard, BoardViews, CalendarMode, ViewId } from './types'
 
 /** In-memory stand-in for the backend: the board persists across requests. */
 function stubServer(initialSeconds: number) {
@@ -266,6 +266,7 @@ describe('app: settings screen shows the persisted interval', () => {
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Updates' }))
     const input = (await screen.findByRole('spinbutton', { name: /refresh interval/i })) as HTMLInputElement
     expect(input.value).toBe('30')
 
@@ -282,9 +283,283 @@ describe('app: settings screen shows the persisted interval', () => {
     const getsBeforeReopen = configGets()
 
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Updates' }))
     const reopened = screen.getByRole('spinbutton', { name: /refresh interval/i }) as HTMLInputElement
     await waitFor(() => expect(reopened.value).toBe('120'))
     // Reopening the settings screen re-fetches the config.
     expect(configGets()).toBeGreaterThan(getsBeforeReopen)
+  })
+})
+
+// --- board views layout (the board file's views section) -------------------
+
+const integrationsOff = {
+  homeassistant: false,
+  google: { configured: false, login_required: false, login_url: '' },
+  hermes_chat: false,
+  hermes_push: false,
+}
+
+/** Events in the current month, all on or after today (so the schedule
+ *  summary lists them as upcoming). */
+function upcomingEvents() {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth()
+  const at = (day: number, h: number, min: number) => new Date(y, m, day, h, min).toISOString()
+  const d = now.getDate()
+  return [
+    {
+      calendar_id: 'c1@example.com',
+      calendar_label: 'Family',
+      id: 'e1',
+      summary: 'Standup',
+      start: at(d, 9, 30),
+      end: at(d, 10, 0),
+      all_day: false,
+    },
+    {
+      calendar_id: 'c2@example.com',
+      calendar_label: 'Work',
+      id: 'e2',
+      summary: 'Dinner with Sam',
+      start: at(d, 19, 0),
+      end: at(d, 20, 0),
+      all_day: false,
+    },
+    {
+      calendar_id: 'c1@example.com',
+      calendar_label: 'Family',
+      id: 'e3',
+      summary: 'Picnic',
+      start: at(d + 2, 0, 0),
+      end: at(d + 3, 0, 0),
+      all_day: true,
+    },
+  ]
+}
+
+/** Stand-in backend that serves a board with an editable views section. */
+function stubBoardServer(initialViews: ApiBoard['views'] | undefined) {
+  const board: ApiBoard = {
+    ha_entities: [],
+    ha_labels: {},
+    calendars: [],
+    refresh_seconds: 30,
+    views: initialViews,
+  }
+  const calls: string[] = []
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+    const url = String(input)
+    const method = init?.method ?? 'GET'
+    calls.push(`${method} ${url}`)
+    if (url === '/api/config') return json({ board, integrations: integrationsOff })
+    if (url === '/api/config/views' && init?.method === 'PUT') {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>
+      const cur = board.views ?? {
+        order: ['calendar', 'chat', 'home', 'push'],
+        hidden: [],
+        calendar_mode: 'month',
+      }
+      const next: BoardViews = {
+        order: (body.order as ViewId[]) ?? cur.order,
+        hidden: body.hidden !== undefined ? (body.hidden as ViewId[]) : cur.hidden,
+        calendar_mode: (body.calendar_mode as CalendarMode) ?? cur.calendar_mode,
+      }
+      board.views = next
+      return json({ board })
+    }
+    if (url === '/api/calendars') {
+      return json({
+        calendars: [
+          { id: 'c1@example.com', summary: 'Family', label: 'Family' },
+          { id: 'c2@example.com', summary: 'Work', label: 'Work' },
+        ],
+      })
+    }
+    if (url.startsWith('/api/events')) return json({ events: upcomingEvents() })
+    if (url === '/api/ha/embed-url') return json({ url: 'https://ha.local/dashboard' })
+    if (url === '/api/hermes/pushes/latest') return json({ error: 'no_pushes' }, 404)
+    if (url.startsWith('/api/hermes/pushes?')) return json({ pushes: [] })
+    return json({ error: 'not_configured' }, 503)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return { fetchMock, board, calls }
+}
+
+function headingsIn(el: HTMLElement | null): string[] {
+  if (!el) return []
+  return [...el.querySelectorAll('h2')].map((h) => h.textContent ?? '')
+}
+
+describe('app: board views layout (settings.views)', () => {
+  it('renders the visible views in the configured order, mapped to the slots in reading order', async () => {
+    stubBoardServer({
+      order: ['push', 'home', 'chat', 'calendar'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+
+    const main = () => document.querySelector('.col-main') as HTMLElement
+    const side = () => document.querySelector('.col-side') as HTMLElement
+    // Wait for the config fetch: the layout adopts the stored order.
+    await waitFor(() => expect(headingsIn(main())).toEqual(['Hermes push', 'Home']))
+    expect(headingsIn(side())).toEqual(['Hermes', 'Calendar'])
+
+    // Each window sits in its slot; the slot — not the view — owns the
+    // drag-resized proportion.
+    expect(main().querySelector('[data-win="push"]')!.getAttribute('data-slot')).toBe('main-top')
+    expect(main().querySelector('[data-win="home"]')!.getAttribute('data-slot')).toBe('main-bottom')
+    expect(side().querySelector('[data-win="chat"]')!.getAttribute('data-slot')).toBe('side-top')
+    expect(side().querySelector('[data-win="calendar"]')!.getAttribute('data-slot')).toBe('side-bottom')
+
+    // The resize handles name their current neighbours.
+    await screen.findByRole('separator', { name: 'Resize Hermes push and Home' })
+    expect(screen.getByRole('separator', { name: 'Resize Hermes and Calendar' })).toBeTruthy()
+    expect(screen.getAllByRole('separator')).toHaveLength(3)
+  })
+
+  it('does not render or poll a hidden view; the remaining views fill the slots', async () => {
+    const { calls } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: ['home', 'push'],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+
+    // Wait for the config fetch: the hidden views disappear.
+    await waitFor(() => {
+      expect(document.querySelector('[data-win="home"]')).toBeNull()
+      expect(document.querySelector('[data-win="push"]')).toBeNull()
+    })
+    expect(screen.getByRole('heading', { name: 'Calendar' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Hermes' })).toBeTruthy()
+
+    // Both visible views sit in the main column (their slots 0 and 1);
+    // the side column is empty and omitted, leaving only the in-column
+    // handle.
+    expect(document.querySelector('.col-side')).toBeNull()
+    expect(screen.getAllByRole('separator')).toHaveLength(1)
+    expect(screen.getByRole('separator', { name: 'Resize Calendar and Hermes' })).toBeTruthy()
+
+    // The hidden views' data endpoints are not polled once the layout has
+    // settled: after the config loads the hidden windows are unmounted, so
+    // no further requests go out for them (the default board may issue one
+    // mount-time fetch each before the config arrives).
+    await waitFor(() => expect(calls.some((c) => c === 'GET /api/config')).toBe(true))
+    await waitFor(() => {
+      expect(document.querySelector('[data-win="home"]')).toBeNull()
+      expect(document.querySelector('[data-win="push"]')).toBeNull()
+    })
+    const settled = calls.length
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20))
+    })
+    const fresh = calls.slice(settled)
+    expect(fresh).not.toContain('GET /api/ha/embed-url')
+    expect(fresh).not.toContain('GET /api/hermes/pushes/latest')
+    expect(fresh).not.toContain('GET /api/hermes/pushes?limit=50')
+  })
+
+  it('a lone visible view per column fills its column', async () => {
+    stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: ['chat', 'home'],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+    // Wait for the config fetch: both visible views become solo windows.
+    await waitFor(() => {
+      expect(document.querySelector('.col-main .win.solo[data-win="calendar"]')).toBeTruthy()
+    })
+    // Calendar in the main column, push in the side: both fill their column.
+    expect(document.querySelector('.col-side .win.solo[data-win="push"]')).toBeTruthy()
+    expect(document.querySelector('.col-main .divider')).toBeNull()
+    expect(document.querySelector('.col-side .divider')).toBeNull()
+    expect(screen.getAllByRole('separator')).toHaveLength(1)
+  })
+
+  it('shows an empty-state note when every view is hidden', async () => {
+    stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: ['calendar', 'chat', 'home', 'push'],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+    await screen.findByText(/All dashboard views are hidden/)
+    expect(document.querySelector('.col-main')).toBeNull()
+    expect(document.querySelector('.col-side')).toBeNull()
+  })
+
+  it('renders the calendar as a chronological schedule summary when the board says so', async () => {
+    stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'schedule',
+    })
+    render(<App />)
+
+    // The month grid is not rendered; the schedule list is.
+    const standup = await screen.findByText('Standup')
+    expect(standup.closest('.schedule-item')).toBeTruthy()
+    expect(document.querySelector('.month-grid')).toBeNull()
+    expect(screen.getByText('Dinner with Sam').closest('.schedule-item')).toBeTruthy()
+    // Time, title, and calendar label are all present per row.
+    const row = standup.closest('.schedule-item') as HTMLElement
+    expect(row.querySelector('.schedule-time')?.textContent).toBeTruthy()
+    expect(row.querySelector('.schedule-cal')?.textContent).toBe('Family')
+  })
+
+  it('renders the month grid by default when the board sets no calendar mode', async () => {
+    stubBoardServer(undefined) // no views section at all
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.month-grid')).toBeTruthy())
+    expect(document.querySelector('.schedule')).toBeNull()
+  })
+
+  it('keeps the drag-resized proportions when views are reordered', async () => {
+    rectSpy(1000, 600)
+    const { board } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+
+    // Drag the main-column handle: the top window's share grows.
+    const handle = screen.getByRole('separator', { name: 'Resize Calendar and Hermes' })
+    await pointer(handle, 'pointerdown', 0, 0)
+    await pointer(handle, 'pointermove', 0, 300)
+    await pointer(handle, 'pointerup', 0, 300)
+    expect(parseFloat(layoutEl().style.getPropertyValue('--main'))).toBeCloseTo(0.9, 6)
+
+    // Reorder the views (what the settings screen persists to the board
+    // file), then reopen the settings so the app picks the config up.
+    board.views = { order: ['chat', 'calendar', 'home', 'push'], hidden: [], calendar_mode: 'month' }
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await waitFor(() => {
+      expect(
+        (document.querySelector('[data-win="chat"]') as HTMLElement | null)?.getAttribute(
+          'data-slot',
+        ),
+      ).toBe('main-top')
+    })
+
+    // The proportions survived the reorder (session-only state, untouched),
+    // now applied to the slots the views occupy: chat owns the grown
+    // main-top share and calendar the shrunken main-bottom one.
+    expect(parseFloat(layoutEl().style.getPropertyValue('--main'))).toBeCloseTo(0.9, 6)
+    expect(parseFloat(layoutEl().style.getPropertyValue('--main-r'))).toBeCloseTo(0.1, 6)
+    expect(
+      (document.querySelector('[data-win="calendar"]') as HTMLElement | null)?.getAttribute(
+        'data-slot',
+      ),
+    ).toBe('main-bottom')
   })
 })

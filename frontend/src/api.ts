@@ -3,8 +3,10 @@ import type {
   ApiConfig,
   ApiEvent,
   CalendarInfo,
+  CalendarMode,
   ChatMessage,
   Push,
+  ViewId,
 } from './types'
 
 /** Error returned by the backend as {error, detail}. */
@@ -54,6 +56,17 @@ export const api = {
     request<{ board: ApiBoard }>('/config/refresh', {
       method: 'PUT',
       body: JSON.stringify({ refresh_seconds: seconds }),
+    }).then((b) => b.board),
+
+  /**
+   * Persist part of the view layout (board.views) server-side: the board
+   * order of the four views, which are hidden, and how the Calendar view
+   * renders. Omitted fields keep their current server-side value.
+   */
+  setViews: (views: { order?: ViewId[]; hidden?: ViewId[]; calendar_mode?: CalendarMode }) =>
+    request<{ board: ApiBoard }>('/config/views', {
+      method: 'PUT',
+      body: JSON.stringify(views),
     }).then((b) => b.board),
 
   getCalendars: () =>

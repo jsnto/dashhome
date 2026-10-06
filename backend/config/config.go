@@ -33,6 +33,11 @@ type Board struct {
 	// HAEmbed configures the full-dashboard iframe section. Optional;
 	// missing means "embed the default dashboard, no token in the URL".
 	HAEmbed *HAEmbed `json:"ha_embed,omitempty"`
+	// Views configures the dashboard's view layout: which views are shown,
+	// in what order, and how the Calendar view renders. Optional; missing
+	// means the default board (all four views in the original order,
+	// month-grid calendar).
+	Views *Views `json:"views,omitempty"`
 }
 
 // CalendarRef names one Google calendar by ID with an optional label.
@@ -53,6 +58,37 @@ type HAEmbed struct {
 	// in-iframe login) instead of a URL token.
 	TokenURL bool `json:"token_url"`
 }
+
+// Views is the dashboard's view layout: which of the four board views are
+// shown, in what order, and how the Calendar view renders.
+type Views struct {
+	// Order lists the view IDs in board order: the reading order of the
+	// 2x2 layout (main-top, main-bottom, side-top, side-bottom). After
+	// normalization it is always a permutation of the four view IDs, even
+	// for hidden views (they stay in place, so re-showing restores the
+	// position).
+	Order []string `json:"order"`
+	// Hidden is the set of view IDs hidden from the board (a subset of the
+	// view IDs). A hidden view is not rendered and needs no data polling.
+	Hidden []string `json:"hidden"`
+	// CalendarMode is how the Calendar view renders: "month" is the
+	// month grid, "schedule" a chronological list of upcoming events.
+	CalendarMode string `json:"calendar_mode"`
+}
+
+// The four board views, in the default board order (the 2x2 layout's
+// reading order: main-top, main-bottom, side-top, side-bottom).
+const (
+	ViewCalendar = "calendar"
+	ViewChat     = "chat"
+	ViewHome     = "home"
+	ViewPush     = "push"
+
+	CalendarModeMonth    = "month"
+	CalendarModeSchedule = "schedule"
+)
+
+var viewIDs = []string{ViewCalendar, ViewChat, ViewHome, ViewPush}
 
 // GoogleConfig carries the Google Calendar credential settings. It is a
 // type alias for calendar.GoogleSettings so the loaded config and the
@@ -282,6 +318,164 @@ func (c *Config) SetRefreshSeconds(n int) error {
 		return fmt.Errorf("%w: %w", ErrBoardFileNotWritable, err)
 	}
 	return nil
+}
+
+// DefaultViews returns the default view layout: all four views in the
+// original board order, none hidden, month-grid calendar. Absent
+// configuration behaves exactly like this.
+func DefaultViews() Views {
+	order := make([]string, len(viewIDs))
+	copy(order, viewIDs)
+	return Views{
+		Order:        order,
+		Hidden:       []string{},
+		CalendarMode: CalendarModeMonth,
+	}
+}
+
+// ViewConfig returns the effective view layout: defaults filled in and
+// stored values repaired (the board file is a freehand-editable config
+// surface), so the result is always usable — order is a permutation of the
+// four view IDs, hidden holds only known IDs, and calendar_mode is "month"
+// or "schedule". Safe to read while the board mutates.
+func (c *Config) ViewConfig() Views {
+	c.boardMu.RLock()
+	defer c.boardMu.RUnlock()
+	return normalizeViews(c.Board.Views)
+}
+
+// SetViews applies the provided view-layout fields (nil = keep the current
+// effective value), validates them, persists the whole board to the board
+// file, and updates the in-memory board only after the write succeeds, so
+// a failed write leaves the running config (and the file) unchanged.
+// Mirrors SetRefreshSeconds: a validation error is returned as-is, and a
+// persistence failure is wrapped in ErrBoardFileNotWritable (an absent
+// board file path is ErrNoBoardFile).
+func (c *Config) SetViews(order, hidden *[]string, mode *string) error {
+	if order != nil {
+		if err := checkViewOrder(*order); err != nil {
+			return err
+		}
+	}
+	if hidden != nil {
+		if err := checkViewHidden(*hidden); err != nil {
+			return err
+		}
+	}
+	if mode != nil {
+		if err := checkViewMode(*mode); err != nil {
+			return err
+		}
+	}
+	if c.BoardFile == "" {
+		return ErrNoBoardFile
+	}
+	c.boardMu.Lock()
+	updated := c.Board
+	views := normalizeViews(updated.Views)
+	if order != nil {
+		views.Order = append([]string{}, *order...)
+	}
+	if hidden != nil {
+		views.Hidden = append([]string{}, *hidden...)
+	}
+	if mode != nil {
+		views.CalendarMode = *mode
+	}
+	v := views
+	updated.Views = &v
+	err := WriteBoardFile(c.BoardFile, updated)
+	if err == nil {
+		c.Board = updated
+	}
+	c.boardMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrBoardFileNotWritable, err)
+	}
+	return nil
+}
+
+func isViewID(id string) bool {
+	for _, v := range viewIDs {
+		if id == v {
+			return true
+		}
+	}
+	return false
+}
+
+// checkViewOrder reports whether order is a permutation of the four view
+// IDs (every view exactly once, no others).
+func checkViewOrder(order []string) error {
+	if len(order) != len(viewIDs) {
+		return fmt.Errorf("views.order must list each of calendar, chat, home, push exactly once")
+	}
+	seen := make(map[string]bool, len(order))
+	for _, id := range order {
+		if !isViewID(id) || seen[id] {
+			return fmt.Errorf("views.order must be a permutation of calendar, chat, home, push")
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+// checkViewHidden reports whether hidden is a set of distinct known view
+// IDs (empty is valid: everything visible).
+func checkViewHidden(hidden []string) error {
+	seen := make(map[string]bool, len(hidden))
+	for _, id := range hidden {
+		if !isViewID(id) || seen[id] {
+			return fmt.Errorf("views.hidden may only contain distinct known view IDs (calendar, chat, home, push)")
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+// checkViewMode reports whether mode is a supported Calendar render mode.
+func checkViewMode(mode string) error {
+	if mode != CalendarModeMonth && mode != CalendarModeSchedule {
+		return fmt.Errorf("views.calendar_mode must be %q or %q", CalendarModeMonth, CalendarModeSchedule)
+	}
+	return nil
+}
+
+// normalizeViews fills in defaults and repairs stored values: order becomes
+// a permutation of the four view IDs (known IDs in stored order first,
+// missing IDs appended in default order), hidden keeps only known distinct
+// IDs, and calendar_mode falls back to "month".
+func normalizeViews(v *Views) Views {
+	out := DefaultViews()
+	if v == nil {
+		return out
+	}
+	order := make([]string, 0, len(viewIDs))
+	seen := make(map[string]bool, len(viewIDs))
+	for _, id := range v.Order {
+		if isViewID(id) && !seen[id] {
+			order = append(order, id)
+			seen[id] = true
+		}
+	}
+	for _, id := range viewIDs {
+		if !seen[id] {
+			order = append(order, id)
+		}
+	}
+	out.Order = order
+	out.Hidden = []string{}
+	seenH := make(map[string]bool, len(v.Hidden))
+	for _, id := range v.Hidden {
+		if isViewID(id) && !seenH[id] {
+			out.Hidden = append(out.Hidden, id)
+			seenH[id] = true
+		}
+	}
+	if v.CalendarMode == CalendarModeSchedule {
+		out.CalendarMode = CalendarModeSchedule
+	}
+	return out
 }
 
 // WriteBoardFile writes b to path as indented JSON. The write is atomic

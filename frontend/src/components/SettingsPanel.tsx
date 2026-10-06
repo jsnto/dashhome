@@ -1,32 +1,42 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent, type MouseEvent } from 'react'
 import { ApiError, api } from '../api'
 import { emitRefreshSeconds } from '../refreshBus'
-import type { ApiConfig } from '../types'
+import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, ViewId } from '../types'
 import type { Theme } from '../theme'
+import { BOARD_SLOT_NAMES, VIEW_LABELS, normalizeViews } from '../utils'
 
 interface Props {
   cfg: ApiConfig | null
   theme: Theme
   onThemeChange: (t: Theme) => void
+  /** Effective view layout (defaults already filled in). */
+  views?: BoardViews
+  /** Adopt a board just persisted server-side (keeps the dashboard in sync). */
+  onBoard?: (board: ApiBoard) => void
   onClose: () => void
 }
 
-type ServiceState = 'ok' | 'pending' | 'off'
+type SectionId = 'appearance' | 'views' | 'services' | 'updates'
 
-interface ServiceRow {
-  label: string
-  desc: string
-  state: ServiceState
-  stateText: string
-  href?: string
-}
+const SECTIONS: { id: SectionId; label: string }[] = [
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'views', label: 'Views' },
+  { id: 'services', label: 'Services' },
+  { id: 'updates', label: 'Updates' },
+]
 
 /**
  * Read-only summary of the integrations this deployment actually has
  * configured. Mirrors the `integrations` object of GET /api/config, which
  * exposes booleans only — no secret values ever reach the browser.
  */
-function serviceRows(cfg: ApiConfig): ServiceRow[] {
+function serviceRows(cfg: ApiConfig): {
+  label: string
+  desc: string
+  state: 'ok' | 'pending' | 'off'
+  stateText: string
+  href?: string
+}[] {
   const g = cfg.integrations.google
   const embed = cfg.board.ha_embed ?? null
   const embedPath = embed?.url_path?.trim()
@@ -62,8 +72,173 @@ function serviceRows(cfg: ApiConfig): ServiceRow[] {
   ]
 }
 
-export default function SettingsPanel({ cfg, theme, onThemeChange, onClose }: Props) {
-  // Live-update interval, edited here and persisted server-side.
+/**
+ * The Views section: show/hide each dashboard view and choose which view
+ * goes where on the 2x2 board (board slots in reading order: main top,
+ * main bottom, side top, side bottom), plus how the Calendar view renders.
+ * Every change is persisted to the board file as it happens (partial
+ * updates; the server keeps the fields the request omits).
+ */
+function ViewsSection({
+  views,
+  onBoard,
+}: {
+  views: BoardViews
+  onBoard?: (board: ApiBoard) => void
+}) {
+  // Optimistic local state: updated immediately, reverted if the save
+  // fails, re-synced from the server's answer on success.
+  const [local, setLocal] = useState<BoardViews>(views)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<ApiError | null>(null)
+
+  useEffect(() => setLocal(views), [views])
+
+  const apply = async (
+    body: { order?: ViewId[]; hidden?: ViewId[]; calendar_mode?: CalendarMode },
+    next: BoardViews,
+  ) => {
+    if (saving) return
+    const before = local
+    setSaving(true)
+    setErr(null)
+    setLocal(next)
+    try {
+      const board = await api.setViews(body)
+      onBoard?.(board)
+    } catch (e) {
+      setLocal(before)
+      setErr(e instanceof ApiError ? e : new ApiError(0, 'save_failed', String(e)))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleHidden = (id: ViewId) => {
+    const nextHidden = local.hidden.includes(id)
+      ? local.hidden.filter((h) => h !== id)
+      : [...local.hidden, id]
+    void apply({ hidden: nextHidden }, { ...local, hidden: nextHidden })
+  }
+
+  const move = (id: ViewId, delta: number) => {
+    const i = local.order.indexOf(id)
+    const j = i + delta
+    if (i < 0 || j < 0 || j >= local.order.length) return
+    const order = [...local.order]
+    ;[order[i], order[j]] = [order[j], order[i]]
+    void apply({ order }, { ...local, order })
+  }
+
+  const setMode = (m: CalendarMode) => {
+    if (m === local.calendar_mode) return
+    void apply({ calendar_mode: m }, { ...local, calendar_mode: m })
+  }
+
+  return (
+    <section className="settings-section">
+      <h3>Views</h3>
+      <p className="note">
+        Which dashboard windows are shown and where they sit on the board. Changes save
+        immediately.
+      </p>
+      {local.order.map((id, i) => {
+        const hidden = local.hidden.includes(id)
+        return (
+          <div className="view-row" key={id}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="view-name">{VIEW_LABELS[id]}</div>
+              <div className="view-slot">{BOARD_SLOT_NAMES[i]}</div>
+            </div>
+            <div className="view-controls">
+              <label className="view-toggle">
+                <input
+                  type="checkbox"
+                  checked={!hidden}
+                  disabled={saving}
+                  onChange={() => toggleHidden(id)}
+                  aria-label={`Show ${VIEW_LABELS[id]}`}
+                />
+                {hidden ? 'Hidden' : 'Visible'}
+              </label>
+              <div className="view-move">
+                <button
+                  className="btn small"
+                  disabled={saving || i === 0}
+                  onClick={() => move(id, -1)}
+                  aria-label={`Move ${VIEW_LABELS[id]} up`}
+                  title={`Move ${VIEW_LABELS[id]} up`}
+                >
+                  ↑
+                </button>
+                <button
+                  className="btn small"
+                  disabled={saving || i === local.order.length - 1}
+                  onClick={() => move(id, 1)}
+                  aria-label={`Move ${VIEW_LABELS[id]} down`}
+                  title={`Move ${VIEW_LABELS[id]} down`}
+                >
+                  ↓
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })}
+
+      <div className="settings-row">
+        <div>
+          <div className="settings-row-label">Calendar view</div>
+          <div className="settings-row-desc">
+            How the Calendar window renders: the month grid, or a schedule summary — a
+            chronological list of upcoming events.
+          </div>
+        </div>
+        <div className="tabs" role="group" aria-label="Calendar view">
+          <button
+            className={local.calendar_mode === 'month' ? 'tab on' : 'tab'}
+            aria-pressed={local.calendar_mode === 'month'}
+            disabled={saving}
+            onClick={() => setMode('month')}
+          >
+            Calendar
+          </button>
+          <button
+            className={local.calendar_mode === 'schedule' ? 'tab on' : 'tab'}
+            aria-pressed={local.calendar_mode === 'schedule'}
+            disabled={saving}
+            onClick={() => setMode('schedule')}
+          >
+            Schedule summary
+          </button>
+        </div>
+      </div>
+      {err && (
+        <p className="note err">
+          {err.code} — {err.detail}
+        </p>
+      )}
+    </section>
+  )
+}
+
+/**
+ * The settings page: a left sidebar menu navigating the sections
+ * (Appearance, Views, Services, Updates). Stays an overlay over the live
+ * dashboard; closes from the Close button, a click on the backdrop outside
+ * the card, or Escape.
+ */
+export default function SettingsPanel({
+  cfg,
+  theme,
+  onThemeChange,
+  views = normalizeViews(undefined),
+  onBoard,
+  onClose,
+}: Props) {
+  const [section, setSection] = useState<SectionId>('appearance')
+
+  // The live-update interval, edited here and persisted server-side.
   const [seconds, setSeconds] = useState('30')
   const [saving, setSaving] = useState(false)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
@@ -72,6 +247,21 @@ export default function SettingsPanel({ cfg, theme, onThemeChange, onClose }: Pr
   useEffect(() => {
     if (cfg) setSeconds(String(cfg.board.refresh_seconds || 30))
   }, [cfg])
+
+  // Escape closes the page, wherever the focus is.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  // A click on the backdrop (the overlay area outside the card) closes the
+  // page; clicks inside the card keep it open.
+  const onBackdropClick = (e: MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) onClose()
+  }
 
   const save = async (e: FormEvent) => {
     e.preventDefault()
@@ -100,8 +290,8 @@ export default function SettingsPanel({ cfg, theme, onThemeChange, onClose }: Pr
   }
 
   return (
-    <div className="settings-wrap">
-      <section className="card settings">
+    <div className="settings-wrap" onClick={onBackdropClick}>
+      <section className="card settings" role="dialog" aria-label="Settings">
         <div className="card-head">
           <h2>Settings</h2>
           <button className="btn ghost small" onClick={onClose}>
@@ -109,99 +299,124 @@ export default function SettingsPanel({ cfg, theme, onThemeChange, onClose }: Pr
           </button>
         </div>
 
-        <section className="settings-section">
-          <h3>Appearance</h3>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-label">Theme</div>
-              <div className="settings-row-desc">
-                Follows your OS preference until you pick one here.
-              </div>
-            </div>
-            <div className="tabs" role="group" aria-label="Theme">
+        <div className="settings-page-body">
+          <nav className="settings-nav" aria-label="Settings sections">
+            {SECTIONS.map((s) => (
               <button
-                className={theme === 'light' ? 'tab on' : 'tab'}
-                onClick={() => onThemeChange('light')}
-                aria-pressed={theme === 'light'}
+                key={s.id}
+                className={section === s.id ? 'on' : ''}
+                aria-current={section === s.id ? 'page' : undefined}
+                onClick={() => setSection(s.id)}
               >
-                Light
+                {s.label}
               </button>
-              <button
-                className={theme === 'dark' ? 'tab on' : 'tab'}
-                onClick={() => onThemeChange('dark')}
-                aria-pressed={theme === 'dark'}
-              >
-                Dark
-              </button>
-            </div>
-          </div>
-        </section>
+            ))}
+          </nav>
 
-        <section className="settings-section">
-          <h3>Services in use</h3>
-          {cfg === null ? (
-            <p className="note">Loading…</p>
-          ) : (
-            serviceRows(cfg).map((row) => (
-              <div className="settings-row" key={row.label}>
-                <div>
-                  <div className="settings-row-label">{row.label}</div>
-                  <div className="settings-row-desc">{row.desc}</div>
+          <div className="settings-content">
+            {section === 'appearance' && (
+              <section className="settings-section">
+                <h3>Appearance</h3>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">Theme</div>
+                    <div className="settings-row-desc">
+                      Follows your OS preference until you pick one here.
+                    </div>
+                  </div>
+                  <div className="tabs" role="group" aria-label="Theme">
+                    <button
+                      className={theme === 'light' ? 'tab on' : 'tab'}
+                      onClick={() => onThemeChange('light')}
+                      aria-pressed={theme === 'light'}
+                    >
+                      Light
+                    </button>
+                    <button
+                      className={theme === 'dark' ? 'tab on' : 'tab'}
+                      onClick={() => onThemeChange('dark')}
+                      aria-pressed={theme === 'dark'}
+                    >
+                      Dark
+                    </button>
+                  </div>
                 </div>
-                {row.state === 'ok' && <span className="dot ok">{row.stateText}</span>}
-                {row.state === 'pending' && (
-                  <span className="dot warn">
-                    {row.href ? (
-                      <a href={row.href} target="_blank" rel="noreferrer">
-                        {row.stateText}
-                      </a>
-                    ) : (
-                      row.stateText
-                    )}
-                  </span>
-                )}
-                {row.state === 'off' && <span className="dot off">{row.stateText}</span>}
-              </div>
-            ))
-          )}
-        </section>
+              </section>
+            )}
 
-        <section className="settings-section">
-          <h3>Updates</h3>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-label">Live-update interval</div>
-              <div className="settings-row-desc">
-                How often the Hermes push panel re-fetches from the backend
-                (5–3600 seconds). Saved to the dashboard config; the panel
-                adopts the new cadence immediately.
-              </div>
-            </div>
-            <form className="settings-interval" onSubmit={save}>
-              <input
-                className="num-input"
-                type="number"
-                min={5}
-                max={3600}
-                step={1}
-                inputMode="numeric"
-                value={seconds}
-                onChange={(e) => setSeconds(e.target.value)}
-                aria-label="Refresh interval in seconds"
-              />
-              <span className="settings-interval-unit">s</span>
-              <button className="btn" type="submit" disabled={saving}>
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-            </form>
+            {section === 'views' && <ViewsSection views={views} onBoard={onBoard} />}
+
+            {section === 'services' && (
+              <section className="settings-section">
+                <h3>Services in use</h3>
+                {cfg === null ? (
+                  <p className="note">Loading…</p>
+                ) : (
+                  serviceRows(cfg).map((row) => (
+                    <div className="settings-row" key={row.label}>
+                      <div>
+                        <div className="settings-row-label">{row.label}</div>
+                        <div className="settings-row-desc">{row.desc}</div>
+                      </div>
+                      {row.state === 'ok' && <span className="dot ok">{row.stateText}</span>}
+                      {row.state === 'pending' && (
+                        <span className="dot warn">
+                          {row.href ? (
+                            <a href={row.href} target="_blank" rel="noreferrer">
+                              {row.stateText}
+                            </a>
+                          ) : (
+                            row.stateText
+                          )}
+                        </span>
+                      )}
+                      {row.state === 'off' && <span className="dot off">{row.stateText}</span>}
+                    </div>
+                  ))
+                )}
+              </section>
+            )}
+
+            {section === 'updates' && (
+              <section className="settings-section">
+                <h3>Updates</h3>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">Live-update interval</div>
+                    <div className="settings-row-desc">
+                      How often the Hermes push panel re-fetches from the backend
+                      (5–3600 seconds). Saved to the dashboard config; the panel
+                      adopts the new cadence immediately.
+                    </div>
+                  </div>
+                  <form className="settings-interval" onSubmit={save}>
+                    <input
+                      className="num-input"
+                      type="number"
+                      min={5}
+                      max={3600}
+                      step={1}
+                      inputMode="numeric"
+                      value={seconds}
+                      onChange={(e) => setSeconds(e.target.value)}
+                      aria-label="Refresh interval in seconds"
+                    />
+                    <span className="settings-interval-unit">s</span>
+                    <button className="btn" type="submit" disabled={saving}>
+                      {saving ? 'Saving…' : 'Save'}
+                    </button>
+                  </form>
+                </div>
+                {savedMsg && <p className="note saved">{savedMsg}</p>}
+                {saveErr && (
+                  <p className="note err">
+                    {saveErr.code} — {saveErr.detail}
+                  </p>
+                )}
+              </section>
+            )}
           </div>
-          {savedMsg && <p className="note saved">{savedMsg}</p>}
-          {saveErr && (
-            <p className="note err">
-              {saveErr.code} — {saveErr.detail}
-            </p>
-          )}
-        </section>
+        </div>
       </section>
     </div>
   )

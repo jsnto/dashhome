@@ -56,6 +56,7 @@ func (s *Server) Engine() *gin.Engine {
 	api := r.Group("/api")
 	api.GET("/config", s.getConfig)
 	api.PUT("/config/refresh", s.putConfigRefresh)
+	api.PUT("/config/views", s.putConfigViews)
 	api.GET("/calendars", s.listCalendars)
 	api.GET("/events", s.listEvents)
 	api.GET("/ha/entities", s.haEntities)
@@ -105,6 +106,17 @@ func (s *Server) requireGoogle(c *gin.Context) bool {
 
 // --- /api/config -------------------------------------------------------
 
+// boardJSON is the board as the config endpoints expose it: the stored
+// board with its views normalized (defaults filled in), so clients can rely
+// on board.views being a complete, valid layout even when the board file
+// sets no views at all.
+func (s *Server) boardJSON() config.Board {
+	board := s.cfg.BoardSnapshot()
+	views := s.cfg.ViewConfig()
+	board.Views = &views
+	return board
+}
+
 func (s *Server) getConfig(c *gin.Context) {
 	google := gin.H{"configured": false}
 	if s.google != nil {
@@ -117,7 +129,7 @@ func (s *Server) getConfig(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"board": s.cfg.BoardSnapshot(),
+		"board": s.boardJSON(),
 		"integrations": gin.H{
 			"homeassistant": s.cfg.HAConfigured(),
 			"google":        google,
@@ -153,7 +165,38 @@ func (s *Server) putConfigRefresh(c *gin.Context) {
 		fail(c, status, code, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"board": s.cfg.BoardSnapshot()})
+	c.JSON(http.StatusOK, gin.H{"board": s.boardJSON()})
+}
+
+// putConfigViews persists part of the view layout (board.views) to the
+// board file: the order of the four views, which are hidden, and how the
+// Calendar view renders. Fields omitted from the request keep their current
+// effective value; each provided field is validated. Same exposure as
+// GET /api/config: the dashboard itself has no login; the board file is
+// deliberately a non-secret config surface.
+func (s *Server) putConfigViews(c *gin.Context) {
+	var req struct {
+		Order        *[]string `json:"order"`
+		Hidden       *[]string `json:"hidden"`
+		CalendarMode *string   `json:"calendar_mode"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "bad_request",
+			`body must be JSON {"order": [...], "hidden": [...], "calendar_mode": "month"|"schedule"}`)
+		return
+	}
+	if err := s.cfg.SetViews(req.Order, req.Hidden, req.CalendarMode); err != nil {
+		status := http.StatusBadRequest
+		code := "bad_views"
+		if errors.Is(err, config.ErrNoBoardFile) {
+			status, code = http.StatusServiceUnavailable, "no_board_file"
+		} else if errors.Is(err, config.ErrBoardFileNotWritable) {
+			status, code = http.StatusServiceUnavailable, "board_file_not_writable"
+		}
+		fail(c, status, code, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"board": s.boardJSON()})
 }
 
 // --- calendars ----------------------------------------------------------

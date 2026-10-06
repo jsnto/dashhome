@@ -1,13 +1,77 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ApiError, api } from '../api'
-import type { ApiEvent, CalendarInfo } from '../types'
+import type { ApiEvent, CalendarInfo, CalendarMode } from '../types'
 import { dayKey } from '../utils'
 import MonthGrid from './MonthGrid'
 import Note from './Note'
 
 const SUMMARY = '__summary__'
 
-export default function CalendarSection() {
+/** Start–end times for a timed event, or "All day" for all-day events. */
+function fmtWhen(e: ApiEvent): string {
+  if (e.all_day) {
+    return 'All day'
+  }
+  const t = (d: Date) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  return `${t(new Date(e.start))} – ${t(new Date(e.end))}`
+}
+
+/**
+ * The schedule summary: a chronological list of upcoming events (time,
+ * title, calendar label), grouped by day. The backend returns the events
+ * already sorted by start time, so the days fall out of the load order.
+ */
+function ScheduleList({ events }: { events: ApiEvent[] }) {
+  const days = useMemo(() => {
+    const out: { key: string; label: string; items: ApiEvent[] }[] = []
+    for (const e of events) {
+      const d = new Date(e.start)
+      const k = dayKey(d)
+      const last = out[out.length - 1]
+      if (!last || last.key !== k) {
+        out.push({
+          key: k,
+          label: d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }),
+          items: [e],
+        })
+      } else {
+        last.items.push(e)
+      }
+    }
+    return out
+  }, [events])
+
+  if (days.length === 0) {
+    return <p className="note">No upcoming events in this range.</p>
+  }
+
+  return (
+    <div className="schedule-wrap">
+      {days.map((day) => (
+        <div key={day.key} className="schedule-day">
+          <div className="schedule-day-label">{day.label}</div>
+          <ul className="schedule">
+            {day.items.map((e) => (
+              <li key={`${e.calendar_id}-${e.id}`} className="schedule-item">
+                <span className="schedule-time">{fmtWhen(e)}</span>
+                <span className="schedule-title">{e.summary || '(no title)'}</span>
+                {e.calendar_label && <span className="schedule-cal">{e.calendar_label}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The Calendar window: a month grid, or (when the board's views section
+ * sets calendar_mode "schedule") a chronological schedule summary of the
+ * same loaded events. Month navigation and the Summary/per-calendar data
+ * tabs work in both modes.
+ */
+export default function CalendarSection({ mode = 'month' }: { mode?: CalendarMode }) {
   const [calendars, setCalendars] = useState<CalendarInfo[] | null>(null)
   const [calErr, setCalErr] = useState<ApiError | null>(null)
   const [active, setActive] = useState<string>(SUMMARY)
@@ -58,6 +122,20 @@ export default function CalendarSection() {
   }, [range.start, range.end, active, calErr, calendars])
 
   const shiftMonth = (delta: number) => setNow(new Date(year, month + delta, 1))
+
+  // The schedule summary is a list of upcoming events: when the loaded
+  // range includes today, events that already ended before today drop out
+  // (navigated-to past months list their full month instead).
+  const upcoming = useMemo(() => {
+    if (mode !== 'schedule') return events
+    const t = new Date()
+    const todayStart = new Date(t.getFullYear(), t.getMonth(), t.getDate())
+    const rangeStart = new Date(range.start + 'T00:00:00')
+    const rangeEnd = new Date(range.end + 'T23:59:59')
+    const includesToday = todayStart >= rangeStart && todayStart <= rangeEnd
+    if (!includesToday) return events
+    return events.filter((e) => new Date(e.end) >= todayStart)
+  }, [events, mode, range.start, range.end])
 
   return (
     <section className="card">
@@ -110,6 +188,8 @@ export default function CalendarSection() {
           {eventsErr && <p className="note err">{eventsErr.code} — {eventsErr.detail}</p>}
           {loading ? (
             <p className="note">Loading events…</p>
+          ) : mode === 'schedule' ? (
+            <ScheduleList events={upcoming} />
           ) : (
             <MonthGrid year={year} month={month} events={events} multi={active === SUMMARY} />
           )}

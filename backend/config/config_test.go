@@ -590,3 +590,253 @@ func TestSetRefreshSecondsConcurrentWithReaders(t *testing.T) {
 		t.Errorf("on-disk refresh_seconds = %d, in-memory = %d", onDisk.RefreshSeconds, cfg.RefreshSeconds())
 	}
 }
+
+// --- views ----------------------------------------------------------------
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func viewsCfg(t *testing.T, content string) (*Config, string) {
+	t.Helper()
+	dir := t.TempDir()
+	file := filepath.Join(dir, "board.json")
+	if content != "" {
+		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CONFIG_FILE", file)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg, file
+}
+
+func TestViewConfigDefaults(t *testing.T) {
+	cfg, _ := viewsCfg(t, `{}`)
+	v := cfg.ViewConfig()
+	if !sameStrings(v.Order, []string{ViewCalendar, ViewChat, ViewHome, ViewPush}) {
+		t.Errorf("default order = %v", v.Order)
+	}
+	if len(v.Hidden) != 0 {
+		t.Errorf("default hidden = %v, want empty", v.Hidden)
+	}
+	if v.CalendarMode != CalendarModeMonth {
+		t.Errorf("default calendar_mode = %q, want %q", v.CalendarMode, CalendarModeMonth)
+	}
+
+	// A board file that sets no views key at all behaves identically.
+	empty, _ := viewsCfg(t, `{"refresh_seconds": 15}`)
+	if v2 := empty.ViewConfig(); !sameStrings(v2.Order, v.Order) || len(v2.Hidden) != 0 || v2.CalendarMode != CalendarModeMonth {
+		t.Errorf("absent views = %+v, want the default layout", v2)
+	}
+}
+
+func TestViewConfigRepairsStoredValues(t *testing.T) {
+	cfg, _ := viewsCfg(t, `{
+		"views": {
+			"order": ["push", "bogus", "chat", "push"],
+			"hidden": ["home", "unknown", "home"],
+			"calendar_mode": "weird"
+		}
+	}`)
+	v := cfg.ViewConfig()
+	// Known IDs kept in stored order (deduped), missing IDs appended in
+	// default order.
+	if !sameStrings(v.Order, []string{ViewPush, ViewChat, ViewCalendar, ViewHome}) {
+		t.Errorf("repaired order = %v", v.Order)
+	}
+	if !sameStrings(v.Hidden, []string{ViewHome}) {
+		t.Errorf("repaired hidden = %v", v.Hidden)
+	}
+	if v.CalendarMode != CalendarModeMonth {
+		t.Errorf("repaired calendar_mode = %q, want %q", v.CalendarMode, CalendarModeMonth)
+	}
+}
+
+func TestSetViewsRoundTrip(t *testing.T) {
+	cfg, file := viewsCfg(t, `{"refresh_seconds": 45, "ha_entities": ["climate.thermo"]}`)
+	order := []string{ViewChat, ViewHome, ViewPush, ViewCalendar}
+	hidden := []string{ViewHome}
+	mode := CalendarModeSchedule
+	if err := cfg.SetViews(&order, &hidden, &mode); err != nil {
+		t.Fatalf("SetViews: %v", err)
+	}
+
+	v := cfg.ViewConfig()
+	if !sameStrings(v.Order, order) || !sameStrings(v.Hidden, hidden) || v.CalendarMode != CalendarModeSchedule {
+		t.Errorf("in-memory views = %+v", v)
+	}
+
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk Board
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("board file not valid JSON: %v: %s", err, data)
+	}
+	if onDisk.Views == nil {
+		t.Fatalf("views not written to the board file: %s", data)
+	}
+	if !sameStrings(onDisk.Views.Order, order) || !sameStrings(onDisk.Views.Hidden, hidden) || onDisk.Views.CalendarMode != CalendarModeSchedule {
+		t.Errorf("on-disk views = %+v", onDisk.Views)
+	}
+	// Other board fields are preserved.
+	if onDisk.RefreshSeconds != 45 || !sameStrings(onDisk.HAEntityIDs, []string{"climate.thermo"}) {
+		t.Errorf("other board fields not preserved: %s", data)
+	}
+
+	// A fresh Load sees the persisted views.
+	_, _ = viewsCfg(t, ``) // reset nothing; fresh process env via Load below
+	t.Setenv("CONFIG_FILE", file)
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := reloaded.ViewConfig()
+	if !sameStrings(v2.Order, order) || !sameStrings(v2.Hidden, hidden) || v2.CalendarMode != CalendarModeSchedule {
+		t.Errorf("reloaded views = %+v", v2)
+	}
+}
+
+func TestSetViewsPartialUpdate(t *testing.T) {
+	cfg, _ := viewsCfg(t, `{
+		"views": { "order": ["chat", "calendar", "push", "home"], "hidden": ["push"], "calendar_mode": "schedule" }
+	}`)
+
+	// Only the mode changes; order and hidden keep their stored values.
+	mode := CalendarModeMonth
+	if err := cfg.SetViews(nil, nil, &mode); err != nil {
+		t.Fatalf("SetViews(mode): %v", err)
+	}
+	v := cfg.ViewConfig()
+	if !sameStrings(v.Order, []string{ViewChat, ViewCalendar, ViewPush, ViewHome}) ||
+		!sameStrings(v.Hidden, []string{ViewPush}) || v.CalendarMode != CalendarModeMonth {
+		t.Errorf("after mode-only update = %+v", v)
+	}
+
+	// Only the order changes.
+	order := []string{ViewPush, ViewChat, ViewHome, ViewCalendar}
+	if err := cfg.SetViews(&order, nil, nil); err != nil {
+		t.Fatalf("SetViews(order): %v", err)
+	}
+	v = cfg.ViewConfig()
+	if !sameStrings(v.Order, order) || !sameStrings(v.Hidden, []string{ViewPush}) || v.CalendarMode != CalendarModeMonth {
+		t.Errorf("after order-only update = %+v", v)
+	}
+
+	// An empty hidden list clears the hidden set.
+	empty := []string{}
+	if err := cfg.SetViews(nil, &empty, nil); err != nil {
+		t.Fatalf("SetViews(hidden=[]): %v", err)
+	}
+	v = cfg.ViewConfig()
+	if !sameStrings(v.Order, order) || len(v.Hidden) != 0 {
+		t.Errorf("after hidden=[] update = %+v", v)
+	}
+}
+
+func TestSetViewsInvalidLeavesStateUntouched(t *testing.T) {
+	cfg, file := viewsCfg(t, `{"refresh_seconds": 45}`)
+	cases := []struct {
+		name   string
+		order  []string
+		hidden []string
+		m      *string
+	}{
+		{"order-missing-view", []string{ViewCalendar, ViewChat, ViewHome}, nil, nil},
+		{"order-duplicate", []string{ViewCalendar, ViewCalendar, ViewHome, ViewPush}, nil, nil},
+		{"order-unknown", []string{ViewCalendar, ViewChat, ViewHome, "nope"}, nil, nil},
+		{"order-extra", []string{ViewCalendar, ViewChat, ViewHome, ViewPush, ViewPush}, nil, nil},
+		{"hidden-unknown", nil, []string{"nope"}, nil},
+		{"hidden-duplicate", nil, []string{ViewPush, ViewPush}, nil},
+		{"mode-invalid", nil, nil, ptrString("grid")},
+	}
+	before := cfg.ViewConfig()
+	for _, tc := range cases {
+		err := cfg.SetViews(nilIfNil(tc.order), nilIfNil(tc.hidden), tc.m)
+		if err == nil {
+			t.Fatalf("%s: unexpected success", tc.name)
+		}
+		if errors.Is(err, ErrBoardFileNotWritable) || errors.Is(err, ErrNoBoardFile) {
+			t.Errorf("%s: err = %v looks like a storage error, want a validation error", tc.name, err)
+		}
+	}
+	after := cfg.ViewConfig()
+	if !sameStrings(after.Order, before.Order) || !sameStrings(after.Hidden, before.Hidden) || after.CalendarMode != before.CalendarMode {
+		t.Errorf("state changed by invalid updates: %+v -> %+v", before, after)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"views"`) {
+		t.Errorf("invalid updates wrote to the board file: %s", data)
+	}
+}
+
+func nilIfNil(s []string) *[]string {
+	if s == nil {
+		return nil
+	}
+	return &s
+}
+
+func ptrString(s string) *string { return &s }
+
+func TestSetViewsNoBoardFile(t *testing.T) {
+	cfg := &Config{}
+	order := []string{ViewCalendar, ViewChat, ViewHome, ViewPush}
+	if err := cfg.SetViews(&order, nil, nil); !errors.Is(err, ErrNoBoardFile) {
+		t.Errorf("err = %v, want ErrNoBoardFile", err)
+	}
+}
+
+func TestSetViewsDirectoryPathIsNotWritable(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{BoardFile: file}
+	order := []string{ViewChat, ViewCalendar, ViewHome, ViewPush}
+	if err := cfg.SetViews(&order, nil, nil); !errors.Is(err, ErrBoardFileNotWritable) {
+		t.Fatalf("err = %v, want ErrBoardFileNotWritable", err)
+	}
+	v := cfg.ViewConfig()
+	if !sameStrings(v.Order, []string{ViewCalendar, ViewChat, ViewHome, ViewPush}) {
+		t.Errorf("in-memory order = %v, want unchanged defaults", v.Order)
+	}
+}
+
+func TestSetRefreshSecondsPreservesViews(t *testing.T) {
+	cfg, file := viewsCfg(t, ``)
+	order := []string{ViewChat, ViewHome, ViewPush, ViewCalendar}
+	hidden := []string{ViewPush}
+	mode := CalendarModeSchedule
+	if err := cfg.SetViews(&order, &hidden, &mode); err != nil {
+		t.Fatalf("SetViews: %v", err)
+	}
+	if err := cfg.SetRefreshSeconds(60); err != nil {
+		t.Fatalf("SetRefreshSeconds: %v", err)
+	}
+	v := cfg.ViewConfig()
+	if !sameStrings(v.Order, order) || !sameStrings(v.Hidden, hidden) || v.CalendarMode != CalendarModeSchedule {
+		t.Errorf("views lost after SetRefreshSeconds: %+v", v)
+	}
+	data, _ := os.ReadFile(file)
+	if !strings.Contains(string(data), `"calendar_mode": "schedule"`) {
+		t.Errorf("views not preserved on disk: %s", data)
+	}
+}
