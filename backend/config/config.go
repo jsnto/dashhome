@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 
 	"github.com/jsnto/dashhome/backend/calendar"
 )
@@ -286,7 +287,10 @@ func (c *Config) SetRefreshSeconds(n int) error {
 // WriteBoardFile writes b to path as indented JSON. The write is atomic
 // (unique temp file in the same directory + rename); a missing parent
 // directory is created. The existing file's permissions are preserved; a
-// new file is created with 0644.
+// new file is created with 0644. A target that is a file bind mount
+// (Docker mounting ./dashhome.json into the container) cannot be replaced
+// by rename (EBUSY/EXDEV), so the file is then written in place, which
+// propagates to the host through the read-write mount.
 func WriteBoardFile(path string, b Board) error {
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
@@ -307,12 +311,9 @@ func WriteBoardFile(path string, b Board) error {
 	if err != nil {
 		return fmt.Errorf("create temp board file: %w", err)
 	}
-	renamed := false
 	defer func() {
-		if !renamed {
-			_ = tmp.Close()
-			_ = os.Remove(tmp.Name())
-		}
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
 	}()
 	if err := tmp.Chmod(mode); err != nil {
 		return fmt.Errorf("set board file mode %s: %w", path, err)
@@ -324,9 +325,34 @@ func WriteBoardFile(path string, b Board) error {
 		return fmt.Errorf("close temp board file: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
+		if errors.Is(err, syscall.EBUSY) || errors.Is(err, syscall.EXDEV) {
+			return writeBoardFileInPlace(path, data)
+		}
 		return fmt.Errorf("replace board file %s: %w", path, err)
 	}
-	renamed = true
+	return nil
+}
+
+// writeBoardFileInPlace rewrites an existing board file in place
+// (truncate, write, sync) preserving its mode: a file bind mount cannot be
+// replaced by rename, but truncating the mounted file itself propagates to
+// the host through the read-write mount.
+func writeBoardFileInPlace(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return fmt.Errorf("write board file %s: %w", path, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write board file %s: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write board file %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close board file %s: %w", path, err)
+	}
 	return nil
 }
 

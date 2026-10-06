@@ -104,11 +104,13 @@ http://localhost:3000.
   root (see `dashhome.example.json`): the compose file already bind-mounts
   it read-write into the backend at the `CONFIG_FILE` default path
   (`/app/dashhome.json`), because the settings screen persists the refresh
-  interval into it. It must exist on the host for settings persistence;
-  the calendar IDs inside are yours to edit. It is optional at startup —
-  if it is absent, Docker auto-creates a directory at the host path, the
-  backend logs one line and runs unconfigured, and a settings save reports
-  the board file as not writable.
+  interval into it. For settings persistence the file must exist on the
+  host and be writable by the container's `dashhome` user (uid 100; e.g.
+  `chmod 666 ./dashhome.json`); the calendar IDs inside are yours to edit.
+  It is optional at startup — if it is absent, Docker auto-creates a
+  directory at the host path, the backend logs one line and runs
+  unconfigured, and a settings save reports the board file as not
+  writable.
 - In the service-account mode (the `.env.example` default), the app exits
   at startup unless the key file at `GOOGLE_APPLICATION_CREDENTIALS`
   (default `/secrets/google-sa.json`) is present; add a volume entry
@@ -327,7 +329,7 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 |---|---|
 | `GET /healthz` | Liveness probe |
 | `GET /api/config` | Dashboard config + integration status (no secrets) |
-| `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json`, `200 {board}` |
+| `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json` (the board file must be writable by the backend), `200 {board}` |
 | `GET /api/calendars` | Calendars visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
 | `GET /api/ha/entities` | Configured entities with current states |

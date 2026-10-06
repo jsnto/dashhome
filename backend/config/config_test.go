@@ -479,6 +479,39 @@ func TestWriteBoardFileRemovesTempWhenRenameFails(t *testing.T) {
 // an absent bind-mounted file) cannot be written: the error is
 // ErrBoardFileNotWritable so the API can report a storage failure, and the
 // in-memory board is left unchanged.
+// The in-place fallback write (used when the rename cannot replace a
+// bind-mounted board file, which fails EBUSY): the content is replaced
+// and the file's mode is preserved.
+func TestWriteBoardFileInPlacePreservesContentAndMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(path, []byte(`{"refresh_seconds": 30}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.MarshalIndent(Board{RefreshSeconds: 60}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBoardFileInPlace(path, append(data, '\n')); err != nil {
+		t.Fatalf("writeBoardFileInPlace: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b Board
+	if err := json.Unmarshal(raw, &b); err != nil || b.RefreshSeconds != 60 {
+		t.Errorf("content = %s, want refresh_seconds 60: %v", raw, err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o640 {
+		t.Errorf("mode = %v, want 0640 preserved", st.Mode().Perm())
+	}
+}
+
 func TestSetRefreshSecondsDirectoryPathIsNotWritable(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "dashhome.json")
