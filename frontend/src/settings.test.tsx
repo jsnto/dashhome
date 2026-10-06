@@ -1,9 +1,11 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
 } from '@testing-library/react'
+import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { REFRESH_SECONDS_EVENT } from './refreshBus'
 import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, ViewId } from './types'
@@ -54,6 +56,30 @@ function renderPanel(props: PanelProps = {}) {
 /** Navigate the sidebar to a section. */
 function go(section: 'Appearance' | 'Views' | 'Services' | 'Updates') {
   fireEvent.click(screen.getByRole('button', { name: section }))
+}
+
+/** Renders the panel with a stateful cfg: a views-section save refreshes
+ *  the config underneath the open panel, exactly the way App wires
+ *  onBoard. `signals.board` is set as soon as the save's answer has been
+ *  handed to onBoard (before the state update commits). */
+function renderPanelWithLiveCfg(initial: ApiConfig) {
+  const signals: { board: ApiBoard | null } = { board: null }
+  function Harness() {
+    const [cfg, setCfg] = useState<ApiConfig | null>(initial)
+    return (
+      <SettingsPanel
+        cfg={cfg}
+        theme="dark"
+        onThemeChange={() => {}}
+        onBoard={(board) => {
+          signals.board = board
+          setCfg((c) => (c ? { ...c, board } : c))
+        }}
+        onClose={() => {}}
+      />
+    )
+  }
+  return { ...render(<Harness />), signals }
 }
 
 function disabled(el: HTMLElement): boolean {
@@ -238,6 +264,28 @@ describe('settings: services in use', () => {
 })
 
 describe('settings: updates interval round-trip', () => {
+  it('keeps an edited interval when a views save refreshes the config', async () => {
+    stubViewsApi({ ...fixtureConfig.board })
+    const { signals } = renderPanelWithLiveCfg(fixtureConfig) // refresh_seconds 30
+    go('Updates')
+    const input = screen.getByRole('spinbutton', { name: /refresh interval/i }) as HTMLInputElement
+    fireEvent.change(input, { target: { value: '120' } })
+
+    // A views-section save persists and refreshes the config underneath
+    // the open panel (onBoard adopts the answer as a fresh cfg).
+    go('Views')
+    fireEvent.click(screen.getByRole('button', { name: 'Move Calendar down' }))
+    await vi.waitFor(() => expect(signals.board).toBeTruthy())
+    // Commit the config refresh (and any field re-seed it triggers)
+    // before re-checking the interval field.
+    await act(async () => {})
+
+    // The typed value survived the config refresh.
+    go('Updates')
+    const reopened = screen.getByRole('spinbutton', { name: /refresh interval/i }) as HTMLInputElement
+    expect(reopened.value).toBe('120')
+  })
+
   it('PUTs the new interval and adopts the server answer without a reload', async () => {
     const board = { ...fixtureConfig.board, refresh_seconds: 12 }
     const fetchMock = vi.fn().mockResolvedValue(

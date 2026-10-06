@@ -522,10 +522,17 @@ describe('app: board views layout (settings.views)', () => {
   it('drops an all-day event that ended exactly at the start of today from the schedule summary', async () => {
     const t = new Date()
     const d = t.getDate()
+    // Zero-padded local calendar date, offset by days from today.
+    const dateStr = (offset: number) => {
+      const x = new Date(t.getFullYear(), t.getMonth(), d + offset)
+      return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`
+    }
     const at = (day: number, h = 0, min = 0) =>
       new Date(t.getFullYear(), t.getMonth(), day, h, min).toISOString()
-    // An all-day event whose last real day was yesterday: Google's
-    // exclusive end (last day + 1) falls exactly at the start of today.
+    // An all-day event whose last real day was yesterday: the backend
+    // emits Google's exclusive end (last day + 1 = local today) as a UTC
+    // midnight, so the comparison must be in date space — under a
+    // browser timezone east of UTC a wall-clock compare would keep it.
     stubBoardServer(
       { order: ['calendar', 'chat', 'home', 'push'], hidden: [], calendar_mode: 'schedule' },
       [
@@ -534,8 +541,8 @@ describe('app: board views layout (settings.views)', () => {
           calendar_label: 'Family',
           id: 'dayoff',
           summary: 'Day off',
-          start: at(d - 1),
-          end: at(d),
+          start: `${dateStr(-1)}T00:00:00Z`,
+          end: `${dateStr(0)}T00:00:00Z`,
           all_day: true,
         },
         {
@@ -552,8 +559,7 @@ describe('app: board views layout (settings.views)', () => {
     render(<App />)
 
     // The future timed event stays in the upcoming list; the all-day
-    // event that ended at the start of today drops out. The month grid is
-    // not the mode, so neither is hidden there.
+    // event that ended at the start of today drops out.
     const standup = await screen.findByText('Standup')
     expect(standup.closest('.schedule-item')).toBeTruthy()
     expect(screen.queryByText('Day off')).toBeNull()
@@ -637,5 +643,96 @@ describe('app: board views layout (settings.views)', () => {
     fireEvent.click(screen.getByRole('heading', { name: 'Home' }))
     expect(layoutEl().getAttribute('data-max')).toBe('home')
     expect(layoutEl().getAttribute('data-max-col')).toBe('main')
+  })
+
+  it('keeps the chat conversation when the view is hidden and re-shown', async () => {
+    const { fetchMock } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    vi.stubGlobal(
+      'fetch',
+      async (input: unknown, init?: RequestInit) => {
+        const url = String(input)
+        if (url === '/api/hermes/chat' && init?.method === 'POST') {
+          const body = JSON.parse(String(init.body)) as { message: string }
+          return new Response(JSON.stringify({ reply: `reply to: ${body.message}` }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return fetchMock(input, init)
+      },
+    )
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('[data-win="chat"]')).toBeTruthy())
+
+    fireEvent.change(screen.getByPlaceholderText('Message Hermes…'), {
+      target: { value: 'hello' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('reply to: hello')
+
+    // Hide the chat view (settings → Views), then show it again.
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Views' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show Hermes chat' }))
+    await waitFor(() => expect(document.querySelector('[data-win="chat"]')).toBeNull())
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show Hermes chat' }))
+    await waitFor(() => expect(document.querySelector('[data-win="chat"]')).toBeTruthy())
+
+    // The thread survived the hide/show: the backend is stateless, so the
+    // in-memory transcript is the only copy of the conversation.
+    expect(screen.getByText('hello')).toBeTruthy()
+    expect(screen.getByText('reply to: hello')).toBeTruthy()
+  })
+
+  it('lands an in-flight chat reply after the view is hidden and re-shown', async () => {
+    const { fetchMock } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    let release: (() => void) | null = null
+    vi.stubGlobal(
+      'fetch',
+      async (input: unknown, init?: RequestInit) => {
+        const url = String(input)
+        if (url === '/api/hermes/chat' && init?.method === 'POST') {
+          const body = JSON.parse(String(init.body)) as { message: string }
+          await new Promise<void>((r) => {
+            release = r
+          })
+          return new Response(JSON.stringify({ reply: `reply to: ${body.message}` }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return fetchMock(input, init)
+      },
+    )
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('[data-win="chat"]')).toBeTruthy())
+
+    // Send, then hide the view while the reply is still in flight.
+    fireEvent.change(screen.getByPlaceholderText('Message Hermes…'), {
+      target: { value: 'hello' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('hello')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Views' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show Hermes chat' }))
+    await waitFor(() => expect(document.querySelector('[data-win="chat"]')).toBeNull())
+
+    // The reply lands while the view is hidden, then the view comes back.
+    await act(async () => {
+      release!()
+    })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show Hermes chat' }))
+    await waitFor(() => expect(document.querySelector('[data-win="chat"]')).toBeTruthy())
+    await screen.findByText('reply to: hello')
   })
 })

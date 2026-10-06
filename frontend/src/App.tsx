@@ -4,7 +4,7 @@ import type { ApiConfig, ApiBoard, BoardViews } from './types'
 import { useTheme } from './useTheme'
 import { normalizeViews } from './utils'
 import CalendarSection from './components/CalendarSection'
-import ChatPanel from './components/ChatPanel'
+import ChatPanel, { type UiMsg } from './components/ChatPanel'
 import FullscreenButton from './components/FullscreenButton'
 import HAPanel from './components/HAPanel'
 import PushPanel from './components/PushPanel'
@@ -70,6 +70,19 @@ export default function App() {
   const [sideFrac, setSideFrac] = useState(ROW_FRAC)
   // The window whose title was last clicked (fills the layout), if any.
   const [maximized, setMaximized] = useState<WinId | null>(null)
+
+  // The Hermes chat transcript (and its id counter) lives here rather than
+  // in ChatPanel: the backend is stateless (the client sends the whole
+  // history on every call), so this in-memory copy is the only one, and
+  // hiding or moving the chat view must not drop the thread. App stays
+  // mounted while the view is hidden, so an in-flight reply still lands
+  // in the transcript.
+  const [chatMsgs, setChatMsgs] = useState<UiMsg[]>([])
+  const chatIdRef = useRef(0)
+  const appendChatMsg = (m: Omit<UiMsg, 'id'>) => {
+    const id = chatIdRef.current++
+    setChatMsgs((cur) => [...cur, { ...m, id }])
+  }
 
   const layoutRef = useRef<HTMLElement>(null)
   const colMainRef = useRef<HTMLDivElement>(null)
@@ -200,7 +213,7 @@ export default function App() {
       case 'calendar':
         return <CalendarSection mode={views.calendar_mode} />
       case 'chat':
-        return <ChatPanel />
+        return <ChatPanel msgs={chatMsgs} onAppend={appendChatMsg} />
       case 'home':
         return <HAPanel />
       case 'push':

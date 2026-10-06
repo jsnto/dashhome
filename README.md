@@ -284,7 +284,12 @@ the History tabs open any previous one.
     { "id": "work@gmail.com", "label": "Work" }
   ],
   "refresh_seconds": 30,
-  "ha_embed": { "url_path": null, "token_url": false }
+  "ha_embed": { "url_path": null, "token_url": false },
+  "views": {
+    "order": ["calendar", "chat", "home", "push"],
+    "hidden": [],
+    "calendar_mode": "month"
+  }
 }
 ```
 
@@ -310,6 +315,19 @@ dashboard, no token in the URL):
     `GET /api/ha/dashboards`).
   - `token_url` — put the long-lived token in the embed URL (server-side
     only). Default `false`. See the notes above.
+- `views` — the dashboard's view layout (optional; missing = the default
+  board). Also persisted by the settings screen's Views section:
+  - `order` — the four view IDs (`calendar`, `chat`, `home`, `push`) in
+    the 2x2 board's reading order (main-top, main-bottom, side-top,
+    side-bottom); the API always returns it as a permutation of the four.
+  - `hidden` — the view IDs hidden from the board (a subset of the view
+    IDs); a hidden view is not rendered and needs no data polling.
+  - `calendar_mode` — how the Calendar view renders: `"month"` (the
+    month grid) or `"schedule"` (a chronological list of upcoming
+    events).
+  Hand-edited values are repaired, not rejected: unknown IDs are dropped
+  (missing view IDs re-appear in the default order) and an unknown
+  `calendar_mode` falls back to `"month"`.
 
 Path: `CONFIG_FILE` (default `./dashhome.json`).
 
@@ -330,6 +348,7 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 | `GET /healthz` | Liveness probe |
 | `GET /api/config` | Dashboard config + integration status (no secrets) |
 | `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json` (the board file must be writable by the backend), `200 {board}` |
+| `PUT /api/config/views` | `{"order": [...], "hidden": [...], "calendar_mode": "month"\|"schedule"}` (any subset of the three fields; omitted fields keep their value) → persist the dashboard's view layout to `dashhome.json` (the board file must be writable by the backend), `400 bad_views` on invalid fields, `503` when the board file is missing or not writable, `200 {board}` |
 | `GET /api/calendars` | Calendar tabs: the configured `calendars` (shown even if the API's calendar list omits them), else every calendar visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
 | `GET /api/ha/entities` | Configured entities with current states |

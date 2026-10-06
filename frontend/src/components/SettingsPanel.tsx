@@ -238,14 +238,27 @@ export default function SettingsPanel({
 }: Props) {
   const [section, setSection] = useState<SectionId>('appearance')
 
-  // The live-update interval, edited here and persisted server-side.
+  // The live-update interval, edited here and persisted server-side. The
+  // field adopts the config value only while it still holds the value the
+  // config last seeded: the Views section saves refresh the config
+  // underneath an open panel (App adopts the answer via onBoard), and
+  // that must not clobber an in-progress edit.
   const [seconds, setSeconds] = useState('30')
+  const seededRef = useRef('30')
   const [saving, setSaving] = useState(false)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
   const [saveErr, setSaveErr] = useState<ApiError | null>(null)
 
   useEffect(() => {
-    if (cfg) setSeconds(String(cfg.board.refresh_seconds || 30))
+    if (!cfg) return
+    const v = String(cfg.board.refresh_seconds || 30)
+    if (seconds === seededRef.current) {
+      seededRef.current = v
+      setSeconds(v)
+    }
+    // `seconds` is deliberately not a dependency: the field is adopted
+    // only on config changes, and re-running on every keystroke would
+    // re-seed an untouched field mid-typing.
   }, [cfg])
 
   // Escape closes the page, wherever the focus is.
@@ -283,6 +296,7 @@ export default function SettingsPanel({
       const board = await api.setRefreshSeconds(n)
       const applied = board.refresh_seconds || n
       setSeconds(String(applied))
+      seededRef.current = String(applied)
       setSavedMsg(`Saved — the Hermes push panel now polls every ${applied} seconds.`)
       // Let the polling panel (Hermes push) re-arm its timer without a reload.
       emitRefreshSeconds(applied)

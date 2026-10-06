@@ -125,17 +125,23 @@ export default function CalendarSection({ mode = 'month' }: { mode?: CalendarMod
 
   // The schedule summary is a list of upcoming events: when the loaded
   // range includes today, events that already ended before today drop out
-  // (navigated-to past months list their full month instead).
+  // (navigated-to past months list their full month instead). All-day ends
+  // are exclusive dates (end date = last real day + 1) that the backend
+  // emits as midnight, so the all-day branch compares in date space
+  // (zero-padded date prefix vs. local today), not wall-clock time: a
+  // wall-clock compare shifts with the browser's timezone. Timed events
+  // carry explicit offsets, so they compare as absolute times.
   const upcoming = useMemo(() => {
     if (mode !== 'schedule') return events
     const t = new Date()
     const todayStart = new Date(t.getFullYear(), t.getMonth(), t.getDate())
+    const todayDate = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
     const rangeStart = new Date(range.start + 'T00:00:00')
     const rangeEnd = new Date(range.end + 'T23:59:59')
     const includesToday = todayStart >= rangeStart && todayStart <= rangeEnd
     if (!includesToday) return events
     return events.filter((e) =>
-      e.all_day ? new Date(e.end) > todayStart : new Date(e.end) >= todayStart,
+      e.all_day ? e.end.slice(0, 10) > todayDate : new Date(e.end) >= todayStart,
     )
   }, [events, mode, range.start, range.end])
 
