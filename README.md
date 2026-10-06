@@ -5,7 +5,7 @@ on one page.
 
 dashhome is a single Go process (Gin) on port **3000** that integrates with
 
-- **Google Calendar** — every visible calendar in its own tab, plus a
+- **Google Calendar** — each calendar in its own tab, plus a
   **Summary** tab that combines all of them into one month view;
 - **Home Assistant** — the real HA dashboard embedded in an iframe in the
   Home card, the entity-state API, and a read-only API proxy for the
@@ -190,7 +190,7 @@ Pick **one** credential mode:
    - Optional `GOOGLE_DOMAIN=user@workspace.com` enables domain-wide
      delegation (the service account acts as that user).
    - The dashboard shows every calendar visible to the credentials, or the
-     subset listed in `dashhome.json` → `calendars`. For a service
+     calendars listed in `dashhome.json` → `calendars`. For a service
      account, each `calendars` entry is one calendar the service account
      is shared on, and the calendar ID is the email address of the account
      the calendar is shared from. A shared calendar can be missing from
@@ -330,7 +330,7 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 | `GET /healthz` | Liveness probe |
 | `GET /api/config` | Dashboard config + integration status (no secrets) |
 | `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json` (the board file must be writable by the backend), `200 {board}` |
-| `GET /api/calendars` | Calendars visible to the credentials (labels from config) |
+| `GET /api/calendars` | Calendar tabs: the configured `calendars` (shown even if the API's calendar list omits them), else every calendar visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
 | `GET /api/ha/entities` | Configured entities with current states |
 | `GET /api/ha/embed-url` | Fully-formed iframe URL for the Home card's dashboard embed (token only when `ha_embed.token_url`) |

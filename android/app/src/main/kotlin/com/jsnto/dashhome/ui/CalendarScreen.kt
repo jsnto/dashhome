@@ -49,8 +49,8 @@ private const val WEEKS = 6
 
 /**
  * The Calendar section: the same tabs/summary the web dashboard shows -
- * a Summary tab combining every calendar plus one tab per visible
- * calendar, over a month grid with day detail. On wide displays the
+ * a Summary tab combining every calendar plus one tab per calendar,
+ * over a month grid with day detail. On wide displays the
  * month grid and the selected day's events sit side by side instead of
  * stacked.
  *

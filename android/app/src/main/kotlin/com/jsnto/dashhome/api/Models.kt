@@ -38,7 +38,7 @@ data class ApiConfig(
     val hermesPush: Boolean,
 )
 
-/** One calendar visible to the Google credentials (GET /api/calendars). */
+/** One calendar tab as returned by GET /api/calendars. */
 data class CalendarInfo(
     val id: String,
     val summary: String = "",

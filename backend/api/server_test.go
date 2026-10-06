@@ -494,7 +494,10 @@ func TestListCalendarsConfiguredIDsNotInGoogleList(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	want := []struct{ id, label, summary string; primary bool }{
+	want := []struct {
+		id, label, summary string
+		primary            bool
+	}{
 		{"personal@example.com", "Personal", "", false},
 		{"captain@example.com", "Captain's", "", false},
 	}
@@ -535,7 +538,10 @@ func TestListCalendarsConfiguredMergeWithGoogleList(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	want := []struct{ id, label, summary string; primary bool }{
+	want := []struct {
+		id, label, summary string
+		primary            bool
+	}{
 		{"personal@example.com", "Personal", "Personal (Google)", true},
 		{"ghost@example.com", "ghost@example.com", "", false},
 	}
@@ -572,7 +578,10 @@ func TestListCalendarsNoConfiguredArrayShowsAllVisible(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	want := []struct{ id, label, summary string; primary bool }{
+	want := []struct {
+		id, label, summary string
+		primary            bool
+	}{
 		{"a@example.com", "A", "A", true},
 		{"b@example.com", "B", "B", false},
 		{"c@example.com", "c@example.com", "", false},
