@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
-import type { ApiBoard, BoardViews, CalendarMode, ViewId } from './types'
+import type { ApiBoard, ApiEvent, BoardViews, CalendarMode, ViewId } from './types'
 
 /** In-memory stand-in for the backend: the board persists across requests. */
 function stubServer(initialSeconds: number) {
@@ -340,7 +340,10 @@ function upcomingEvents() {
 }
 
 /** Stand-in backend that serves a board with an editable views section. */
-function stubBoardServer(initialViews: ApiBoard['views'] | undefined) {
+function stubBoardServer(
+  initialViews: ApiBoard['views'] | undefined,
+  events: ApiEvent[] = upcomingEvents(),
+) {
   const board: ApiBoard = {
     ha_entities: [],
     ha_labels: {},
@@ -382,7 +385,7 @@ function stubBoardServer(initialViews: ApiBoard['views'] | undefined) {
         ],
       })
     }
-    if (url.startsWith('/api/events')) return json({ events: upcomingEvents() })
+    if (url.startsWith('/api/events')) return json({ events })
     if (url === '/api/ha/embed-url') return json({ url: 'https://ha.local/dashboard' })
     if (url === '/api/hermes/pushes/latest') return json({ error: 'no_pushes' }, 404)
     if (url.startsWith('/api/hermes/pushes?')) return json({ pushes: [] })
@@ -516,6 +519,46 @@ describe('app: board views layout (settings.views)', () => {
     expect(row.querySelector('.schedule-cal')?.textContent).toBe('Family')
   })
 
+  it('drops an all-day event that ended exactly at the start of today from the schedule summary', async () => {
+    const t = new Date()
+    const d = t.getDate()
+    const at = (day: number, h = 0, min = 0) =>
+      new Date(t.getFullYear(), t.getMonth(), day, h, min).toISOString()
+    // An all-day event whose last real day was yesterday: Google's
+    // exclusive end (last day + 1) falls exactly at the start of today.
+    stubBoardServer(
+      { order: ['calendar', 'chat', 'home', 'push'], hidden: [], calendar_mode: 'schedule' },
+      [
+        {
+          calendar_id: 'c1@example.com',
+          calendar_label: 'Family',
+          id: 'dayoff',
+          summary: 'Day off',
+          start: at(d - 1),
+          end: at(d),
+          all_day: true,
+        },
+        {
+          calendar_id: 'c1@example.com',
+          calendar_label: 'Family',
+          id: 'standup',
+          summary: 'Standup',
+          start: at(d, 9, 0),
+          end: at(d, 10, 0),
+          all_day: false,
+        },
+      ],
+    )
+    render(<App />)
+
+    // The future timed event stays in the upcoming list; the all-day
+    // event that ended at the start of today drops out. The month grid is
+    // not the mode, so neither is hidden there.
+    const standup = await screen.findByText('Standup')
+    expect(standup.closest('.schedule-item')).toBeTruthy()
+    expect(screen.queryByText('Day off')).toBeNull()
+  })
+
   it('renders the month grid by default when the board sets no calendar mode', async () => {
     stubBoardServer(undefined) // no views section at all
     render(<App />)
@@ -561,5 +604,38 @@ describe('app: board views layout (settings.views)', () => {
         'data-slot',
       ),
     ).toBe('main-bottom')
+  })
+
+  it('maximizing a view reordered into the other column targets the column it now sits in', async () => {
+    // Calendar moved to side-bottom (the order that used to blank the
+    // board: the maximize CSS assumed calendar always sat in the main
+    // column).
+    stubBoardServer({
+      order: ['chat', 'home', 'push', 'calendar'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+    await waitFor(() => {
+      expect(
+        (document.querySelector('[data-win="calendar"]') as HTMLElement | null)?.getAttribute(
+          'data-slot',
+        ),
+      ).toBe('side-bottom')
+    })
+
+    fireEvent.click(screen.getByRole('heading', { name: 'Calendar' }))
+
+    // The layout marks the column that actually contains the maximized
+    // window, so the maximize CSS hides the other column and the board
+    // stays filled; the maximized window still renders in its column.
+    expect(layoutEl().getAttribute('data-max')).toBe('calendar')
+    expect(layoutEl().getAttribute('data-max-col')).toBe('side')
+    expect(document.querySelector('.col-side [data-win="calendar"]')).toBeTruthy()
+
+    // A view that sits in the main column marks the other way.
+    fireEvent.click(screen.getByRole('heading', { name: 'Home' }))
+    expect(layoutEl().getAttribute('data-max')).toBe('home')
+    expect(layoutEl().getAttribute('data-max-col')).toBe('main')
   })
 })

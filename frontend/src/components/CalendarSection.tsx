@@ -134,7 +134,9 @@ export default function CalendarSection({ mode = 'month' }: { mode?: CalendarMod
     const rangeEnd = new Date(range.end + 'T23:59:59')
     const includesToday = todayStart >= rangeStart && todayStart <= rangeEnd
     if (!includesToday) return events
-    return events.filter((e) => new Date(e.end) >= todayStart)
+    return events.filter((e) =>
+      e.all_day ? new Date(e.end) > todayStart : new Date(e.end) >= todayStart,
+    )
   }, [events, mode, range.start, range.end])
 
   return (

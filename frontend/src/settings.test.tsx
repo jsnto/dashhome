@@ -136,6 +136,7 @@ describe('settings: page and sidebar', () => {
     expect(card).toBeTruthy()
 
     // A click on the backdrop area itself (not the card) closes.
+    fireEvent.pointerDown(wrap)
     fireEvent.click(wrap)
     expect(onClose).toHaveBeenCalledTimes(1)
 
@@ -143,6 +144,27 @@ describe('settings: page and sidebar', () => {
     fireEvent.click(card)
     expect(onClose).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('heading', { name: 'Settings' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the panel open when a press starts inside the card and releases on the backdrop', () => {
+    const onClose = vi.fn()
+    renderPanel({ onClose })
+    const wrap = document.querySelector('.settings-wrap') as HTMLElement
+    const card = document.querySelector('.card.settings') as HTMLElement
+    expect(wrap).toBeTruthy()
+    expect(card).toBeTruthy()
+
+    // A text-selection drag: the press starts inside the card, the click
+    // lands on the backdrop (the common ancestor) — the panel must stay
+    // open.
+    fireEvent.pointerDown(card)
+    fireEvent.click(wrap)
+    expect(onClose).not.toHaveBeenCalled()
+
+    // A plain press starting on the backdrop still closes.
+    fireEvent.pointerDown(wrap)
+    fireEvent.click(wrap)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 

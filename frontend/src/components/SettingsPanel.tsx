@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
 import { ApiError, api } from '../api'
 import { emitRefreshSeconds } from '../refreshBus'
 import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, ViewId } from '../types'
@@ -257,10 +257,16 @@ export default function SettingsPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  // A click on the backdrop (the overlay area outside the card) closes the
-  // page; clicks inside the card keep it open.
+  // A press that starts on the backdrop (the overlay area outside the
+  // card) closes the page; a press that starts inside the card keeps it
+  // open even when the click lands on the backdrop (a text-selection drag
+  // releases its click on the common ancestor, the backdrop).
+  const pressOnBackdrop = useRef(false)
+  const onBackdropPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    pressOnBackdrop.current = e.target === e.currentTarget
+  }
   const onBackdropClick = (e: MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) onClose()
+    if (e.target === e.currentTarget && pressOnBackdrop.current) onClose()
   }
 
   const save = async (e: FormEvent) => {
@@ -290,7 +296,7 @@ export default function SettingsPanel({
   }
 
   return (
-    <div className="settings-wrap" onClick={onBackdropClick}>
+    <div className="settings-wrap" onPointerDown={onBackdropPointerDown} onClick={onBackdropClick}>
       <section className="card settings" role="dialog" aria-label="Settings">
         <div className="card-head">
           <h2>Settings</h2>

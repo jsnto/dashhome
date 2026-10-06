@@ -220,7 +220,10 @@ body {
 
 /* a window's title maximizes it: hide the other windows and columns and
    let the chosen window stretch to the whole layout; the title row (with
-   its actions) stays at the top of the card, so it remains reachable. The
+   its actions) stays at the top of the card, so it remains reachable.
+   Reordering can put any view in either column, so App marks the column
+   that actually contains the maximized window with data-max-col and the
+   rules below key off it. The
    flex: 1 1 0 overrides matter: with the siblings hidden, the column's and
    window's fractional grow alone would leave the free space undistributed
    (the grow values sum to < 1), so the survivors are forced to full size. */
@@ -229,10 +232,8 @@ body {
   display: none;
 }
 
-.layout[data-max='calendar'] .col-main,
-.layout[data-max='chat'] .col-main,
-.layout[data-max='home'] .col-side,
-.layout[data-max='push'] .col-side {
+.layout[data-max-col='main'] .col-main,
+.layout[data-max-col='side'] .col-side {
   flex: 1 1 0;
 }
 
@@ -244,13 +245,13 @@ body {
   flex: 1 1 0;
 }
 
-.layout[data-max='calendar'] .col-side,
-.layout[data-max='chat'] .col-side {
+.layout[data-max-col='main'] .col-side,
+.layout[data-max-col='main'] .divider-v {
   display: none;
 }
 
-.layout[data-max='home'] .col-main,
-.layout[data-max='push'] .col-main {
+.layout[data-max-col='side'] .col-main,
+.layout[data-max-col='side'] .divider-v {
   display: none;
 }
 

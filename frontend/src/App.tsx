@@ -279,6 +279,7 @@ export default function App() {
         ref={layoutRef}
         className="layout"
         data-max={maximized ?? undefined}
+        data-max-col={maximized ? (mainWins.includes(maximized) ? 'main' : 'side') : undefined}
         style={
           {
             '--col': colFrac,
