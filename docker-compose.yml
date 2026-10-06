@@ -16,7 +16,10 @@
 # on ${BACKEND_PORT} (default 3000). Set BACKEND_PORT / FRONTEND_PORT in
 # .env to move the host ports (the container-side ports stay 3000/8000).
 # No credentials are stored here — they come from .env and are never
-# baked into the images.
+# baked into the images. The Google service-account key (Mode A) is the
+# one exception to "in .env": it is a file, bind-mounted read-only from
+# ./backend/.keys (gitignored) into the backend container, so it never
+# lands in an image layer either.
 
 name: dashhome
 
@@ -39,6 +42,11 @@ services:
     volumes:
       # Durable state (Hermes push records, Google token cache).
       - data:/app/data
+      # Google service-account key (Mode A), read-only. The container
+      # WORKDIR is /app, so the .env value ./backend/.keys/<key>.json
+      # resolves to this mount. Host file must be world-readable (the
+      # container runs as the non-root dashhome user).
+      - ./backend/.keys:/app/backend/.keys:ro
     restart: unless-stopped
 
   frontend:
