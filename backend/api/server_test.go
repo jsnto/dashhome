@@ -364,6 +364,42 @@ func TestPutConfigRefreshNoBoardFile(t *testing.T) {
 	}
 }
 
+// Docker auto-creates a missing bind-mount source as a directory at the
+// host path, so the container can see a directory at the board path: the
+// write cannot succeed, and the handler must report an honest 5xx storage
+// error with a not-writable detail — not 400 bad_refresh_seconds, which
+// would imply the user's input was invalid.
+func TestPutConfigRefreshBoardFileNotWritable(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	cfg.Board.RefreshSeconds = 15
+	r := newServer(t, cfg, nil, nil, nil, nil)
+
+	w := do(r, "PUT", "/api/config/refresh", map[string]any{"refresh_seconds": 45}, nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code = %d, want 503: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Error  string `json:"error"`
+		Detail string `json:"detail"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Error != "board_file_not_writable" {
+		t.Errorf("error = %q, want board_file_not_writable", resp.Error)
+	}
+	if !strings.Contains(resp.Detail, "not writable") {
+		t.Errorf("detail = %q, want a not-writable explanation", resp.Detail)
+	}
+	if cfg.RefreshSeconds() != 15 {
+		t.Errorf("in-memory RefreshSeconds = %d, want unchanged 15", cfg.RefreshSeconds())
+	}
+}
+
 // --- calendars / events ------------------------------------------------------
 
 var testMonthStart = testTime("2026-03-01T00:00:00Z")
@@ -428,6 +464,192 @@ func TestListCalendarsFilterAndLabels(t *testing.T) {
 	}
 	if resp.Calendars[0].ID != "personal@example.com" || resp.Calendars[0].Label != "Personal" {
 		t.Errorf("calendar = %+v", resp.Calendars[0])
+	}
+}
+
+// listResp decodes a GET /api/calendars body.
+type listResp struct {
+	Calendars []struct {
+		ID      string `json:"id"`
+		Summary string `json:"summary"`
+		Label   string `json:"label"`
+		Primary bool   `json:"primary"`
+	} `json:"calendars"`
+}
+
+// The service-account case: the configured IDs are absent from Google's
+// calendarList (empty list). They must still appear as tabs, in configured
+// order, with their configured label, no summary, and primary=false.
+func TestListCalendarsConfiguredIDsNotInGoogleList(t *testing.T) {
+	g := &fakeGoogle{hasToken: true, cals: nil}
+	cfg := cfgFor(t) // filter: personal@example.com (label "Personal")
+	cfg.Board.Calendars = append(cfg.Board.Calendars,
+		config.CalendarRef{ID: "captain@example.com", Label: "Captain's"})
+	r := newServer(t, cfg, g, nil, nil, nil)
+	w := do(r, "GET", "/api/calendars", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp listResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		id, label, summary string
+		primary            bool
+	}{
+		{"personal@example.com", "Personal", "", false},
+		{"captain@example.com", "Captain's", "", false},
+	}
+	if len(resp.Calendars) != len(want) {
+		t.Fatalf("calendars = %+v, want %d entries", resp.Calendars, len(want))
+	}
+	for i, w := range want {
+		got := resp.Calendars[i]
+		if got.ID != w.id || got.Label != w.label || got.Summary != w.summary || got.Primary != w.primary {
+			t.Errorf("calendars[%d] = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
+// Configured + visible merge: the calendarList entry enriches a configured
+// ID with its summary and primary, the configured label wins, a visible
+// but unconfigured calendar is still excluded, and a label-less configured
+// ID not in the list falls back to the ID itself as label.
+func TestListCalendarsConfiguredMergeWithGoogleList(t *testing.T) {
+	g := &fakeGoogle{
+		hasToken: true,
+		cals: []calendar.Calendar{
+			{ID: "personal@example.com", Summary: "Personal (Google)", Primary: true},
+			{ID: "extra@example.com", Summary: "Extra"},
+		},
+	}
+	cfg := cfgFor(t)
+	cfg.Board.Calendars = []config.CalendarRef{
+		{ID: "personal@example.com", Label: "Personal"},
+		{ID: "ghost@example.com"}, // no label, not in the list either
+	}
+	r := newServer(t, cfg, g, nil, nil, nil)
+	w := do(r, "GET", "/api/calendars", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp listResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		id, label, summary string
+		primary            bool
+	}{
+		{"personal@example.com", "Personal", "Personal (Google)", true},
+		{"ghost@example.com", "ghost@example.com", "", false},
+	}
+	if len(resp.Calendars) != len(want) {
+		t.Fatalf("calendars = %+v, want %d entries (extra@example.com not configured)", resp.Calendars, len(want))
+	}
+	for i, w := range want {
+		got := resp.Calendars[i]
+		if got.ID != w.id || got.Label != w.label || got.Summary != w.summary || got.Primary != w.primary {
+			t.Errorf("calendars[%d] = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
+// No configured array: exactly today's behavior — every visible calendar,
+// in list order, label falling back to summary, then the ID.
+func TestListCalendarsNoConfiguredArrayShowsAllVisible(t *testing.T) {
+	g := &fakeGoogle{
+		hasToken: true,
+		cals: []calendar.Calendar{
+			{ID: "a@example.com", Summary: "A", Primary: true},
+			{ID: "b@example.com", Summary: "B"},
+			{ID: "c@example.com"}, // no summary: label falls back to the ID
+		},
+	}
+	cfg := cfgFor(t)
+	cfg.Board.Calendars = nil // no filter
+	r := newServer(t, cfg, g, nil, nil, nil)
+	w := do(r, "GET", "/api/calendars", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp listResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		id, label, summary string
+		primary            bool
+	}{
+		{"a@example.com", "A", "A", true},
+		{"b@example.com", "B", "B", false},
+		{"c@example.com", "c@example.com", "", false},
+	}
+	if len(resp.Calendars) != len(want) {
+		t.Fatalf("calendars = %+v, want all %d visible", resp.Calendars, len(want))
+	}
+	for i, w := range want {
+		got := resp.Calendars[i]
+		if got.ID != w.id || got.Label != w.label || got.Summary != w.summary || got.Primary != w.primary {
+			t.Errorf("calendars[%d] = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
+// A duplicated calendar ID in the board file must yield one tab and one
+// event fetch, in first-occurrence order (deduped at CalendarFilter, the
+// shared boundary of both consumers).
+func TestDuplicateConfiguredCalendarIDDeduped(t *testing.T) {
+	g := &fakeGoogle{
+		hasToken: true,
+		events: map[string][]calendar.Event{
+			"dup@example.com": {
+				eventCal("e1", "dup@example.com", "Once", "2026-03-10T00:00:00Z", "2026-03-10T01:00:00Z", false),
+			},
+		},
+	}
+	cfg := cfgFor(t)
+	cfg.Board.Calendars = []config.CalendarRef{
+		{ID: "a@example.com", Label: "A"},
+		{ID: "dup@example.com", Label: "Dup"},
+		{ID: "a@example.com"},
+		{ID: "dup@example.com"},
+	}
+	r := newServer(t, cfg, g, nil, nil, nil)
+
+	w := do(r, "GET", "/api/calendars", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("calendars code = %d: %s", w.Code, w.Body.String())
+	}
+	var calResp listResp
+	if err := json.NewDecoder(w.Body).Decode(&calResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(calResp.Calendars) != 2 {
+		t.Fatalf("calendars = %+v, want 2 (deduped)", calResp.Calendars)
+	}
+	if calResp.Calendars[0].ID != "a@example.com" || calResp.Calendars[1].ID != "dup@example.com" {
+		t.Errorf("order = %+v, want first-occurrence order", calResp.Calendars)
+	}
+	if calResp.Calendars[0].Label != "A" || calResp.Calendars[1].Label != "Dup" {
+		t.Errorf("labels = %+v", calResp.Calendars)
+	}
+
+	w = do(r, "GET", "/api/events?start=2026-03-01T00:00:00Z&end=2026-03-31T23:59:59Z", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("events code = %d: %s", w.Code, w.Body.String())
+	}
+	var evResp struct {
+		Events []struct {
+			ID string `json:"id"`
+		} `json:"events"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&evResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(evResp.Events) != 1 || evResp.Events[0].ID != "e1" {
+		t.Fatalf("events = %+v, want e1 exactly once (fetch deduped)", evResp.Events)
 	}
 }
 

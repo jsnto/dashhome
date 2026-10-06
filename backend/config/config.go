@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 
 	"github.com/jsnto/dashhome/backend/calendar"
 )
@@ -98,6 +100,11 @@ const (
 // ErrNoBoardFile is returned when the board file path is not configured.
 var ErrNoBoardFile = errors.New("no board file configured (set CONFIG_FILE)")
 
+// ErrBoardFileNotWritable is returned when the board could not be persisted
+// to the board file (the path is a directory — Docker's auto-created source
+// for an absent bind-mounted file — or the file/mount is not writable).
+var ErrBoardFileNotWritable = errors.New("board file not writable")
+
 // HAConfigured reports whether Home Assistant is configured.
 func (c *Config) HAConfigured() bool { return c.HAURL != "" && c.HAToken != "" }
 
@@ -125,8 +132,9 @@ func (c *Config) RefreshSeconds() int {
 	return c.Board.RefreshSeconds
 }
 
-// Load reads configuration from the environment. A missing board file is
-// fine; an unreadable or malformed board file is an error.
+// Load reads configuration from the environment. A missing, empty,
+// unreadable, or directory board file is tolerated as an empty board (the
+// file is optional); a malformed board file is an error.
 func Load() (*Config, error) {
 	port := env("PORT", "3000")
 	if _, err := strconv.Atoi(port); err != nil {
@@ -171,12 +179,23 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) loadBoard() error {
+	// A directory where the board file should be is treated as "no board
+	// file": Docker auto-creates a missing bind-mount source as a directory
+	// at the host path, so a configured-but-absent ./dashhome.json reaches
+	// the container as a directory at the CONFIG_FILE path.
+	if st, err := os.Stat(c.BoardFile); err == nil && st.IsDir() {
+		log.Printf("board file %s is a directory; treating it as absent (no board config)", c.BoardFile)
+		return nil
+	}
 	data, err := os.ReadFile(c.BoardFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // optional file: empty board
 		}
-		return fmt.Errorf("read board file %s: %w", c.BoardFile, err)
+		// Unreadable (permissions, I/O failure): tolerate like an absent
+		// file so the stack stays up; the dashboard simply runs unconfigured.
+		log.Printf("board file %s is unreadable (%v); treating it as absent (no board config)", c.BoardFile, err)
+		return nil
 	}
 	if len(data) == 0 {
 		return nil
@@ -241,7 +260,9 @@ func ValidateRefreshSeconds(n int) error {
 
 // SetRefreshSeconds validates n, persists the whole board to the board file,
 // and updates the in-memory board only after the write succeeds, so a failed
-// write leaves the running config (and the file) unchanged.
+// write leaves the running config (and the file) unchanged. A persistence
+// failure is wrapped in ErrBoardFileNotWritable (a storage error, distinct
+// from a bad n).
 func (c *Config) SetRefreshSeconds(n int) error {
 	if err := ValidateRefreshSeconds(n); err != nil {
 		return err
@@ -257,13 +278,19 @@ func (c *Config) SetRefreshSeconds(n int) error {
 		c.Board = updated
 	}
 	c.boardMu.Unlock()
-	return err
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrBoardFileNotWritable, err)
+	}
+	return nil
 }
 
 // WriteBoardFile writes b to path as indented JSON. The write is atomic
 // (unique temp file in the same directory + rename); a missing parent
 // directory is created. The existing file's permissions are preserved; a
-// new file is created with 0644.
+// new file is created with 0644. A target that is a file bind mount
+// (Docker mounting ./dashhome.json into the container) cannot be replaced
+// by rename (EBUSY/EXDEV), so the file is then written in place, which
+// propagates to the host through the read-write mount.
 func WriteBoardFile(path string, b Board) error {
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
@@ -284,12 +311,9 @@ func WriteBoardFile(path string, b Board) error {
 	if err != nil {
 		return fmt.Errorf("create temp board file: %w", err)
 	}
-	renamed := false
 	defer func() {
-		if !renamed {
-			_ = tmp.Close()
-			_ = os.Remove(tmp.Name())
-		}
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
 	}()
 	if err := tmp.Chmod(mode); err != nil {
 		return fmt.Errorf("set board file mode %s: %w", path, err)
@@ -301,9 +325,34 @@ func WriteBoardFile(path string, b Board) error {
 		return fmt.Errorf("close temp board file: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
+		if errors.Is(err, syscall.EBUSY) || errors.Is(err, syscall.EXDEV) {
+			return writeBoardFileInPlace(path, data)
+		}
 		return fmt.Errorf("replace board file %s: %w", path, err)
 	}
-	renamed = true
+	return nil
+}
+
+// writeBoardFileInPlace rewrites an existing board file in place
+// (truncate, write, sync) preserving its mode: a file bind mount cannot be
+// replaced by rename, but truncating the mounted file itself propagates to
+// the host through the read-write mount.
+func writeBoardFileInPlace(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return fmt.Errorf("write board file %s: %w", path, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write board file %s: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write board file %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close board file %s: %w", path, err)
+	}
 	return nil
 }
 
@@ -319,17 +368,20 @@ func (c *Config) HAFilter() []string {
 	return out
 }
 
-// CalendarFilter returns the configured calendar IDs. A nil slice means
-// "all visible calendars".
+// CalendarFilter returns the configured calendar IDs, deduplicated (first
+// occurrence wins), in configured order. A nil slice means "all visible
+// calendars".
 func (c *Config) CalendarFilter() []string {
 	c.boardMu.RLock()
 	defer c.boardMu.RUnlock()
 	if len(c.Board.Calendars) == 0 {
 		return nil
 	}
+	seen := make(map[string]bool, len(c.Board.Calendars))
 	out := make([]string, 0, len(c.Board.Calendars))
 	for _, ref := range c.Board.Calendars {
-		if ref.ID != "" {
+		if ref.ID != "" && !seen[ref.ID] {
+			seen[ref.ID] = true
 			out = append(out, ref.ID)
 		}
 	}

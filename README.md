@@ -5,7 +5,7 @@ on one page.
 
 dashhome is a single Go process (Gin) on port **3000** that integrates with
 
-- **Google Calendar** — every visible calendar in its own tab, plus a
+- **Google Calendar** — each calendar in its own tab, plus a
   **Summary** tab that combines all of them into one month view;
 - **Home Assistant** — the real HA dashboard embedded in an iframe in the
   Home card, the entity-state API, and a read-only API proxy for the
@@ -100,9 +100,17 @@ http://localhost:3000.
   images or the compose file.
 - Push records and the Google token cache live in the `data` named
   volume on the backend, so they survive container rebuilds.
-- To use a dashboard config file, set `CONFIG_FILE` in `.env` and add a
-  volume entry on the backend mounting the file (e.g.
-  `./dashhome.json:/dashhome.json` with `CONFIG_FILE=/dashhome.json`).
+- To use a dashboard config file, create `./dashhome.json` at the stack
+  root (see `dashhome.example.json`): the compose file already bind-mounts
+  it read-write into the backend at the `CONFIG_FILE` default path
+  (`/app/dashhome.json`), because the settings screen persists the refresh
+  interval into it. For settings persistence the file must exist on the
+  host and be writable by the container's `dashhome` user (uid 100; e.g.
+  `chmod 666 ./dashhome.json`); the calendar IDs inside are yours to edit.
+  It is optional at startup — if it is absent, Docker auto-creates a
+  directory at the host path, the backend logs one line and runs
+  unconfigured, and a settings save reports the board file as not
+  writable.
 - In the service-account mode (the `.env.example` default), the app exits
   at startup unless the key file at `GOOGLE_APPLICATION_CREDENTIALS`
   (default `/secrets/google-sa.json`) is present; add a volume entry
@@ -182,7 +190,12 @@ Pick **one** credential mode:
    - Optional `GOOGLE_DOMAIN=user@workspace.com` enables domain-wide
      delegation (the service account acts as that user).
    - The dashboard shows every calendar visible to the credentials, or the
-     subset listed in `dashhome.json` → `calendars`.
+     calendars listed in `dashhome.json` → `calendars`. For a service
+     account, each `calendars` entry is one calendar the service account
+     is shared on, and the calendar ID is the email address of the account
+     the calendar is shared from. A shared calendar can be missing from
+     the API's calendar list (sharing propagation quirk); a configured ID
+     is still shown as a tab and fetched by ID in that case.
 2. **3-legged OAuth** (personal Google account)
    - Create an *OAuth client* (Web application). Authorized redirect URI:
      `<https://your-host>/api/auth/google/callback`.
@@ -280,7 +293,14 @@ the History tabs open any previous one.
 - `ha_labels` — friendly labels per entity (falls back to the entity's
   `friendly_name`).
 - `calendars` — calendar IDs to show as tabs, in order. Empty/missing =
-  show every visible calendar.
+  show every visible calendar. Each entry is one calendar; multiple
+  entries = multiple calendars. For a Google service account, the
+  calendar ID is the email address of the account a calendar is shared
+  from (e.g. the personal account of the person who shared it), and each
+  entry is one calendar the service account is shared on. Configured IDs
+  are shown and fetched even when the API's calendar list does not (yet)
+  return them — with a service account that list can be empty until
+  Google propagates the sharing.
 - `refresh_seconds` — UI polling interval hint (default 30, range 5–3600).
   Editable from the dashboard's settings screen, which persists it here.
 - `ha_embed` — the full-dashboard iframe (optional; missing = default
@@ -309,8 +329,8 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 |---|---|
 | `GET /healthz` | Liveness probe |
 | `GET /api/config` | Dashboard config + integration status (no secrets) |
-| `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json`, `200 {board}` |
-| `GET /api/calendars` | Calendars visible to the credentials (labels from config) |
+| `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json` (the board file must be writable by the backend), `200 {board}` |
+| `GET /api/calendars` | Calendar tabs: the configured `calendars` (shown even if the API's calendar list omits them), else every calendar visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
 | `GET /api/ha/entities` | Configured entities with current states |
 | `GET /api/ha/embed-url` | Fully-formed iframe URL for the Home card's dashboard embed (token only when `ha_embed.token_url`) |

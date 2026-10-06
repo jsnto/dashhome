@@ -19,7 +19,7 @@ inside its own window; the board itself fits the display. Settings is
 reachable from the board's top bar, like the web header's Settings button.
 
 - **Calendar** — the same tabs/summary as the web: a Summary tab combining
-  every visible calendar plus one tab per calendar, over a month grid with
+  the calendars plus one tab per calendar, over a month grid with
   day detail (`GET /api/calendars`, `GET /api/events`).
 - **Home** — the real Home Assistant dashboard, same embed as the web's
   Home card. The URL comes from `GET /api/ha/embed-url` (assembled

@@ -19,7 +19,17 @@
 # baked into the images. The Google service-account key (Mode A) is the
 # one exception to "in .env": it is a file, bind-mounted read-only from
 # ./backend/.keys (gitignored) into the backend container, so it never
-# lands in an image layer either.
+# lands in an image layer either. The optional board config
+# (./dashhome.json, gitignored, not baked into the image) is bind-mounted
+# read-write at the path CONFIG_FILE resolves to: the settings screen
+# persists refresh_seconds into it, so the file is editable by the app and
+# must exist on the host — writable by the container's dashhome user
+# (uid 100, e.g. `chmod 666 ./dashhome.json`) — for settings persistence
+# (create it from dashhome.example.json); the calendar IDs and the rest of
+# the content are yours to edit. If it is absent on the host, Docker
+# auto-creates a directory there and the backend treats that as "no board
+# file" (a one-line log, dashboard runs unconfigured); a settings save
+# then reports the board file as not writable.
 
 name: dashhome
 
@@ -47,6 +57,16 @@ services:
       # resolves to this mount. Host file must be world-readable (the
       # container runs as the non-root dashhome user).
       - ./backend/.keys:/app/backend/.keys:ro
+      # Optional dashboard config (board file), read-write: the settings
+      # screen persists refresh_seconds into it, so it must exist on the
+      # host, writable by the container's dashhome user (uid 100; e.g.
+      # chmod 666 ./dashhome.json) — create it from dashhome.example.json;
+      # the calendar IDs inside are yours to edit. CONFIG_FILE defaults to
+      # ./dashhome.json, which resolves to /app/dashhome.json in the
+      # container. If absent on the host, Docker auto-creates a directory
+      # at the host path and the backend logs and treats it as absent at
+      # startup.
+      - ./dashhome.json:/app/dashhome.json
     restart: unless-stopped
 
   frontend:

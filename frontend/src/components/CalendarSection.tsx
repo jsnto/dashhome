@@ -24,7 +24,7 @@ export default function CalendarSection() {
     return { start: dayKey(first), end: dayKey(last) }
   }, [year, month])
 
-  // Load the visible calendars once.
+  // Load the calendars once.
   useEffect(() => {
     api
       .getCalendars()

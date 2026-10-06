@@ -229,6 +229,78 @@ func TestBoardFileMalformed(t *testing.T) {
 	}
 }
 
+// Docker bind-mount quirk: a missing host file for a bind mount is
+// auto-created as a directory at the host path, so the container sees a
+// directory at the board path. That must load as an empty board, never
+// error (the backend must come up and serve /healthz and the calendars).
+func TestBoardFileDirectoryIsTreatedAsAbsent(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "board.json")
+	if err := os.MkdirAll(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load with a directory board path must not error: %v", err)
+	}
+	if cfg.HAFilter() != nil || cfg.CalendarFilter() != nil {
+		t.Errorf("empty board should mean no filter, got %v / %v", cfg.HAFilter(), cfg.CalendarFilter())
+	}
+	if cfg.RefreshSeconds() != 30 {
+		t.Errorf("RefreshSeconds = %d, want default 30", cfg.RefreshSeconds())
+	}
+}
+
+// An unreadable board file (permissions) is tolerated like an absent one.
+func TestBoardFileUnreadableIsTreatedAsAbsent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions do not apply")
+	}
+	file := filepath.Join(t.TempDir(), "board.json")
+	content := `{"calendars": [{"id": "c1@example.com", "label": "Family"}]}`
+	if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(file, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load with an unreadable board file must not error: %v", err)
+	}
+	if cfg.CalendarFilter() != nil {
+		t.Errorf("board should be empty, filter = %v", cfg.CalendarFilter())
+	}
+}
+
+// A duplicated calendar ID in the board file is collapsed to its first
+// occurrence in order: listCalendars and listEvents both read
+// CalendarFilter, so this one boundary keeps the tab list and the event
+// fetches duplicate-free.
+func TestCalendarFilterDedupesPreservingOrder(t *testing.T) {
+	cfg := &Config{Board: Board{Calendars: []CalendarRef{
+		{ID: "a@example.com"},
+		{ID: "b@example.com"},
+		{ID: "a@example.com", Label: "duplicate"},
+		{ID: ""},
+		{ID: "c@example.com"},
+		{ID: "b@example.com"},
+	}}}
+	got := cfg.CalendarFilter()
+	want := []string{"a@example.com", "b@example.com", "c@example.com"}
+	if len(got) != len(want) {
+		t.Fatalf("CalendarFilter = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("CalendarFilter = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestValidateRefreshSeconds(t *testing.T) {
 	for _, bad := range []int{0, -1, 4, RefreshSecondsMin - 1, RefreshSecondsMax + 1, 100000} {
 		if err := ValidateRefreshSeconds(bad); err == nil {
@@ -400,6 +472,58 @@ func TestWriteBoardFileRemovesTempWhenRenameFails(t *testing.T) {
 		if e.Name() != "dashhome.json" {
 			t.Errorf("leftover entry %q after failed write", e.Name())
 		}
+	}
+}
+
+// A board file path that is a directory (Docker's auto-created source for
+// an absent bind-mounted file) cannot be written: the error is
+// ErrBoardFileNotWritable so the API can report a storage failure, and the
+// in-memory board is left unchanged.
+// The in-place fallback write (used when the rename cannot replace a
+// bind-mounted board file, which fails EBUSY): the content is replaced
+// and the file's mode is preserved.
+func TestWriteBoardFileInPlacePreservesContentAndMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(path, []byte(`{"refresh_seconds": 30}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.MarshalIndent(Board{RefreshSeconds: 60}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBoardFileInPlace(path, append(data, '\n')); err != nil {
+		t.Fatalf("writeBoardFileInPlace: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b Board
+	if err := json.Unmarshal(raw, &b); err != nil || b.RefreshSeconds != 60 {
+		t.Errorf("content = %s, want refresh_seconds 60: %v", raw, err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o640 {
+		t.Errorf("mode = %v, want 0640 preserved", st.Mode().Perm())
+	}
+}
+
+func TestSetRefreshSecondsDirectoryPathIsNotWritable(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{BoardFile: file, Board: Board{RefreshSeconds: 30}}
+	if err := cfg.SetRefreshSeconds(45); !errors.Is(err, ErrBoardFileNotWritable) {
+		t.Fatalf("err = %v, want ErrBoardFileNotWritable", err)
+	}
+	if cfg.RefreshSeconds() != 30 {
+		t.Errorf("in-memory RefreshSeconds = %d, want unchanged 30", cfg.RefreshSeconds())
 	}
 }
 
