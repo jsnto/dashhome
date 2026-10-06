@@ -19,9 +19,12 @@ dashhome is a single Go process (Gin) on port **3000** that integrates with
   dashboard, and previous pushes are browsable in tabs (newest first).
 
 The dashboard has a **settings screen** (header → *Settings*): light/dark
-theme (persisted per browser, defaults to the OS preference), a read-only
-summary of which integrations are actually configured (including the
-full-dashboard embed settings), and the live-update
+theme (persisted per browser, defaults to the OS preference), a Views
+section (show/hide each of the four dashboard views, move them between the
+board's slots, and switch the Calendar view between the month grid and a
+schedule summary of upcoming events; persisted to `dashhome.json`), a
+read-only summary of which integrations are actually configured (including
+the full-dashboard embed settings), and the live-update
 interval (how often the Hermes push panel polls the backend, persisted to
 `dashhome.json`). A header button toggles the browser's full-screen mode.
 
