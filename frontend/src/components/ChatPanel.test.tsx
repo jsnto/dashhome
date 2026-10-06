@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import ChatPanel from './ChatPanel'
+import ChatPanel, { type UiMsg } from './ChatPanel'
 import type {
   SpeechRecognitionErrorEventLike,
   SpeechRecognitionEventLike,
@@ -112,12 +113,27 @@ afterEach(() => {
   delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
 })
 
+/** Mounts the panel with a hoisted transcript, mirroring App's wiring.
+ *  (The transcript is append-only, so the running length is a unique id.) */
+function renderPanel() {
+  function Harness() {
+    const [msgs, setMsgs] = useState<UiMsg[]>([])
+    return (
+      <ChatPanel
+        msgs={msgs}
+        onAppend={(m) => setMsgs((cur) => [...cur, { ...m, id: cur.length }])}
+      />
+    )
+  }
+  return render(<Harness />)
+}
+
 describe('ChatPanel voice input', () => {
   it('sends a spoken command through the same chat path as typed input', async () => {
     const { fetchMock, sent } = stubHermes()
     vi.stubGlobal('fetch', fetchMock)
     enableRecognition()
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
     const rec = MockSpeechRecognition.last
@@ -137,7 +153,7 @@ describe('ChatPanel voice input', () => {
   it('stops listening when the mic button is clicked again', async () => {
     vi.stubGlobal('fetch', stubHermes().fetchMock)
     enableRecognition()
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
     await screen.findByText(/Listening/)
@@ -150,7 +166,7 @@ describe('ChatPanel voice input', () => {
     const { fetchMock } = stubHermes()
     vi.stubGlobal('fetch', fetchMock)
     enableRecognition()
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
     const rec1 = MockSpeechRecognition.last
@@ -182,7 +198,7 @@ describe('ChatPanel voice input', () => {
     vi.stubGlobal('fetch', fetchMock)
     enableRecognition()
     const synth = stubSynthesis()
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
     const rec = MockSpeechRecognition.last
@@ -200,7 +216,7 @@ describe('ChatPanel voice input', () => {
     const { fetchMock, sent } = stubHermes()
     vi.stubGlobal('fetch', fetchMock)
     enableRecognition()
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.change(screen.getByPlaceholderText('Message Hermes…'), { target: { value: 'first question' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
@@ -226,7 +242,7 @@ describe('ChatPanel voice input', () => {
     const { fetchMock } = stubHermes()
     vi.stubGlobal('fetch', fetchMock)
     // No window.SpeechRecognition: jsdom never defines it.
-    render(<ChatPanel />)
+    renderPanel()
 
     const mic = screen.getByRole('button', { name: 'Voice input' })
     expect((mic as HTMLButtonElement).disabled).toBe(true)
@@ -241,7 +257,7 @@ describe('ChatPanel voice input', () => {
     const { fetchMock } = stubHermes()
     vi.stubGlobal('fetch', fetchMock)
     enableRecognition()
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
     const rec = MockSpeechRecognition.last
@@ -263,7 +279,7 @@ describe('ChatPanel voice input', () => {
     vi.stubGlobal('fetch', fetchMock)
     enableRecognition()
     // No speechSynthesis stub: jsdom does not implement it.
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
     const rec = MockSpeechRecognition.last
@@ -277,7 +293,7 @@ describe('ChatPanel voice input', () => {
     vi.stubGlobal('fetch', fetchMock)
     enableRecognition()
     state.delay = 50
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
     const rec = MockSpeechRecognition.last
@@ -299,7 +315,7 @@ describe('ChatPanel voice input', () => {
     vi.stubGlobal('fetch', fetchMock)
     enableRecognition()
     state.delay = 50
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
     const rec = MockSpeechRecognition.last
@@ -317,7 +333,7 @@ describe('ChatPanel voice input', () => {
     const { fetchMock } = stubHermes()
     vi.stubGlobal('fetch', fetchMock)
     const synth = stubSynthesis()
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.change(screen.getByPlaceholderText('Message Hermes…'), { target: { value: 'typed question' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
@@ -332,7 +348,7 @@ describe('ChatPanel voice input', () => {
     vi.stubGlobal('fetch', fetchMock)
     enableRecognition()
     state.delay = 50
-    render(<ChatPanel />)
+    renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: 'Voice input' }))
     const rec = MockSpeechRecognition.last

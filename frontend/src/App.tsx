@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
-import type { ApiConfig } from './types'
+import type { ApiConfig, ApiBoard, BoardViews } from './types'
 import { useTheme } from './useTheme'
+import { normalizeViews } from './utils'
 import CalendarSection from './components/CalendarSection'
-import ChatPanel from './components/ChatPanel'
+import ChatPanel, { type UiMsg } from './components/ChatPanel'
 import FullscreenButton from './components/FullscreenButton'
 import HAPanel from './components/HAPanel'
 import PushPanel from './components/PushPanel'
@@ -26,6 +27,15 @@ type WinId = 'calendar' | 'chat' | 'home' | 'push'
 type DragId = 'col' | 'main' | 'side'
 type Axis = 'x' | 'y'
 
+// The titles the windows actually show (their card-head h2); the resize
+// handles name their two neighbours, so these match the visible titles.
+const WIN_TITLES: Record<WinId, string> = {
+  calendar: 'Calendar',
+  chat: 'Hermes',
+  home: 'Home',
+  push: 'Hermes push',
+}
+
 interface DragSession {
   id: DragId
   axis: Axis
@@ -39,12 +49,40 @@ export default function App() {
   const [theme, setTheme] = useTheme()
   const [showSettings, setShowSettings] = useState(false)
 
+  // Effective view layout: the board file's views section with defaults
+  // filled in (absent configuration = exactly today's board). The four
+  // views map one-to-one onto the board's slots in reading order
+  // (main-top, main-bottom, side-top, side-bottom): a view keeps its slot
+  // when the order changes, and a hidden view is not rendered at all (its
+  // slot stays empty and the view needs no data polling).
+  const views = useMemo<BoardViews>(() => normalizeViews(cfg?.board.views), [cfg])
+  const slotView = (slot: number): WinId | null => {
+    const id = views.order[slot]
+    return id !== undefined && !views.hidden.includes(id) ? id : null
+  }
+  const mainWins = [slotView(0), slotView(1)].filter((w): w is WinId => w !== null)
+  const sideWins = [slotView(2), slotView(3)].filter((w): w is WinId => w !== null)
+  const visible = [...mainWins, ...sideWins]
+
   // Split proportions: left column's share, top window's share per column.
   const [colFrac, setColFrac] = useState(COL_FRAC)
   const [mainFrac, setMainFrac] = useState(ROW_FRAC)
   const [sideFrac, setSideFrac] = useState(ROW_FRAC)
   // The window whose title was last clicked (fills the layout), if any.
   const [maximized, setMaximized] = useState<WinId | null>(null)
+
+  // The Hermes chat transcript (and its id counter) lives here rather than
+  // in ChatPanel: the backend is stateless (the client sends the whole
+  // history on every call), so this in-memory copy is the only one, and
+  // hiding or moving the chat view must not drop the thread. App stays
+  // mounted while the view is hidden, so an in-flight reply still lands
+  // in the transcript.
+  const [chatMsgs, setChatMsgs] = useState<UiMsg[]>([])
+  const chatIdRef = useRef(0)
+  const appendChatMsg = (m: Omit<UiMsg, 'id'>) => {
+    const id = chatIdRef.current++
+    setChatMsgs((cur) => [...cur, { ...m, id }])
+  }
 
   const layoutRef = useRef<HTMLElement>(null)
   const colMainRef = useRef<HTMLDivElement>(null)
@@ -66,6 +104,14 @@ export default function App() {
       .then(setCfg)
       .catch(() => {})
   }, [showSettings])
+
+  // A maximized window that gets hidden in the settings must not leave the
+  // layout maximized to nothing: restore the full split.
+  const visibleKey = visible.join(',')
+  useEffect(() => {
+    if (maximized && !visible.includes(maximized)) setMaximized(null)
+    // visible is re-derived each render; visibleKey tracks its content.
+  }, [visibleKey, maximized]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const dots: { label: string; ok: boolean; title: string }[] = cfg
     ? [
@@ -160,6 +206,63 @@ export default function App() {
     onPointerCancel: handleDragEnd,
   })
 
+  // One dashboard window: the component is mounted only while the view is
+  // visible, so hidden views neither render nor poll for data.
+  const winNode = (id: WinId) => {
+    switch (id) {
+      case 'calendar':
+        return <CalendarSection mode={views.calendar_mode} />
+      case 'chat':
+        return <ChatPanel msgs={chatMsgs} onAppend={appendChatMsg} />
+      case 'home':
+        return <HAPanel />
+      case 'push':
+        return <PushPanel />
+      default:
+        return null
+    }
+  }
+
+  // A board column (main or side): its visible windows in slot order, with
+  // a resize handle between stacked windows. A lone window fills the
+  // column (no handle, no fixed share); an empty column is omitted entirely.
+  // The slot numbers (0-3) are the board's reading-order slots, so the
+  // data-slot attribute — and the drag-resized proportion attached to it —
+  // follows the slot, not the view.
+  const renderColumn = (col: 'main' | 'side') => {
+    const slots: [number, number] = col === 'main' ? [0, 1] : [2, 3]
+    const items: { win: WinId; slot: number }[] = []
+    for (const slot of slots) {
+      const win = slotView(slot)
+      if (win !== null) items.push({ win, slot })
+    }
+    if (items.length === 0) return null
+    return (
+      <div ref={col === 'main' ? colMainRef : colSideRef} className={`col-${col}`}>
+        {items.map(({ win, slot }, i) => (
+          <Fragment key={win}>
+            {i > 0 && (
+              <div
+                className="divider divider-h"
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label={`Resize ${WIN_TITLES[items[i - 1].win]} and ${WIN_TITLES[win]}`}
+                {...dividerProps(col)}
+              />
+            )}
+            <div
+              className={items.length === 1 ? 'win solo' : 'win'}
+              data-win={win}
+              data-slot={slot % 2 === 0 ? `${col}-top` : `${col}-bottom`}
+            >
+              {winNode(win)}
+            </div>
+          </Fragment>
+        ))}
+      </div>
+    )
+  }
+
   return (
     <div className="app">
       <header className="top">
@@ -189,6 +292,7 @@ export default function App() {
         ref={layoutRef}
         className="layout"
         data-max={maximized ?? undefined}
+        data-max-col={maximized ? (mainWins.includes(maximized) ? 'main' : 'side') : undefined}
         style={
           {
             '--col': colFrac,
@@ -201,42 +305,23 @@ export default function App() {
         }
         onClick={handleLayoutClick}
       >
-        <div ref={colMainRef} className="col-main">
-          <div className="win" data-win="calendar">
-            <CalendarSection />
-          </div>
+        {renderColumn('main')}
+        {mainWins.length > 0 && sideWins.length > 0 && (
           <div
-            className="divider divider-h"
+            className="divider divider-v"
             role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize Calendar and Hermes"
-            {...dividerProps('main')}
+            aria-label="Resize columns"
+            {...dividerProps('col')}
           />
-          <div className="win" data-win="chat">
-            <ChatPanel />
+        )}
+        {renderColumn('side')}
+        {visible.length === 0 && (
+          <div className="layout-empty">
+            <p className="note">
+              All dashboard views are hidden. Open Settings → Views to show one again.
+            </p>
           </div>
-        </div>
-        <div
-          className="divider divider-v"
-          role="separator"
-          aria-label="Resize columns"
-          {...dividerProps('col')}
-        />
-        <div ref={colSideRef} className="col-side">
-          <div className="win" data-win="home">
-            <HAPanel />
-          </div>
-          <div
-            className="divider divider-h"
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize Home and Hermes push"
-            {...dividerProps('side')}
-          />
-          <div className="win" data-win="push">
-            <PushPanel />
-          </div>
-        </div>
+        )}
       </main>
 
       {showSettings && (
@@ -244,6 +329,8 @@ export default function App() {
           cfg={cfg}
           theme={theme}
           onThemeChange={setTheme}
+          views={views}
+          onBoard={(board: ApiBoard) => setCfg((c) => (c ? { ...c, board } : c))}
           onClose={() => setShowSettings(false)}
         />
       )}

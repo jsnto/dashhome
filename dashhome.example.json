@@ -23,5 +23,10 @@
   "ha_embed": {
     "url_path": null,
     "token_url": false
+  },
+  "views": {
+    "order": ["calendar", "chat", "home", "push"],
+    "hidden": [],
+    "calendar_mode": "month"
   }
 }

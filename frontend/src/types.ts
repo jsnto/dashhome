@@ -7,12 +7,32 @@ export interface HAEmbed {
   token_url?: boolean
 }
 
+/** The four dashboard views, in the default board order (the 2x2 layout's reading order: main-top, main-bottom, side-top, side-bottom). */
+export const VIEW_IDS = ['calendar', 'chat', 'home', 'push'] as const
+
+export type ViewId = (typeof VIEW_IDS)[number]
+
+/** How the Calendar view renders. */
+export type CalendarMode = 'month' | 'schedule'
+
+/** The board's view layout (the optional `views` object of the board file). */
+export interface BoardViews {
+  /** View IDs in board order; always a permutation of VIEW_IDS. */
+  order: ViewId[]
+  /** View IDs hidden from the board (a subset of VIEW_IDS). */
+  hidden: ViewId[]
+  /** How the Calendar view renders: 'month' (grid) or 'schedule' (list). */
+  calendar_mode: CalendarMode
+}
+
 export interface ApiBoard {
   ha_entities: string[]
   ha_labels: Record<string, string>
   calendars: { id: string; label: string }[]
   refresh_seconds: number
   ha_embed?: HAEmbed | null
+  /** View layout; the backend always sends a complete effective layout. */
+  views?: BoardViews | null
 }
 
 export interface ApiConfig {

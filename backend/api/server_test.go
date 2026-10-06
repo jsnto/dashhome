@@ -400,6 +400,236 @@ func TestPutConfigRefreshBoardFileNotWritable(t *testing.T) {
 	}
 }
 
+// GET /api/config always exposes the effective view layout: when the board
+// file sets no views, clients still get the complete default layout.
+func TestGetConfigViewsDefault(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds": 30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	r := newServer(t, cfg, nil, nil, nil, nil)
+
+	w := do(r, "GET", "/api/config", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Board struct {
+			Views struct {
+				Order        []string `json:"order"`
+				Hidden       []string `json:"hidden"`
+				CalendarMode string   `json:"calendar_mode"`
+			} `json:"views"`
+		} `json:"board"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	got := resp.Board.Views
+	if len(got.Order) != 4 || got.Order[0] != "calendar" || got.Order[1] != "chat" ||
+		got.Order[2] != "home" || got.Order[3] != "push" {
+		t.Errorf("default views.order = %v", got.Order)
+	}
+	if len(got.Hidden) != 0 {
+		t.Errorf("default views.hidden = %v, want empty", got.Hidden)
+	}
+	if got.CalendarMode != "month" {
+		t.Errorf("default views.calendar_mode = %q, want month", got.CalendarMode)
+	}
+}
+
+func TestPutConfigViews(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds": 45}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	cfg.Board.RefreshSeconds = 45
+	r := newServer(t, cfg, nil, nil, nil, nil)
+
+	// Full update: order, hidden, and calendar mode in one request.
+	body := map[string]any{
+		"order":         []string{"chat", "home", "push", "calendar"},
+		"hidden":        []string{"home"},
+		"calendar_mode": "schedule",
+	}
+	w := do(r, "PUT", "/api/config/views", body, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Board struct {
+			RefreshSeconds int `json:"refresh_seconds"`
+			Views          struct {
+				Order        []string `json:"order"`
+				Hidden       []string `json:"hidden"`
+				CalendarMode string   `json:"calendar_mode"`
+			} `json:"views"`
+		} `json:"board"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Board.RefreshSeconds != 45 {
+		t.Errorf("response refresh_seconds = %d, want preserved 45", resp.Board.RefreshSeconds)
+	}
+	if len(resp.Board.Views.Order) != 4 || resp.Board.Views.Order[0] != "chat" || resp.Board.Views.CalendarMode != "schedule" {
+		t.Errorf("response views = %+v", resp.Board.Views)
+	}
+
+	// Persisted to the board file, other fields preserved.
+	data, _ := os.ReadFile(file)
+	if !strings.Contains(string(data), `"views"`) || !strings.Contains(string(data), `"calendar_mode": "schedule"`) {
+		t.Errorf("views not written to the board file: %s", data)
+	}
+	if !strings.Contains(string(data), `"refresh_seconds": 45`) {
+		t.Errorf("other board fields not preserved: %s", data)
+	}
+	// Partial update: only the order changes; hidden and mode keep their
+	// stored values.
+	w = do(r, "PUT", "/api/config/views", map[string]any{
+		"order": []string{"push", "calendar", "chat", "home"},
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Board.Views.Order) != 4 || resp.Board.Views.Order[0] != "push" {
+		t.Errorf("partial update order = %+v", resp.Board.Views.Order)
+	}
+	if len(resp.Board.Views.Hidden) != 1 || resp.Board.Views.Hidden[0] != "home" || resp.Board.Views.CalendarMode != "schedule" {
+		t.Errorf("partial update lost hidden/mode: %+v", resp.Board.Views)
+	}
+
+	// Visible via GET /api/config.
+	wg := do(r, "GET", "/api/config", nil, nil)
+	var getResp struct {
+		Board struct {
+			Views struct {
+				Order        []string `json:"order"`
+				Hidden       []string `json:"hidden"`
+				CalendarMode string   `json:"calendar_mode"`
+			} `json:"views"`
+		} `json:"board"`
+	}
+	json.NewDecoder(wg.Body).Decode(&getResp)
+	if len(getResp.Board.Views.Order) != 4 || getResp.Board.Views.Order[0] != "push" ||
+		len(getResp.Board.Views.Hidden) != 1 || getResp.Board.Views.CalendarMode != "schedule" {
+		t.Errorf("GET views = %+v", getResp.Board.Views)
+	}
+
+	// Clearing the hidden set: an empty array is valid.
+	w = do(r, "PUT", "/api/config/views", map[string]any{"hidden": []string{}}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Board.Views.Hidden) != 0 {
+		t.Errorf("hidden not cleared: %+v", resp.Board.Views.Hidden)
+	}
+}
+
+func TestPutConfigViewsInvalid(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds": 30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	r := newServer(t, cfg, nil, nil, nil, nil)
+
+	cases := []struct {
+		name string
+		body any
+	}{
+		{"order-missing-view", map[string]any{"order": []string{"calendar", "chat", "home"}}},
+		{"order-duplicate", map[string]any{"order": []string{"calendar", "calendar", "home", "push"}}},
+		{"order-unknown-id", map[string]any{"order": []string{"calendar", "chat", "home", "nope"}}},
+		{"hidden-unknown-id", map[string]any{"hidden": []string{"nope"}}},
+		{"hidden-duplicate", map[string]any{"hidden": []string{"push", "push"}}},
+		{"mode-invalid", map[string]any{"calendar_mode": "grid"}},
+		{"wrong-type-body", "not-json"},
+	}
+	for _, tc := range cases {
+		w := do(r, "PUT", "/api/config/views", tc.body, map[string]string{"Content-Type": "application/json"})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code = %d, want 400: %s", tc.name, w.Code, w.Body.String())
+		}
+		var resp struct {
+			Error string `json:"error"`
+		}
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp.Error != "bad_views" && resp.Error != "bad_request" {
+			t.Errorf("%s: error = %q, want bad_views/bad_request", tc.name, resp.Error)
+		}
+	}
+
+	// Invalid updates leave the effective layout at the default.
+	v := cfg.ViewConfig()
+	if len(v.Order) != 4 || v.Order[0] != "calendar" || len(v.Hidden) != 0 || v.CalendarMode != "month" {
+		t.Errorf("state changed by invalid updates: %+v", v)
+	}
+	data, _ := os.ReadFile(file)
+	if strings.Contains(string(data), `"views"`) {
+		t.Errorf("invalid updates wrote to the board file: %s", data)
+	}
+}
+
+func TestPutConfigViewsNoBoardFile(t *testing.T) {
+	cfg := cfgFor(t)
+	cfg.BoardFile = ""
+	r := newServer(t, cfg, nil, nil, nil, nil)
+	w := do(r, "PUT", "/api/config/views", map[string]any{"hidden": []string{"push"}}, nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code = %d, want 503: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Error != "no_board_file" {
+		t.Errorf("error = %q, want no_board_file", resp.Error)
+	}
+}
+
+func TestPutConfigViewsBoardFileNotWritable(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	cfg.Board.RefreshSeconds = 15
+	r := newServer(t, cfg, nil, nil, nil, nil)
+
+	w := do(r, "PUT", "/api/config/views", map[string]any{"hidden": []string{"push"}}, nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code = %d, want 503: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Error  string `json:"error"`
+		Detail string `json:"detail"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Error != "board_file_not_writable" {
+		t.Errorf("error = %q, want board_file_not_writable", resp.Error)
+	}
+	if !strings.Contains(resp.Detail, "not writable") {
+		t.Errorf("detail = %q, want a not-writable explanation", resp.Detail)
+	}
+	v := cfg.ViewConfig()
+	if len(v.Hidden) != 0 {
+		t.Errorf("in-memory hidden = %v, want unchanged", v.Hidden)
+	}
+}
+
 // --- calendars / events ------------------------------------------------------
 
 var testMonthStart = testTime("2026-03-01T00:00:00Z")

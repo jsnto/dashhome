@@ -4,18 +4,24 @@ import { speak, useVoice } from '../useVoice'
 import type { ChatMessage } from '../types'
 import Note from './Note'
 
-interface UiMsg extends ChatMessage {
+/** A transcript entry: an API message with a UI id, or a send error. */
+export interface UiMsg extends ChatMessage {
   id: number
   error?: boolean
 }
 
-export default function ChatPanel() {
-  const [msgs, setMsgs] = useState<UiMsg[]>([])
+interface Props {
+  /** The transcript (owned by App so it survives the view being hidden). */
+  msgs: UiMsg[]
+  /** Append an entry to the transcript (App assigns the id). */
+  onAppend: (m: Omit<UiMsg, 'id'>) => void
+}
+
+export default function ChatPanel({ msgs, onAppend }: Props) {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [cfgErr, setCfgErr] = useState<ApiError | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
-  const idRef = useRef(0)
   const busyRef = useRef(false)
   const stopVoiceRef = useRef<() => void>(() => {})
 
@@ -29,13 +35,13 @@ export default function ChatPanel() {
     stopVoiceRef.current()
     busyRef.current = true
     const history: ChatMessage[] = msgs.map(({ role, content }) => ({ role, content }))
-    setMsgs((m) => [...m, { id: idRef.current++, role: 'user', content: text }])
+    onAppend({ role: 'user', content: text })
     setBusy(true)
     setCfgErr(null)
     ;(async () => {
       try {
         const reply = await api.chat(text, history)
-        setMsgs((m) => [...m, { id: idRef.current++, role: 'assistant', content: reply }])
+        onAppend({ role: 'assistant', content: reply })
         if (fromVoice) speak(reply)
       } catch (err) {
         const msg =
@@ -43,7 +49,7 @@ export default function ChatPanel() {
             ? `${err.code}${err.detail ? ` — ${err.detail}` : ''}`
             : String(err)
         setCfgErr(err instanceof ApiError ? err : null)
-        setMsgs((m) => [...m, { id: idRef.current++, role: 'assistant', content: msg, error: true }])
+        onAppend({ role: 'assistant', content: msg, error: true })
       } finally {
         busyRef.current = false
         setBusy(false)

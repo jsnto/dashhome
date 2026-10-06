@@ -52,6 +52,57 @@ describe('api.setRefreshSeconds', () => {
   })
 })
 
+describe('api.setViews', () => {
+  it('PUTs the view layout and returns the persisted board', async () => {
+    const board: ApiBoard = {
+      ha_entities: [],
+      ha_labels: {},
+      calendars: [],
+      refresh_seconds: 45,
+      views: {
+        order: ['chat', 'calendar', 'home', 'push'],
+        hidden: ['push'],
+        calendar_mode: 'schedule',
+      },
+    }
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ board }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const got = await api.setViews({ order: ['chat', 'calendar', 'home', 'push'] })
+    expect(got.views?.order).toEqual(['chat', 'calendar', 'home', 'push'])
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/config/views')
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse(String(init.body))).toEqual({ order: ['chat', 'calendar', 'home', 'push'] })
+  })
+
+  it('surfaces backend validation errors as ApiError', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: 'bad_views',
+          detail: 'views.order must be a permutation of calendar, chat, home, push',
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const p = api.setViews({ order: ['calendar', 'chat', 'home'] })
+    await expect(p).rejects.toMatchObject({
+      status: 400,
+      code: 'bad_views',
+    })
+  })
+})
+
 describe('api.getHAAEmbedURL', () => {
   it('GETs the server-assembled embed URL', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
