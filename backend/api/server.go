@@ -8,7 +8,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -176,16 +175,38 @@ func (s *Server) listCalendars(c *gin.Context) {
 
 	filter := s.cfg.CalendarFilter()
 	var shown []apiCalendar
-	for _, cal := range cals {
-		if filter != nil && !slices.Contains(filter, cal.ID) {
-			continue
+	if filter == nil {
+		// No configured array: every visible calendar, unchanged.
+		for _, cal := range cals {
+			shown = append(shown, apiCalendar{
+				ID:      cal.ID,
+				Summary: cal.Summary,
+				Label:   s.cfg.CalendarLabel(cal.ID, cal.Summary),
+				Primary: cal.Primary,
+			})
 		}
-		shown = append(shown, apiCalendar{
-			ID:      cal.ID,
-			Summary: cal.Summary,
-			Label:   s.cfg.CalendarLabel(cal.ID, cal.Summary),
-			Primary: cal.Primary,
-		})
+	} else {
+		// The configured array is the source of truth: every configured ID
+		// appears as a calendar even when Google's calendarList does not
+		// return it (a calendar shared to a service account may never show
+		// up there); the list only enriches the entries it does know with
+		// summary and primary.
+		byID := make(map[string]calendar.Calendar, len(cals))
+		for _, cal := range cals {
+			byID[cal.ID] = cal
+		}
+		for _, id := range filter {
+			summary, primary := "", false
+			if cal, ok := byID[id]; ok {
+				summary, primary = cal.Summary, cal.Primary
+			}
+			shown = append(shown, apiCalendar{
+				ID:      id,
+				Summary: summary,
+				Label:   s.cfg.CalendarLabel(id, summary),
+				Primary: primary,
+			})
+		}
 	}
 	if shown == nil {
 		shown = []apiCalendar{}

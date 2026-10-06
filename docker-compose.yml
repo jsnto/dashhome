@@ -19,7 +19,12 @@
 # baked into the images. The Google service-account key (Mode A) is the
 # one exception to "in .env": it is a file, bind-mounted read-only from
 # ./backend/.keys (gitignored) into the backend container, so it never
-# lands in an image layer either.
+# lands in an image layer either. The optional board config
+# (./dashhome.json, gitignored, not baked into the image) is likewise
+# bind-mounted read-only into the backend container at the path
+# CONFIG_FILE resolves to; if it is absent on the host, Docker
+# auto-creates a directory there and the backend treats that as "no
+# board file" (a one-line log, dashboard runs unconfigured).
 
 name: dashhome
 
@@ -47,6 +52,12 @@ services:
       # resolves to this mount. Host file must be world-readable (the
       # container runs as the non-root dashhome user).
       - ./backend/.keys:/app/backend/.keys:ro
+      # Optional dashboard config (board file), read-only. CONFIG_FILE
+      # defaults to ./dashhome.json, which resolves to /app/dashhome.json
+      # in the container. The file is gitignored and not baked into the
+      # image; if absent on the host, Docker auto-creates a directory at
+      # the host path and the backend logs and treats it as absent.
+      - ./dashhome.json:/app/dashhome.json:ro
     restart: unless-stopped
 
   frontend:

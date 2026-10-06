@@ -229,6 +229,53 @@ func TestBoardFileMalformed(t *testing.T) {
 	}
 }
 
+// Docker bind-mount quirk: a missing host file for a bind mount is
+// auto-created as a directory at the host path, so the container sees a
+// directory at the board path. That must load as an empty board, never
+// error (the backend must come up and serve /healthz and the calendars).
+func TestBoardFileDirectoryIsTreatedAsAbsent(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "board.json")
+	if err := os.MkdirAll(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load with a directory board path must not error: %v", err)
+	}
+	if cfg.HAFilter() != nil || cfg.CalendarFilter() != nil {
+		t.Errorf("empty board should mean no filter, got %v / %v", cfg.HAFilter(), cfg.CalendarFilter())
+	}
+	if cfg.RefreshSeconds() != 30 {
+		t.Errorf("RefreshSeconds = %d, want default 30", cfg.RefreshSeconds())
+	}
+}
+
+// An unreadable board file (permissions) is tolerated like an absent one.
+func TestBoardFileUnreadableIsTreatedAsAbsent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions do not apply")
+	}
+	file := filepath.Join(t.TempDir(), "board.json")
+	content := `{"calendars": [{"id": "c1@example.com", "label": "Family"}]}`
+	if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(file, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load with an unreadable board file must not error: %v", err)
+	}
+	if cfg.CalendarFilter() != nil {
+		t.Errorf("board should be empty, filter = %v", cfg.CalendarFilter())
+	}
+}
+
 func TestValidateRefreshSeconds(t *testing.T) {
 	for _, bad := range []int{0, -1, 4, RefreshSecondsMin - 1, RefreshSecondsMax + 1, 100000} {
 		if err := ValidateRefreshSeconds(bad); err == nil {

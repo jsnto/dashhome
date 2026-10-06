@@ -431,6 +431,127 @@ func TestListCalendarsFilterAndLabels(t *testing.T) {
 	}
 }
 
+// listResp decodes a GET /api/calendars body.
+type listResp struct {
+	Calendars []struct {
+		ID      string `json:"id"`
+		Summary string `json:"summary"`
+		Label   string `json:"label"`
+		Primary bool   `json:"primary"`
+	} `json:"calendars"`
+}
+
+// The service-account case: the configured IDs are absent from Google's
+// calendarList (empty list). They must still appear as tabs, in configured
+// order, with their configured label, no summary, and primary=false.
+func TestListCalendarsConfiguredIDsNotInGoogleList(t *testing.T) {
+	g := &fakeGoogle{hasToken: true, cals: nil}
+	cfg := cfgFor(t) // filter: personal@example.com (label "Personal")
+	cfg.Board.Calendars = append(cfg.Board.Calendars,
+		config.CalendarRef{ID: "captain@example.com", Label: "Captain's"})
+	r := newServer(t, cfg, g, nil, nil, nil)
+	w := do(r, "GET", "/api/calendars", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp listResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ id, label, summary string; primary bool }{
+		{"personal@example.com", "Personal", "", false},
+		{"captain@example.com", "Captain's", "", false},
+	}
+	if len(resp.Calendars) != len(want) {
+		t.Fatalf("calendars = %+v, want %d entries", resp.Calendars, len(want))
+	}
+	for i, w := range want {
+		got := resp.Calendars[i]
+		if got.ID != w.id || got.Label != w.label || got.Summary != w.summary || got.Primary != w.primary {
+			t.Errorf("calendars[%d] = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
+// Configured + visible merge: the calendarList entry enriches a configured
+// ID with its summary and primary, the configured label wins, a visible
+// but unconfigured calendar is still excluded, and a label-less configured
+// ID not in the list falls back to the ID itself as label.
+func TestListCalendarsConfiguredMergeWithGoogleList(t *testing.T) {
+	g := &fakeGoogle{
+		hasToken: true,
+		cals: []calendar.Calendar{
+			{ID: "personal@example.com", Summary: "Personal (Google)", Primary: true},
+			{ID: "extra@example.com", Summary: "Extra"},
+		},
+	}
+	cfg := cfgFor(t)
+	cfg.Board.Calendars = []config.CalendarRef{
+		{ID: "personal@example.com", Label: "Personal"},
+		{ID: "ghost@example.com"}, // no label, not in the list either
+	}
+	r := newServer(t, cfg, g, nil, nil, nil)
+	w := do(r, "GET", "/api/calendars", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp listResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ id, label, summary string; primary bool }{
+		{"personal@example.com", "Personal", "Personal (Google)", true},
+		{"ghost@example.com", "ghost@example.com", "", false},
+	}
+	if len(resp.Calendars) != len(want) {
+		t.Fatalf("calendars = %+v, want %d entries (extra@example.com not configured)", resp.Calendars, len(want))
+	}
+	for i, w := range want {
+		got := resp.Calendars[i]
+		if got.ID != w.id || got.Label != w.label || got.Summary != w.summary || got.Primary != w.primary {
+			t.Errorf("calendars[%d] = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
+// No configured array: exactly today's behavior — every visible calendar,
+// in list order, label falling back to summary, then the ID.
+func TestListCalendarsNoConfiguredArrayShowsAllVisible(t *testing.T) {
+	g := &fakeGoogle{
+		hasToken: true,
+		cals: []calendar.Calendar{
+			{ID: "a@example.com", Summary: "A", Primary: true},
+			{ID: "b@example.com", Summary: "B"},
+			{ID: "c@example.com"}, // no summary: label falls back to the ID
+		},
+	}
+	cfg := cfgFor(t)
+	cfg.Board.Calendars = nil // no filter
+	r := newServer(t, cfg, g, nil, nil, nil)
+	w := do(r, "GET", "/api/calendars", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp listResp
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ id, label, summary string; primary bool }{
+		{"a@example.com", "A", "A", true},
+		{"b@example.com", "B", "B", false},
+		{"c@example.com", "c@example.com", "", false},
+	}
+	if len(resp.Calendars) != len(want) {
+		t.Fatalf("calendars = %+v, want all %d visible", resp.Calendars, len(want))
+	}
+	for i, w := range want {
+		got := resp.Calendars[i]
+		if got.ID != w.id || got.Label != w.label || got.Summary != w.summary || got.Primary != w.primary {
+			t.Errorf("calendars[%d] = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
 func TestListEventsSummaryCombined(t *testing.T) {
 	g := &fakeGoogle{
 		hasToken: true,

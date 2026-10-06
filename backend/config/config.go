@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -125,8 +126,9 @@ func (c *Config) RefreshSeconds() int {
 	return c.Board.RefreshSeconds
 }
 
-// Load reads configuration from the environment. A missing board file is
-// fine; an unreadable or malformed board file is an error.
+// Load reads configuration from the environment. A missing, empty,
+// unreadable, or directory board file is tolerated as an empty board (the
+// file is optional); a malformed board file is an error.
 func Load() (*Config, error) {
 	port := env("PORT", "3000")
 	if _, err := strconv.Atoi(port); err != nil {
@@ -171,12 +173,23 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) loadBoard() error {
+	// A directory where the board file should be is treated as "no board
+	// file": Docker auto-creates a missing bind-mount source as a directory
+	// at the host path, so a configured-but-absent ./dashhome.json reaches
+	// the container as a directory at the CONFIG_FILE path.
+	if st, err := os.Stat(c.BoardFile); err == nil && st.IsDir() {
+		log.Printf("board file %s is a directory; treating it as absent (no board config)", c.BoardFile)
+		return nil
+	}
 	data, err := os.ReadFile(c.BoardFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // optional file: empty board
 		}
-		return fmt.Errorf("read board file %s: %w", c.BoardFile, err)
+		// Unreadable (permissions, I/O failure): tolerate like an absent
+		// file so the stack stays up; the dashboard simply runs unconfigured.
+		log.Printf("board file %s is unreadable (%v); treating it as absent (no board config)", c.BoardFile, err)
+		return nil
 	}
 	if len(data) == 0 {
 		return nil
