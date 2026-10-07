@@ -73,8 +73,9 @@ const (
 type DashClient struct {
 	// Settings resolves the effective (base URL, token) on every call,
 	// so a value changed in the settings UI takes effect without a
-	// restart (cached results are invalidated when the settings change).
-	// NewDashClient wraps a fixed pair.
+	// restart (cached results and the remembered command style are
+	// invalidated when the settings change). NewDashClient wraps a
+	// fixed pair.
 	Settings func() (baseURL, token string)
 
 	// ListTTL / ConfigTTL are the cache lifetimes. Defaults: 15 min for
@@ -85,10 +86,11 @@ type DashClient struct {
 	// Default 15 s, matching the HTTP client.
 	CallTimeout time.Duration
 
-	mu      sync.Mutex
-	style   commandStyle
-	list    cached[[]Dashboard]
-	configs map[string]cached[json.RawMessage]
+	mu       sync.Mutex
+	style    commandStyle
+	styleKey string // settings pair style applies to ("" = not probed yet)
+	list     cached[[]Dashboard]
+	configs  map[string]cached[json.RawMessage]
 }
 
 // cached is one TTL cache entry, keyed to the settings that produced it:
@@ -220,8 +222,12 @@ func (d *DashClient) GetDashboardConfig(ctx context.Context, urlPath string, for
 // instance does not know the primary command name (older HA), it falls
 // back to the legacy name and remembers the result for later calls.
 func (d *DashClient) call(ctx context.Context, primary, legacy string, args map[string]any, supportsForce, force bool, baseURL, token string) (json.RawMessage, error) {
+	key := settingsKey(baseURL, token)
 	d.mu.Lock()
 	style := d.style
+	if key != d.styleKey {
+		style = styleUnknown // settings changed since the probe: re-probe
+	}
 	d.mu.Unlock()
 
 	if style == styleLegacy {
@@ -230,20 +236,21 @@ func (d *DashClient) call(ctx context.Context, primary, legacy string, args map[
 	raw, err := d.oneCall(ctx, primary, forceArgs(args, supportsForce, force), baseURL, token)
 	if err == nil {
 		if style == styleUnknown {
-			d.setStyle(styleLovelace)
+			d.setStyle(styleLovelace, key)
 		}
 		return raw, nil
 	}
 	if style == styleUnknown && errors.Is(err, errUnknownCommand) {
-		d.setStyle(styleLegacy)
+		d.setStyle(styleLegacy, key)
 		return d.oneCall(ctx, legacy, dropForce(args), baseURL, token)
 	}
 	return nil, err
 }
 
-func (d *DashClient) setStyle(s commandStyle) {
+func (d *DashClient) setStyle(s commandStyle, key string) {
 	d.mu.Lock()
 	d.style = s
+	d.styleKey = key
 	d.mu.Unlock()
 }
 

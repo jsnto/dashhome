@@ -112,8 +112,8 @@ export default function HATile({ tile, entity, haOff, onService }: Props) {
         )}
         {haOff ? (
           <p className="note">
-            Home Assistant is not configured. Set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN and
-            restart the server.
+            Home Assistant is not configured. Set the Home Assistant URL and token in Settings →
+            Services.
           </p>
         ) : null}
         <p className="note ha-entity" title={tile.entity}>

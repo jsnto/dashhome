@@ -777,85 +777,49 @@ func (c *Config) SetServices(u *ServicesUpdate) error {
 	// have mutated the live board.
 	cur := cloneServices(c.Board.Services)
 	changed := false
+	// apply sets one field only when the provided value differs from the
+	// current one, so an update with no effective field change is a no-op
+	// (nothing is written, even on an unwritable board file).
+	apply := func(dst *string, src *string) {
+		if src != nil && *dst != *src {
+			*dst = *src
+			changed = true
+		}
+	}
 	if u.HomeAssistant != nil {
 		if cur.HomeAssistant == nil {
 			cur.HomeAssistant = &ServiceHomeAssistant{}
 		}
-		if u.HomeAssistant.URL != nil {
-			cur.HomeAssistant.URL = *u.HomeAssistant.URL
-			changed = true
-		}
-		if u.HomeAssistant.Token != nil {
-			cur.HomeAssistant.Token = *u.HomeAssistant.Token
-			changed = true
-		}
+		apply(&cur.HomeAssistant.URL, u.HomeAssistant.URL)
+		apply(&cur.HomeAssistant.Token, u.HomeAssistant.Token)
 	}
 	if u.Google != nil {
 		if cur.Google == nil {
 			cur.Google = &ServiceGoogle{}
 		}
-		if u.Google.ServiceAccountFile != nil {
-			cur.Google.ServiceAccountFile = *u.Google.ServiceAccountFile
-			changed = true
-		}
-		if u.Google.Domain != nil {
-			cur.Google.Domain = *u.Google.Domain
-			changed = true
-		}
-		if u.Google.ClientID != nil {
-			cur.Google.ClientID = *u.Google.ClientID
-			changed = true
-		}
-		if u.Google.ClientSecret != nil {
-			cur.Google.ClientSecret = *u.Google.ClientSecret
-			changed = true
-		}
-		if u.Google.RedirectURI != nil {
-			cur.Google.RedirectURI = *u.Google.RedirectURI
-			changed = true
-		}
-		if u.Google.TokenCache != nil {
-			cur.Google.TokenCache = *u.Google.TokenCache
-			changed = true
-		}
-		if u.Google.AccessToken != nil {
-			cur.Google.AccessToken = *u.Google.AccessToken
-			changed = true
-		}
-		if u.Google.Endpoint != nil {
-			cur.Google.Endpoint = *u.Google.Endpoint
-			changed = true
-		}
+		apply(&cur.Google.ServiceAccountFile, u.Google.ServiceAccountFile)
+		apply(&cur.Google.Domain, u.Google.Domain)
+		apply(&cur.Google.ClientID, u.Google.ClientID)
+		apply(&cur.Google.ClientSecret, u.Google.ClientSecret)
+		apply(&cur.Google.RedirectURI, u.Google.RedirectURI)
+		apply(&cur.Google.TokenCache, u.Google.TokenCache)
+		apply(&cur.Google.AccessToken, u.Google.AccessToken)
+		apply(&cur.Google.Endpoint, u.Google.Endpoint)
 	}
 	if u.HermesChat != nil {
 		if cur.HermesChat == nil {
 			cur.HermesChat = &ServiceHermesChat{}
 		}
-		if u.HermesChat.BaseURL != nil {
-			cur.HermesChat.BaseURL = *u.HermesChat.BaseURL
-			changed = true
-		}
-		if u.HermesChat.ChatPath != nil {
-			cur.HermesChat.ChatPath = *u.HermesChat.ChatPath
-			changed = true
-		}
-		if u.HermesChat.AuthHeader != nil {
-			cur.HermesChat.AuthHeader = *u.HermesChat.AuthHeader
-			changed = true
-		}
-		if u.HermesChat.AuthValue != nil {
-			cur.HermesChat.AuthValue = *u.HermesChat.AuthValue
-			changed = true
-		}
+		apply(&cur.HermesChat.BaseURL, u.HermesChat.BaseURL)
+		apply(&cur.HermesChat.ChatPath, u.HermesChat.ChatPath)
+		apply(&cur.HermesChat.AuthHeader, u.HermesChat.AuthHeader)
+		apply(&cur.HermesChat.AuthValue, u.HermesChat.AuthValue)
 	}
 	if u.HermesPush != nil {
 		if cur.HermesPush == nil {
 			cur.HermesPush = &ServiceHermesPush{}
 		}
-		if u.HermesPush.Token != nil {
-			cur.HermesPush.Token = *u.HermesPush.Token
-			changed = true
-		}
+		apply(&cur.HermesPush.Token, u.HermesPush.Token)
 	}
 	if !changed {
 		c.boardMu.Unlock()

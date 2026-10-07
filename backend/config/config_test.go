@@ -1775,6 +1775,18 @@ func TestSetServicesUnchangedValueIsANoop(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Errorf("unchanged update altered the board file: %s -> %s", before, after)
 	}
+	// Pin that the unchanged update wrote nothing at all: make the board
+	// file impossible to replace, and the same-value update must still
+	// succeed (a write would fail with ErrBoardFileNotWritable).
+	if err := os.Rename(file, file+".orig"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetServices(&ServicesUpdate{HermesPush: &ServiceHermesPushUpdate{Token: svcStrPtr("push-ui")}}); err != nil {
+		t.Errorf("unchanged update with an unwritable board file = %v, want a no-op success", err)
+	}
 }
 
 func TestSetServicesNoBoardFile(t *testing.T) {

@@ -525,8 +525,8 @@ function HASection({
 
       {haOff ? (
         <p className="note">
-          Home Assistant is not configured. Set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN and
-          restart the server to add tiles.
+          Home Assistant is not configured. Set the Home Assistant URL and token in Settings →
+          Services to add tiles.
         </p>
       ) : (
         <form
@@ -881,7 +881,7 @@ function ServicesSection({
           {fieldRow(
             'google.service_account_file',
             'Service account key',
-            'Key file path (or inline JSON) of the Google service account.',
+            'Key file path of the Google service account (a file the backend can read).',
             services.google.service_account_file,
             false,
           )}
