@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -60,25 +61,98 @@ type HAEmbed struct {
 	TokenURL bool `json:"token_url"`
 }
 
-// Views is the dashboard's tile layout: which of the four board tiles are
-// shown, in what order, how the Calendar tile renders, and how big each
-// tile is on the board.
+// Views is the dashboard's tile layout: which board tiles are shown, in
+// what order, how the Calendar tile renders, how big each tile is, where
+// each tile sits on the grid, and which Home Assistant tiles exist.
 type Views struct {
-	// Order lists the view IDs in board order: the reading order of the
+	// Order lists the tile IDs in board order: the reading order of the
 	// tile grid (row by row, left to right). After normalization it is
-	// always a permutation of the four view IDs, even for hidden views
-	// (they stay in place, so re-showing restores the position).
+	// always a permutation of the board tile IDs (the four view IDs plus
+	// the Home Assistant tile IDs), even for hidden tiles (they stay in
+	// place, so re-showing restores the position).
 	Order []string `json:"order"`
-	// Hidden is the set of view IDs hidden from the board (a subset of the
-	// view IDs). A hidden view is not rendered and needs no data polling.
+	// Hidden is the set of tile IDs hidden from the board (a subset of the
+	// board tile IDs). A hidden tile is not rendered and needs no data
+	// polling.
 	Hidden []string `json:"hidden"`
 	// CalendarMode is how the Calendar view renders: "month" is the
 	// month grid, "schedule" a chronological list of upcoming events.
 	CalendarMode string `json:"calendar_mode"`
-	// Sizes maps each view ID to its tile size step ("s", "m", "l", "xl":
-	// the column span on the board's 6-column grid). After normalization
-	// it always holds every view ID with a valid step.
+	// Sizes maps each tile ID to its tile size step ("s", "m", "l", "xl":
+	// the column span on the board's 6-column grid) — the width of a tile
+	// without explicit geometry. After normalization it always holds
+	// every board tile ID with a valid step.
 	Sizes map[string]string `json:"sizes"`
+	// Geometry maps a tile ID to its explicit grid placement (where the
+	// tile starts on the 6-column grid and how far it spans). Tiles
+	// without an entry (or with a repaired entry) keep auto-placement: they
+	// flow in board order at their size step's width. After normalization
+	// the entries are always in bounds and overlap-free.
+	Geometry GeometryMap `json:"geometry,omitempty"`
+	// HATiles is the set of Home Assistant board tiles; each one's ID is a
+	// board tile ID alongside the four view IDs. After normalization the
+	// list holds only valid entries with distinct IDs.
+	HATiles []HABoardTile `json:"ha_tiles,omitempty"`
+}
+
+// TileGeometry is a tile's explicit grid placement on the board's
+// 6-column grid: the 1-based column (X) and row (Y) where the tile
+// starts, its column span (W) and row span (H). The board's rows are
+// unbounded (it grows downward as needed), so only the column bounds are
+// closed: 1 <= X <= 7-W, 1 <= W <= 6, Y >= 1, H >= 1.
+type TileGeometry struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+// GeometryMap is the board file's per-tile geometry map. Values that do
+// not decode as {x, y, w, h} objects (unknown units: a string, a bare
+// number, a missing field of the wrong type) are dropped on load instead
+// of failing the board file — the board file is a freehand-editable
+// surface, and normalization repairs the rest. The tile then falls back
+// to auto placement.
+type GeometryMap map[string]*TileGeometry
+
+// UnmarshalJSON decodes the geometry map, dropping entries whose value
+// is not a valid {x, y, w, h} object.
+func (m *GeometryMap) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	out := GeometryMap{}
+	for id, v := range raw {
+		if string(v) == "null" {
+			continue // null is "no placement"; not persisted
+		}
+		var g TileGeometry
+		if err := json.Unmarshal(v, &g); err != nil {
+			continue // unknown unit: repair by dropping the entry
+		}
+		out[id] = &g
+	}
+	*m = out
+	return nil
+}
+
+// HABoardTile is a Home Assistant board tile: it binds one HA entity, has
+// a display label, and a kind. A "button" tile performs a standard action
+// on the entity when clicked; a "visual" tile shows the entity's current
+// state, refreshed with the board's polling.
+type HABoardTile struct {
+	// ID is the tile's board ID: "ha-" plus a lowercase alphanumeric
+	// suffix (e.g. "ha-1"). The prefix keeps it clear of the four view
+	// IDs.
+	ID string `json:"id"`
+	// Entity is the Home Assistant entity ID the tile binds to.
+	Entity string `json:"entity"`
+	// Label is the tile's display label; empty falls back to the entity's
+	// configured label / friendly name.
+	Label string `json:"label"`
+	// Kind is "button" or "visual".
+	Kind string `json:"kind"`
 }
 
 // The four board views, in the default board order (the tile grid's
@@ -105,6 +179,23 @@ const (
 var viewIDs = []string{ViewCalendar, ViewChat, ViewHome, ViewPush}
 
 var viewSizes = []string{ViewSizeSmall, ViewSizeMedium, ViewSizeLarge, ViewSizeXLarge}
+
+// BoardGridCols is the width (in columns) of the board's tile grid.
+const BoardGridCols = 6
+
+// The Home Assistant tile kinds.
+const (
+	HATileButton = "button"
+	HATileVisual = "visual"
+)
+
+// HATileIDPrefix is the required prefix of Home Assistant tile IDs, so a
+// tile ID never collides with the four view IDs.
+const HATileIDPrefix = "ha-"
+
+// haTileIDSuffixBound caps the suffix length of an HA tile ID ("ha-" plus
+// up to 16 lowercase alphanumeric characters).
+const haTileIDSuffixBound = 16
 
 // GoogleConfig carries the Google Calendar credential settings. It is a
 // type alias for calendar.GoogleSettings so the loaded config and the
@@ -348,7 +439,8 @@ func defaultViewSizes() map[string]string {
 
 // DefaultViews returns the default tile layout: all four views in the
 // original board order, none hidden, month-grid calendar, every tile at
-// the default size. Absent configuration behaves exactly like this.
+// the default size, no HA tiles, no explicit geometry (auto placement).
+// Absent configuration behaves exactly like this.
 func DefaultViews() Views {
 	order := make([]string, len(viewIDs))
 	copy(order, viewIDs)
@@ -357,38 +449,177 @@ func DefaultViews() Views {
 		Hidden:       []string{},
 		CalendarMode: CalendarModeMonth,
 		Sizes:        defaultViewSizes(),
+		Geometry:     map[string]*TileGeometry{},
+		HATiles:      []HABoardTile{},
 	}
+}
+
+// isHATileID reports whether id is a well-formed Home Assistant tile ID:
+// "ha-" plus 1-16 lowercase alphanumeric characters.
+func isHATileID(id string) bool {
+	if !strings.HasPrefix(id, HATileIDPrefix) {
+		return false
+	}
+	suffix := id[len(HATileIDPrefix):]
+	if suffix == "" || len(suffix) > haTileIDSuffixBound {
+		return false
+	}
+	for _, r := range suffix {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isHATileKind(kind string) bool {
+	return kind == HATileButton || kind == HATileVisual
+}
+
+func isValidHATile(t HABoardTile) bool {
+	return isHATileID(t.ID) && t.Entity != "" && isHATileKind(t.Kind)
+}
+
+// tileIDs returns the board's tile IDs: the four view IDs first, then the
+// Home Assistant tile IDs in list order.
+func tileIDs(haTiles []HABoardTile) []string {
+	ids := make([]string, 0, len(viewIDs)+len(haTiles))
+	ids = append(ids, viewIDs...)
+	for _, t := range haTiles {
+		ids = append(ids, t.ID)
+	}
+	return ids
+}
+
+func tileIDSet(ids []string) map[string]bool {
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}
+
+// normalizeHATiles repairs a stored HA tile list: invalid entries (bad ID
+// shape, empty entity, unknown kind) are dropped, and duplicates keep the
+// first occurrence. The result is always a valid (possibly empty) list.
+func normalizeHATiles(raw []HABoardTile) []HABoardTile {
+	out := []HABoardTile{}
+	seen := make(map[string]bool, len(raw))
+	for _, t := range raw {
+		if !isValidHATile(t) || seen[t.ID] {
+			continue
+		}
+		seen[t.ID] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// validGeometry reports whether g is an in-bounds grid placement (the
+// board is 6 columns wide; rows are unbounded).
+func validGeometry(g *TileGeometry) bool {
+	if g == nil {
+		return false
+	}
+	if g.W < 1 || g.W > BoardGridCols {
+		return false
+	}
+	if g.X < 1 || g.X+g.W-1 > BoardGridCols {
+		return false
+	}
+	if g.Y < 1 || g.H < 1 {
+		return false
+	}
+	return true
+}
+
+func geometryOverlaps(a, b *TileGeometry) bool {
+	return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H
+}
+
+// normalizeGeometry repairs the stored placements: an entry is kept only
+// for a known tile ID, in bounds, and non-overlapping with the entries
+// kept before it (processed in board order). A dropped entry leaves the
+// tile auto-placed — exactly the tile's no-geometry behavior. The result
+// is always a valid, non-overlapping layout.
+func normalizeGeometry(geo map[string]*TileGeometry, order []string, known map[string]bool) map[string]*TileGeometry {
+	out := map[string]*TileGeometry{}
+	kept := make([]*TileGeometry, 0, len(order))
+	for _, id := range order {
+		if !known[id] {
+			continue
+		}
+		g, ok := geo[id]
+		if !ok || !validGeometry(g) {
+			continue
+		}
+		p := *g
+		clash := false
+		for _, k := range kept {
+			if geometryOverlaps(&p, k) {
+				clash = true
+				break
+			}
+		}
+		if clash {
+			continue
+		}
+		out[id] = &p
+		kept = append(kept, &p)
+	}
+	return out
 }
 
 // ViewConfig returns the effective tile layout: defaults filled in and
 // stored values repaired (the board file is a freehand-editable config
 // surface), so the result is always usable — order is a permutation of the
-// four view IDs, hidden holds only known IDs, calendar_mode is "month"
-// or "schedule", and sizes holds a valid step for every view ID. Safe to
-// read while the board mutates.
+// board tile IDs (the four view IDs plus the HA tile IDs), hidden holds
+// only known IDs, calendar_mode is "month" or "schedule", sizes holds a
+// valid step for every tile ID, geometry holds only in-bounds
+// non-overlapping placements (a repaired entry falls back to auto
+// placement), and ha_tiles holds only valid entries with distinct IDs.
+// Safe to read while the board mutates.
 func (c *Config) ViewConfig() Views {
 	c.boardMu.RLock()
 	defer c.boardMu.RUnlock()
 	return normalizeViews(c.Board.Views)
 }
 
-// SetViews applies the provided view-layout fields (nil = keep the current
-// effective value), validates them, persists the whole board to the board
-// file, and updates the in-memory board only after the write succeeds, so
-// a failed write leaves the running config (and the file) unchanged.
-// The sizes argument is a per-tile map of the entries to change (view ID
-// to size step); entries the map omits keep their current effective size.
-// Mirrors SetRefreshSeconds: a validation error is returned as-is, and a
-// persistence failure is wrapped in ErrBoardFileNotWritable (an absent
-// board file path is ErrNoBoardFile).
-func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[string]string) error {
+// SetViews applies the provided tile-layout fields (nil = keep the
+// current effective value), validates them, persists the whole board to
+// the board file, and updates the in-memory board only after the write
+// succeeds, so a failed write leaves the running config (and the file)
+// unchanged. The sizes argument is a per-tile map of the entries to
+// change (tile ID to size step); entries it omits keep their current size.
+// The geometry argument is a per-tile map of the placements to change
+// (a nil entry clears the tile's geometry, back to auto placement); tiles
+// it omits keep their current placement. The haTiles argument replaces
+// the Home Assistant tile list. Overlapping placements are not a write
+// error: normalization repairs them to a valid board (the offending tile
+// falls back to auto placement). Mirrors SetRefreshSeconds: a validation
+// error is returned as-is, and a persistence failure is wrapped in
+// ErrBoardFileNotWritable (an absent board file path is ErrNoBoardFile).
+func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[string]string, geometry *map[string]*TileGeometry, haTiles *[]HABoardTile) error {
+	// Validation runs against the prospective tile ID set: the incoming
+	// HA tiles when provided, the currently effective ones otherwise.
+	var effHA []HABoardTile
+	if haTiles != nil {
+		effHA = normalizeHATiles(*haTiles)
+		if err := checkHATiles(*haTiles); err != nil {
+			return err
+		}
+	} else {
+		effHA = normalizeViews(c.BoardSnapshot().Views).HATiles
+	}
+	ids := tileIDSet(tileIDs(effHA))
 	if order != nil {
-		if err := checkViewOrder(*order); err != nil {
+		if err := checkViewOrder(*order, ids); err != nil {
 			return err
 		}
 	}
 	if hidden != nil {
-		if err := checkViewHidden(*hidden); err != nil {
+		if err := checkViewHidden(*hidden, ids); err != nil {
 			return err
 		}
 	}
@@ -398,7 +629,12 @@ func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[stri
 		}
 	}
 	if sizes != nil {
-		if err := checkViewSizes(*sizes); err != nil {
+		if err := checkViewSizes(*sizes, ids); err != nil {
+			return err
+		}
+	}
+	if geometry != nil {
+		if err := checkGeometry(*geometry, ids); err != nil {
 			return err
 		}
 	}
@@ -406,8 +642,10 @@ func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[stri
 		return ErrNoBoardFile
 	}
 	c.boardMu.Lock()
-	updated := c.Board
-	views := normalizeViews(updated.Views)
+	views := normalizeViews(c.Board.Views)
+	if haTiles != nil {
+		views.HATiles = append([]HABoardTile{}, (*haTiles)...) // definitions replaced
+	}
 	if order != nil {
 		views.Order = append([]string{}, *order...)
 	}
@@ -422,8 +660,24 @@ func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[stri
 			views.Sizes[id] = size
 		}
 	}
-	v := views
-	updated.Views = &v
+	if geometry != nil {
+		if views.Geometry == nil {
+			views.Geometry = map[string]*TileGeometry{}
+		}
+		for id, g := range *geometry {
+			if g == nil {
+				delete(views.Geometry, id) // nil clears the tile's geometry
+				continue
+			}
+			views.Geometry[id] = g
+		}
+	}
+	updated := c.Board
+	// Final normalization over the finished layout: repairs order/hidden/
+	// sizes to the final tile set and drops out-of-bounds or overlapping
+	// placements (their tiles fall back to auto placement).
+	final := normalizeViews(&views)
+	updated.Views = &final
 	err := WriteBoardFile(c.BoardFile, updated)
 	if err == nil {
 		c.Board = updated
@@ -444,29 +698,30 @@ func isViewID(id string) bool {
 	return false
 }
 
-// checkViewOrder reports whether order is a permutation of the four view
-// IDs (every view exactly once, no others).
-func checkViewOrder(order []string) error {
-	if len(order) != len(viewIDs) {
-		return fmt.Errorf("views.order must list each of calendar, chat, home, push exactly once")
+// checkViewOrder reports whether order is a permutation of the board's
+// tile IDs (the four view IDs plus the HA tile IDs; every tile exactly
+// once, no others).
+func checkViewOrder(order []string, ids map[string]bool) error {
+	if len(order) != len(ids) {
+		return fmt.Errorf("views.order must list each board tile ID (the four view IDs plus every views.ha_tiles id) exactly once")
 	}
 	seen := make(map[string]bool, len(order))
 	for _, id := range order {
-		if !isViewID(id) || seen[id] {
-			return fmt.Errorf("views.order must be a permutation of calendar, chat, home, push")
+		if !ids[id] || seen[id] {
+			return fmt.Errorf("views.order must be a permutation of the board tile IDs (the four view IDs plus every views.ha_tiles id)")
 		}
 		seen[id] = true
 	}
 	return nil
 }
 
-// checkViewHidden reports whether hidden is a set of distinct known view
-// IDs (empty is valid: everything visible).
-func checkViewHidden(hidden []string) error {
+// checkViewHidden reports whether hidden is a set of distinct known board
+// tile IDs (empty is valid: everything visible).
+func checkViewHidden(hidden []string, ids map[string]bool) error {
 	seen := make(map[string]bool, len(hidden))
 	for _, id := range hidden {
-		if !isViewID(id) || seen[id] {
-			return fmt.Errorf("views.hidden may only contain distinct known view IDs (calendar, chat, home, push)")
+		if !ids[id] || seen[id] {
+			return fmt.Errorf("views.hidden may only contain distinct board tile IDs (the four view IDs and the views.ha_tiles ids)")
 		}
 		seen[id] = true
 	}
@@ -490,12 +745,13 @@ func isViewSize(size string) bool {
 	return false
 }
 
-// checkViewSizes reports whether sizes is a per-tile map of known view IDs
-// to valid size steps (an empty map is valid: it changes nothing).
-func checkViewSizes(sizes map[string]string) error {
+// checkViewSizes reports whether sizes is a per-tile map of known board
+// tile IDs to valid size steps (an empty map is valid: it changes
+// nothing).
+func checkViewSizes(sizes map[string]string, ids map[string]bool) error {
 	for id, size := range sizes {
-		if !isViewID(id) {
-			return fmt.Errorf("views.sizes keys may only be the view IDs (calendar, chat, home, push)")
+		if !ids[id] {
+			return fmt.Errorf("views.sizes keys may only be board tile IDs (the four view IDs or a views.ha_tiles id)")
 		}
 		if !isViewSize(size) {
 			return fmt.Errorf("views.sizes.%s must be one of s, m, l, xl", id)
@@ -504,26 +760,76 @@ func checkViewSizes(sizes map[string]string) error {
 	return nil
 }
 
-// normalizeViews fills in defaults and repairs stored values: order becomes
-// a permutation of the four view IDs (known IDs in stored order first,
-// missing IDs appended in default order), hidden keeps only known distinct
-// IDs, calendar_mode falls back to "month", and sizes becomes a complete
-// map of every view ID to a valid step (unknown keys dropped, absent or
-// invalid values fall back to the default step "m").
+// checkHATiles reports whether tiles is a valid Home Assistant tile list:
+// each entry needs a well-formed "ha-"-prefixed ID, a non-empty entity, a
+// supported kind, and IDs must be distinct.
+func checkHATiles(tiles []HABoardTile) error {
+	seen := make(map[string]bool, len(tiles))
+	for _, t := range tiles {
+		if !isHATileID(t.ID) {
+			return fmt.Errorf("views.ha_tiles ids must be %q followed by 1-16 lowercase alphanumeric characters (e.g. ha-1)", HATileIDPrefix)
+		}
+		if t.Entity == "" {
+			return fmt.Errorf("views.ha_tiles entry %s: entity is required", t.ID)
+		}
+		if !isHATileKind(t.Kind) {
+			return fmt.Errorf("views.ha_tiles entry %s: kind must be %q or %q", t.ID, HATileButton, HATileVisual)
+		}
+		if seen[t.ID] {
+			return fmt.Errorf("views.ha_tiles ids must be distinct (duplicate %s)", t.ID)
+		}
+		seen[t.ID] = true
+	}
+	return nil
+}
+
+// checkGeometry reports whether geometry is a per-tile map of known board
+// tile IDs to in-bounds placements (a nil value is valid: it clears the
+// tile's geometry; an empty map is valid: it changes nothing). Overlaps
+// are not a write error — normalization repairs them.
+func checkGeometry(geometry map[string]*TileGeometry, ids map[string]bool) error {
+	for id, g := range geometry {
+		if !ids[id] {
+			return fmt.Errorf("views.geometry keys may only be board tile IDs (the four view IDs or a views.ha_tiles id)")
+		}
+		if g == nil {
+			continue
+		}
+		if !validGeometry(g) {
+			return fmt.Errorf("views.geometry.%s must be {x, y, w, h} within the board's %d-column grid (1 <= w <= %d, 1 <= x <= %d-w, y >= 1, h >= 1)", id, BoardGridCols, BoardGridCols, BoardGridCols+1)
+		}
+	}
+	return nil
+}
+
+// normalizeViews fills in defaults and repairs stored values: ha_tiles
+// keeps only valid entries with distinct IDs, order becomes a permutation
+// of the board tile IDs (the four view IDs plus the HA tile IDs; known IDs
+// in stored order first, missing IDs appended in default order), hidden
+// keeps only known distinct IDs, calendar_mode falls back to "month", sizes
+// becomes a complete map of every board tile ID to a valid step (unknown
+// keys dropped, absent or invalid values fall back to the default step
+// "m"), and geometry keeps only in-bounds, non-overlapping placements for
+// known tiles (processed in board order; a dropped entry leaves the tile
+// auto-placed).
 func normalizeViews(v *Views) Views {
 	out := DefaultViews()
 	if v == nil {
 		return out
 	}
-	order := make([]string, 0, len(viewIDs))
-	seen := make(map[string]bool, len(viewIDs))
+	haTiles := normalizeHATiles(v.HATiles)
+	ids := tileIDs(haTiles)
+	known := tileIDSet(ids)
+
+	order := make([]string, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
 	for _, id := range v.Order {
-		if isViewID(id) && !seen[id] {
+		if known[id] && !seen[id] {
 			order = append(order, id)
 			seen[id] = true
 		}
 	}
-	for _, id := range viewIDs {
+	for _, id := range ids {
 		if !seen[id] {
 			order = append(order, id)
 		}
@@ -532,7 +838,7 @@ func normalizeViews(v *Views) Views {
 	out.Hidden = []string{}
 	seenH := make(map[string]bool, len(v.Hidden))
 	for _, id := range v.Hidden {
-		if isViewID(id) && !seenH[id] {
+		if known[id] && !seenH[id] {
 			out.Hidden = append(out.Hidden, id)
 			seenH[id] = true
 		}
@@ -541,11 +847,16 @@ func normalizeViews(v *Views) Views {
 		out.CalendarMode = CalendarModeSchedule
 	}
 	out.Sizes = defaultViewSizes()
+	for _, t := range haTiles {
+		out.Sizes[t.ID] = ViewSizeMedium
+	}
 	for id, size := range v.Sizes {
-		if isViewID(id) && isViewSize(size) {
+		if known[id] && isViewSize(size) {
 			out.Sizes[id] = size
 		}
 	}
+	out.Geometry = normalizeGeometry(v.Geometry, order, known)
+	out.HATiles = haTiles
 	return out
 }
 

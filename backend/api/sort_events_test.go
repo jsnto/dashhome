@@ -35,7 +35,7 @@ func TestListEventsChronologicalAcrossCalendars(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.Board.Calendars = []config.CalendarRef{} // no filter: all calendars, A first
-	r := newServer(t, cfg, g, nil, nil, nil)
+	r := newServer(t, cfg, g, nil, nil, nil, nil)
 
 	w := do(r, "GET", "/api/events?start=2026-01-01T00:00:00Z&end=2026-01-31T23:59:59Z", nil, nil)
 	if w.Code != 200 {

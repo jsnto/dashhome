@@ -711,7 +711,7 @@ func TestSetViewsRoundTrip(t *testing.T) {
 	hidden := []string{ViewHome}
 	mode := CalendarModeSchedule
 	sizes := map[string]string{ViewCalendar: ViewSizeLarge, ViewPush: ViewSizeXLarge}
-	if err := cfg.SetViews(&order, &hidden, &mode, &sizes); err != nil {
+	if err := cfg.SetViews(&order, &hidden, &mode, &sizes, nil, nil); err != nil {
 		t.Fatalf("SetViews: %v", err)
 	}
 
@@ -774,7 +774,7 @@ func TestSetViewsPartialUpdate(t *testing.T) {
 
 	// Only the mode changes; order and hidden keep their stored values.
 	mode := CalendarModeMonth
-	if err := cfg.SetViews(nil, nil, &mode, nil); err != nil {
+	if err := cfg.SetViews(nil, nil, &mode, nil, nil, nil); err != nil {
 		t.Fatalf("SetViews(mode): %v", err)
 	}
 	v := cfg.ViewConfig()
@@ -785,7 +785,7 @@ func TestSetViewsPartialUpdate(t *testing.T) {
 
 	// Only the order changes.
 	order := []string{ViewPush, ViewChat, ViewHome, ViewCalendar}
-	if err := cfg.SetViews(&order, nil, nil, nil); err != nil {
+	if err := cfg.SetViews(&order, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("SetViews(order): %v", err)
 	}
 	v = cfg.ViewConfig()
@@ -795,7 +795,7 @@ func TestSetViewsPartialUpdate(t *testing.T) {
 
 	// An empty hidden list clears the hidden set.
 	empty := []string{}
-	if err := cfg.SetViews(nil, &empty, nil, nil); err != nil {
+	if err := cfg.SetViews(nil, &empty, nil, nil, nil, nil); err != nil {
 		t.Fatalf("SetViews(hidden=[]): %v", err)
 	}
 	v = cfg.ViewConfig()
@@ -806,7 +806,7 @@ func TestSetViewsPartialUpdate(t *testing.T) {
 	// Only one tile's size changes; the other tiles keep their effective
 	// sizes (the board file set no sizes at all, so they are the default).
 	oneSize := map[string]string{ViewChat: ViewSizeSmall}
-	if err := cfg.SetViews(nil, nil, nil, &oneSize); err != nil {
+	if err := cfg.SetViews(nil, nil, nil, &oneSize, nil, nil); err != nil {
 		t.Fatalf("SetViews(sizes): %v", err)
 	}
 	v = cfg.ViewConfig()
@@ -821,7 +821,7 @@ func TestSetViewsPartialUpdate(t *testing.T) {
 
 	// An empty sizes map changes nothing.
 	none := map[string]string{}
-	if err := cfg.SetViews(nil, nil, nil, &none); err != nil {
+	if err := cfg.SetViews(nil, nil, nil, &none, nil, nil); err != nil {
 		t.Fatalf("SetViews(sizes={}): %v", err)
 	}
 	if !mapsEqual(cfg.ViewConfig().Sizes, v.Sizes) {
@@ -851,7 +851,7 @@ func TestSetViewsInvalidLeavesStateUntouched(t *testing.T) {
 	}
 	before := cfg.ViewConfig()
 	for _, tc := range cases {
-		err := cfg.SetViews(nilIfNil(tc.order), nilIfNil(tc.hidden), tc.m, tc.sizes)
+		err := cfg.SetViews(nilIfNil(tc.order), nilIfNil(tc.hidden), tc.m, tc.sizes, nil, nil)
 		if err == nil {
 			t.Fatalf("%s: unexpected success", tc.name)
 		}
@@ -889,7 +889,7 @@ func ptrSizes(m map[string]string) *map[string]string { return &m }
 func TestSetViewsNoBoardFile(t *testing.T) {
 	cfg := &Config{}
 	order := []string{ViewCalendar, ViewChat, ViewHome, ViewPush}
-	if err := cfg.SetViews(&order, nil, nil, nil); !errors.Is(err, ErrNoBoardFile) {
+	if err := cfg.SetViews(&order, nil, nil, nil, nil, nil); !errors.Is(err, ErrNoBoardFile) {
 		t.Errorf("err = %v, want ErrNoBoardFile", err)
 	}
 }
@@ -902,7 +902,7 @@ func TestSetViewsDirectoryPathIsNotWritable(t *testing.T) {
 	}
 	cfg := &Config{BoardFile: file}
 	order := []string{ViewChat, ViewCalendar, ViewHome, ViewPush}
-	if err := cfg.SetViews(&order, nil, nil, nil); !errors.Is(err, ErrBoardFileNotWritable) {
+	if err := cfg.SetViews(&order, nil, nil, nil, nil, nil); !errors.Is(err, ErrBoardFileNotWritable) {
 		t.Fatalf("err = %v, want ErrBoardFileNotWritable", err)
 	}
 	v := cfg.ViewConfig()
@@ -916,7 +916,7 @@ func TestSetRefreshSecondsPreservesViews(t *testing.T) {
 	order := []string{ViewChat, ViewHome, ViewPush, ViewCalendar}
 	hidden := []string{ViewPush}
 	mode := CalendarModeSchedule
-	if err := cfg.SetViews(&order, &hidden, &mode, nil); err != nil {
+	if err := cfg.SetViews(&order, &hidden, &mode, nil, nil, nil); err != nil {
 		t.Fatalf("SetViews: %v", err)
 	}
 	if err := cfg.SetRefreshSeconds(60); err != nil {
@@ -929,5 +929,329 @@ func TestSetRefreshSecondsPreservesViews(t *testing.T) {
 	data, _ := os.ReadFile(file)
 	if !strings.Contains(string(data), `"calendar_mode": "schedule"`) {
 		t.Errorf("views not preserved on disk: %s", data)
+	}
+}
+
+// --- geometry + HA tiles ---------------------------------------------------
+
+func geoMap(m map[string]*TileGeometry) *map[string]*TileGeometry { return &m }
+
+func geom(x, y, w, h int) *TileGeometry { return &TileGeometry{X: x, Y: y, W: w, H: h} }
+
+func TestViewConfigDefaultsNoGeometryNoHATiles(t *testing.T) {
+	cfg, _ := viewsCfg(t, `{}`)
+	v := cfg.ViewConfig()
+	if len(v.Geometry) != 0 {
+		t.Errorf("default geometry = %v, want none (auto placement)", v.Geometry)
+	}
+	if len(v.HATiles) != 0 {
+		t.Errorf("default ha_tiles = %v, want none", v.HATiles)
+	}
+	if !mapsEqual(v.Sizes, defaultSizes()) {
+		t.Errorf("default sizes = %v", v.Sizes)
+	}
+	if !sameStrings(v.Order, []string{ViewCalendar, ViewChat, ViewHome, ViewPush}) {
+		t.Errorf("default order = %v", v.Order)
+	}
+}
+
+func TestViewConfigRepairsGeometryAndHATiles(t *testing.T) {
+	cfg, _ := viewsCfg(t, `{
+		"views": {
+			"order": ["chat", "ha-1", "calendar", "ha-2", "push", "home", "stale-ha"],
+			"hidden": ["ha-1", "nope"],
+			"calendar_mode": "month",
+			"sizes": {"calendar": "l", "ha-1": "s", "bogus": "xl"},
+			"geometry": {
+				"calendar": {"x": 1, "y": 1, "w": 3, "h": 2},
+				"chat": {"x": 4, "y": 1, "w": 3, "h": 2},
+				"home": {"x": 3, "y": 1, "w": 4, "h": 1},
+				"push": {"x": 8, "y": 1, "w": 2, "h": 1},
+				"ha-1": {"x": 1, "y": 2, "w": 1, "h": 0},
+				"ha-2": "wobbly",
+				"stale-ha": {"x": 1, "y": 1, "w": 1, "h": 1}
+			},
+			"ha_tiles": [
+				{"id": "ha-1", "entity": "light.kitchen", "label": "Kitchen", "kind": "button"},
+				{"id": "ha-1", "entity": "light.dup", "label": "Dup", "kind": "visual"},
+				{"id": "ha-2", "entity": "sensor.temp", "label": "", "kind": "visual"},
+				{"id": "nope", "entity": "sensor.bad", "label": "", "kind": "button"},
+				{"id": "ha-3", "entity": "", "label": "", "kind": "button"},
+				{"id": "ha-4", "entity": "switch.x", "label": "", "kind": "grid"}
+			]
+		}
+	}`)
+	v := cfg.ViewConfig()
+
+	// ha_tiles: deduped and invalid entries dropped.
+	if len(v.HATiles) != 2 {
+		t.Fatalf("repaired ha_tiles = %+v, want 2 entries", v.HATiles)
+	}
+	if v.HATiles[0].ID != "ha-1" || v.HATiles[0].Entity != "light.kitchen" || v.HATiles[0].Kind != HATileButton {
+		t.Errorf("ha-1 = %+v", v.HATiles[0])
+	}
+	if v.HATiles[1].ID != "ha-2" || v.HATiles[1].Entity != "sensor.temp" || v.HATiles[1].Kind != HATileVisual {
+		t.Errorf("ha-2 = %+v", v.HATiles[1])
+	}
+
+	// order: the stale HA ID is dropped, the known set is a permutation.
+	if !sameStrings(v.Order, []string{ViewChat, "ha-1", ViewCalendar, "ha-2", ViewPush, ViewHome}) {
+		t.Errorf("repaired order = %v", v.Order)
+	}
+	// hidden: only the known HA ID survives.
+	if !sameStrings(v.Hidden, []string{"ha-1"}) {
+		t.Errorf("repaired hidden = %v", v.Hidden)
+	}
+	// sizes: every board tile ID holds a valid step; the unknown key is
+	// dropped, absent tiles fall back to the default.
+	if !mapsEqual(v.Sizes, map[string]string{
+		ViewCalendar: ViewSizeLarge,
+		ViewChat:     ViewSizeMedium,
+		ViewHome:     ViewSizeMedium,
+		ViewPush:     ViewSizeMedium,
+		"ha-1":       ViewSizeSmall,
+		"ha-2":       ViewSizeMedium,
+	}) {
+		t.Errorf("repaired sizes = %v", v.Sizes)
+	}
+
+	// geometry: the valid non-overlapping entries are kept (calendar and
+	// chat are the two halves of row 1-2); home overlaps calendar (it is
+	// later in the board order), push is out of bounds, ha-1 has a zero
+	// height, ha-2 is not an object, and stale-ha is no longer a known
+	// tile. Every repaired tile is auto-placed.
+	if len(v.Geometry) != 2 {
+		t.Fatalf("repaired geometry = %+v, want 2 entries", v.Geometry)
+	}
+	if g := v.Geometry[ViewCalendar]; g == nil || g.X != 1 || g.Y != 1 || g.W != 3 || g.H != 2 {
+		t.Errorf("calendar geometry = %+v", g)
+	}
+	if g := v.Geometry[ViewChat]; g == nil || g.X != 4 || g.Y != 1 || g.W != 3 || g.H != 2 {
+		t.Errorf("chat geometry = %+v", g)
+	}
+}
+
+func TestSetViewsGeometryAndHATilesRoundTrip(t *testing.T) {
+	cfg, file := viewsCfg(t, `{"refresh_seconds": 45}`)
+	order := []string{ViewChat, ViewHome, "ha-1", ViewPush, ViewCalendar}
+	geometry := map[string]*TileGeometry{
+		ViewChat:     geom(1, 1, 3, 1),
+		ViewHome:     geom(4, 1, 3, 2),
+		"ha-1":       geom(1, 2, 2, 1),
+		ViewPush:     geom(3, 2, 1, 1),
+		ViewCalendar: geom(1, 3, 2, 1),
+	}
+	haTiles := []HABoardTile{
+		{ID: "ha-1", Entity: "light.kitchen", Label: "Kitchen", Kind: HATileButton},
+		{ID: "ha-2", Entity: "sensor.temp", Label: "Temp", Kind: HATileVisual},
+	}
+	order = append(order, "ha-2")
+	if err := cfg.SetViews(&order, nil, nil, nil, geoMap(geometry), &haTiles); err != nil {
+		t.Fatalf("SetViews: %v", err)
+	}
+
+	v := cfg.ViewConfig()
+	if !sameStrings(v.Order, order) {
+		t.Errorf("in-memory order = %v", v.Order)
+	}
+	if len(v.HATiles) != 2 {
+		t.Errorf("in-memory ha_tiles = %+v", v.HATiles)
+	}
+	if len(v.Geometry) != 5 {
+		t.Errorf("in-memory geometry = %+v", v.Geometry)
+	}
+	// ha-2 has no geometry: it stays auto-placed (no entry).
+	if _, ok := v.Geometry["ha-2"]; ok {
+		t.Errorf("ha-2 must not gain geometry: %+v", v.Geometry)
+	}
+
+	// Persisted to the board file, other fields preserved.
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk Board
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("board file not valid JSON: %v: %s", err, data)
+	}
+	if onDisk.Views == nil || len(onDisk.Views.HATiles) != 2 || len(onDisk.Views.Geometry) != 5 {
+		t.Errorf("geometry/ha_tiles not written to the board file: %s", data)
+	}
+	if !strings.Contains(string(data), `"refresh_seconds": 45`) {
+		t.Errorf("other board fields not preserved: %s", data)
+	}
+
+	// A fresh Load sees the persisted layout.
+	t.Setenv("CONFIG_FILE", file)
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := reloaded.ViewConfig()
+	if !sameStrings(v2.Order, order) || len(v2.HATiles) != 2 {
+		t.Errorf("reloaded views = %+v", v2)
+	}
+	for id, g := range v.Geometry {
+		if g2 := v2.Geometry[id]; g2 == nil || *g2 != *g {
+			t.Errorf("reloaded geometry[%s] = %+v, want %+v", id, g2, g)
+		}
+	}
+}
+
+func TestSetViewsGeometryMergeAndClear(t *testing.T) {
+	cfg, _ := viewsCfg(t, `{"views": {"geometry": {"calendar": {"x": 1, "y": 1, "w": 3, "h": 1}, "chat": {"x": 4, "y": 1, "w": 3, "h": 2}}}}`)
+
+	// Only one tile's placement changes; the other keeps its placement.
+	if err := cfg.SetViews(nil, nil, nil, nil, geoMap(map[string]*TileGeometry{ViewHome: geom(1, 2, 3, 1)}), nil); err != nil {
+		t.Fatalf("SetViews(geometry): %v", err)
+	}
+	v := cfg.ViewConfig()
+	if len(v.Geometry) != 3 {
+		t.Fatalf("geometry = %+v, want the three placements", v.Geometry)
+	}
+	if g := v.Geometry[ViewCalendar]; g == nil || g.X != 1 || g.W != 3 {
+		t.Errorf("calendar kept = %+v", g)
+	}
+
+	// A nil entry clears a tile's geometry (back to auto placement); the
+	// other entries survive.
+	clear := map[string]*TileGeometry{ViewChat: nil}
+	if err := cfg.SetViews(nil, nil, nil, nil, geoMap(clear), nil); err != nil {
+		t.Fatalf("SetViews(clear): %v", err)
+	}
+	v = cfg.ViewConfig()
+	if _, ok := v.Geometry[ViewChat]; ok {
+		t.Errorf("chat geometry not cleared: %+v", v.Geometry)
+	}
+	if len(v.Geometry) != 2 {
+		t.Errorf("geometry = %+v, want the two remaining placements", v.Geometry)
+	}
+
+	// An empty geometry map changes nothing.
+	if err := cfg.SetViews(nil, nil, nil, nil, geoMap(map[string]*TileGeometry{}), nil); err != nil {
+		t.Fatalf("SetViews(geometry={}): %v", err)
+	}
+	if len(cfg.ViewConfig().Geometry) != 2 {
+		t.Errorf("empty geometry map changed the geometry: %+v", cfg.ViewConfig().Geometry)
+	}
+}
+
+func TestSetViewsOverlappingGeometryIsRepaired(t *testing.T) {
+	// Overlaps are not a write error: the board is repaired instead
+	// (the later tile in board order falls back to auto placement), so
+	// the endpoint keeps its 400/503 contract for validation errors only.
+	cfg, _ := viewsCfg(t, `{}`)
+	geometry := map[string]*TileGeometry{
+		ViewCalendar: geom(1, 1, 4, 2),
+		ViewChat:     geom(3, 1, 4, 2), // overlaps calendar
+		ViewHome:     geom(1, 3, 6, 1),
+	}
+	if err := cfg.SetViews(nil, nil, nil, nil, geoMap(geometry), nil); err != nil {
+		t.Fatalf("SetViews(overlapping): %v", err)
+	}
+	v := cfg.ViewConfig()
+	if len(v.Geometry) != 2 {
+		t.Fatalf("repaired geometry = %+v, want calendar and home kept", v.Geometry)
+	}
+	if _, ok := v.Geometry[ViewChat]; ok {
+		t.Errorf("overlapping chat geometry not repaired away: %+v", v.Geometry)
+	}
+}
+
+func TestSetViewsInvalidGeometryAndHATiles(t *testing.T) {
+	cfg, file := viewsCfg(t, `{"refresh_seconds": 45}`)
+	geoCases := []struct {
+		name     string
+		geometry map[string]*TileGeometry
+	}{
+		{"out-of-bounds-x", map[string]*TileGeometry{ViewCalendar: geom(7, 1, 2, 1)}},
+		{"too-wide", map[string]*TileGeometry{ViewCalendar: geom(1, 1, 7, 1)}},
+		{"crosses-edge", map[string]*TileGeometry{ViewCalendar: geom(6, 1, 2, 1)}},
+		{"negative-height", map[string]*TileGeometry{ViewCalendar: geom(1, 1, 3, 0)}},
+		{"zero-width", map[string]*TileGeometry{ViewCalendar: geom(1, 1, 0, 1)}},
+		{"unknown-tile", map[string]*TileGeometry{"nope": geom(1, 1, 1, 1)}},
+	}
+	before := cfg.ViewConfig()
+	for _, tc := range geoCases {
+		err := cfg.SetViews(nil, nil, nil, nil, geoMap(tc.geometry), nil)
+		if err == nil {
+			t.Fatalf("%s: unexpected success", tc.name)
+		}
+		if errors.Is(err, ErrBoardFileNotWritable) || errors.Is(err, ErrNoBoardFile) {
+			t.Errorf("%s: err = %v looks like a storage error, want a validation error", tc.name, err)
+		}
+	}
+
+	haCases := [][]HABoardTile{
+		{{ID: "nope", Entity: "light.x", Kind: HATileButton}},
+		{{ID: "ha-1", Entity: "", Kind: HATileButton}},
+		{{ID: "ha-1", Entity: "light.x", Kind: "grid"}},
+		{{ID: "ha-1", Entity: "light.x", Kind: HATileButton}, {ID: "ha-1", Entity: "light.y", Kind: HATileVisual}},
+	}
+	for i, tiles := range haCases {
+		err := cfg.SetViews(nil, nil, nil, nil, nil, &tiles)
+		if err == nil {
+			t.Fatalf("ha-tiles case %d: unexpected success", i)
+		}
+	}
+
+	// An order that names an unknown HA tile is rejected too.
+	order := []string{ViewCalendar, ViewChat, ViewHome, ViewPush, "ha-nope"}
+	if err := cfg.SetViews(&order, nil, nil, nil, nil, nil); err == nil {
+		t.Fatal("order with unknown HA tile ID: unexpected success")
+	}
+
+	// Validation errors leave the effective layout and the file untouched.
+	after := cfg.ViewConfig()
+	if !sameStrings(after.Order, before.Order) || !sameStrings(after.Hidden, before.Hidden) || after.CalendarMode != before.CalendarMode {
+		t.Errorf("state changed by invalid updates: %+v -> %+v", before, after)
+	}
+	if !mapsEqual(after.Sizes, before.Sizes) {
+		t.Errorf("sizes changed by invalid updates: %v -> %v", before.Sizes, after.Sizes)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"views"`) || strings.Contains(string(data), `"geometry"`) || strings.Contains(string(data), `"ha_tiles"`) {
+		t.Errorf("invalid updates wrote to the board file: %s", data)
+	}
+}
+
+func TestSetViewsHATilesReplacesList(t *testing.T) {
+	cfg, _ := viewsCfg(t, `{
+		"views": {
+			"order": ["calendar", "chat", "home", "push", "ha-1"],
+			"hidden": ["ha-1"],
+			"sizes": {"ha-1": "s"},
+			"geometry": {"ha-1": {"x": 1, "y": 1, "w": 2, "h": 1}},
+			"ha_tiles": [{"id": "ha-1", "entity": "light.old", "label": "Old", "kind": "button"}]
+		}
+	}`)
+	// Replacing the HA tile list with a new tile repairs order/hidden/
+	// sizes/geometry to the new tile set: the stale ID drops out
+	// everywhere and the new ID is appended to the board order.
+	haTiles := []HABoardTile{{ID: "ha-2", Entity: "light.new", Label: "New", Kind: HATileVisual}}
+	if err := cfg.SetViews(nil, nil, nil, nil, nil, &haTiles); err != nil {
+		t.Fatalf("SetViews(ha_tiles): %v", err)
+	}
+	v := cfg.ViewConfig()
+	if !sameStrings(v.Order, []string{ViewCalendar, ViewChat, ViewHome, ViewPush, "ha-2"}) {
+		t.Errorf("order = %v", v.Order)
+	}
+	if len(v.Hidden) != 0 {
+		t.Errorf("hidden = %v, want empty (stale ID dropped)", v.Hidden)
+	}
+	if len(v.HATiles) != 1 || v.HATiles[0].ID != "ha-2" {
+		t.Errorf("ha_tiles = %+v", v.HATiles)
+	}
+	if _, ok := v.Geometry["ha-1"]; ok {
+		t.Errorf("stale geometry entry not dropped: %+v", v.Geometry)
+	}
+	if v.Sizes["ha-2"] != ViewSizeMedium {
+		t.Errorf("new tile size = %q, want the default step", v.Sizes["ha-2"])
+	}
+	if _, ok := v.Sizes["ha-1"]; ok {
+		t.Errorf("stale size entry not dropped: %+v", v.Sizes)
 	}
 }

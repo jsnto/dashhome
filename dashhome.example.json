@@ -16,8 +16,14 @@
     "person.family": "Family"
   },
   "calendars": [
-    { "id": "your.family@gmail.com", "label": "Family" },
-    { "id": "your.work@gmail.com", "label": "Work" }
+    {
+      "id": "your.family@gmail.com",
+      "label": "Family"
+    },
+    {
+      "id": "your.work@gmail.com",
+      "label": "Work"
+    }
   ],
   "refresh_seconds": 30,
   "ha_embed": {
@@ -25,9 +31,36 @@
     "token_url": false
   },
   "views": {
-    "order": ["calendar", "chat", "home", "push"],
+    "order": [
+      "calendar",
+      "chat",
+      "home",
+      "push",
+      "ha-1"
+    ],
     "hidden": [],
     "calendar_mode": "month",
-    "sizes": { "calendar": "m", "chat": "m", "home": "m", "push": "m" }
+    "sizes": {
+      "calendar": "m",
+      "chat": "m",
+      "home": "m",
+      "push": "m"
+    },
+    "geometry": {
+      "home": {
+        "x": 1,
+        "y": 2,
+        "w": 3,
+        "h": 2
+      }
+    },
+    "ha_tiles": [
+      {
+        "id": "ha-1",
+        "entity": "light.kitchen",
+        "kind": "button",
+        "label": "Kitchen"
+      }
+    ]
   }
 }

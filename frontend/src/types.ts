@@ -23,16 +23,59 @@ export type TileSize = (typeof TILE_SIZES)[number]
 /** The default tile size: half the board's width (four of them form the default 2x2 board). */
 export const DEFAULT_TILE_SIZE: TileSize = 'm'
 
-/** The board's tile layout (the optional `views` object of the board file). */
+/** The board's tile layout (the optional `views` object of the board file).
+ *  The tile IDs are the four view IDs plus any `views.ha_tiles` ids. */
 export interface BoardViews {
-  /** View IDs in board order; always a permutation of VIEW_IDS. */
-  order: ViewId[]
-  /** View IDs hidden from the board (a subset of VIEW_IDS). */
-  hidden: ViewId[]
+  /** Tile IDs in board order (the four view IDs plus every ha_tiles id). */
+  order: string[]
+  /** Tile IDs hidden from the board. */
+  hidden: string[]
   /** How the Calendar view renders: 'month' (grid) or 'schedule' (list). */
   calendar_mode: CalendarMode
-  /** Per-tile size step; always complete (every view ID, a valid step). */
-  sizes: Record<ViewId, TileSize>
+  /** Per-tile size step (every tile ID, a valid step). */
+  sizes: Record<string, TileSize>
+  /** Explicit per-tile grid placements; missing = automatic placement. */
+  geometry?: Record<string, TileGeometry>
+  /** Home Assistant board tiles (button or visual), bound to entities. */
+  ha_tiles?: HABoardTile[]
+}
+
+/**
+ * A tile's explicit placement on the board's 6-column grid. 1-based:
+ * `x` is the starting column (1..6), `y` the starting row, `w` and `h`
+ * the spans in columns and rows. A tile without a placement is placed
+ * automatically (it flows in board order at its size step's width).
+ */
+export interface TileGeometry {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/**
+ * A fully repaired views section: what normalizeViews returns (and what
+ * the API answers always are). The raw board file / API input may omit
+ * the geometry and ha_tiles sections (older files); the normalized form
+ * always has both, so consumers can index them directly.
+ */
+export type NormalizedViews = Omit<BoardViews, 'geometry' | 'ha_tiles'> & {
+  geometry: Record<string, TileGeometry>
+  ha_tiles: HABoardTile[]
+}
+
+/** The kinds of Home Assistant board tiles. */
+export type HAKind = 'button' | 'visual'
+
+/** A Home Assistant board tile: bound to exactly one HA entity. */
+export interface HABoardTile {
+  /** Tile id: "ha-" + 1–16 lowercase alphanumerics (e.g. "ha-1"). */
+  id: string
+  /** The HA entity_id the tile is bound to (e.g. "light.kitchen"). */
+  entity: string
+  /** Display label; falls back to the entity's own label. */
+  label?: string
+  kind: HAKind
 }
 
 export interface ApiBoard {

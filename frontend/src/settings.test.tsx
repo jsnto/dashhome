@@ -4,6 +4,8 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
+  within,
 } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -54,8 +56,13 @@ function renderPanel(props: PanelProps = {}) {
 }
 
 /** Navigate the sidebar to a section. */
-function go(section: 'Appearance' | 'Tiles' | 'Services' | 'Updates') {
+function go(section: 'Appearance' | 'Tiles' | 'Home Assistant' | 'Services' | 'Updates') {
   fireEvent.click(screen.getByRole('button', { name: section }))
+}
+
+/** The settings content area (the sidebar labels live outside it). */
+function content() {
+  return document.querySelector('.settings-content') as HTMLElement
 }
 
 /** Renders the panel with a stateful cfg: a views-section save refreshes
@@ -86,10 +93,11 @@ function disabled(el: HTMLElement): boolean {
   return (el as HTMLButtonElement).disabled === true
 }
 
-/** Stub PUT /api/config/views, echoing the merged layout back as the board. */
+/** Stub PUT /api/config/views, echoing the merged layout back as the board.
+ *  Optionally serves the HA entity list (GET /api/ha/entities). */
 const defaultSizes = { calendar: 'm', chat: 'm', home: 'm', push: 'm' } as const
 
-function stubViewsApi(board: ApiBoard) {
+function stubViewsApi(board: ApiBoard, haEntities: unknown[] = []) {
   const calls: { body: unknown }[] = []
   const fetchMock = vi.fn().mockImplementation(async (input: unknown, init?: RequestInit) => {
     const url = String(input)
@@ -102,15 +110,31 @@ function stubViewsApi(board: ApiBoard) {
         calendar_mode: 'month',
         sizes: { ...defaultSizes },
       }
+      // Geometry merges per tile; a null entry clears that tile's placement.
+      let geometry = { ...(views.geometry ?? {}) }
+      if (body.geometry) {
+        for (const [id, cell] of Object.entries(body.geometry as Record<string, unknown>)) {
+          if (cell === null) delete geometry[id]
+          else geometry[id] = cell as never
+        }
+      }
       const merged: BoardViews = {
         ...views,
         order: (body.order as ViewId[]) ?? views.order,
         hidden: body.hidden !== undefined ? (body.hidden as ViewId[]) : views.hidden,
         calendar_mode: (body.calendar_mode as CalendarMode) ?? views.calendar_mode,
         sizes: { ...defaultSizes, ...(views.sizes ?? {}), ...((body.sizes as object) ?? {}) },
+        ...(Object.keys(geometry).length > 0 ? { geometry } : {}),
+        ...(body.ha_tiles !== undefined ? { ha_tiles: body.ha_tiles as never[] } : {}),
       }
       board.views = merged
       return new Response(JSON.stringify({ board: { ...board, views: merged } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    if (url === '/api/ha/entities') {
+      return new Response(JSON.stringify({ entities: haEntities, total: haEntities.length }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
@@ -139,7 +163,7 @@ describe('settings: page and sidebar', () => {
   it('opens on Appearance and navigates the sections from the sidebar', () => {
     renderPanel()
     // The sidebar lists every section.
-    for (const label of ['Appearance', 'Tiles', 'Services', 'Updates']) {
+    for (const label of ['Appearance', 'Tiles', 'Home Assistant', 'Services', 'Updates']) {
       expect(screen.getByRole('button', { name: label })).toBeTruthy()
     }
     // Appearance is the default section.
@@ -217,17 +241,20 @@ describe('settings: services in use', () => {
   it('renders one row per configured source with its status', () => {
     renderPanel()
     go('Services')
+    // The service rows live in the content area (the sidebar now has a
+    // Home Assistant section too, so query within the content).
+    const c = content()
     for (const label of ['Google Calendar', 'Home Assistant', 'Hermes chat', 'Hermes push']) {
-      expect(screen.getByText(label)).toBeTruthy()
+      expect(within(c).getByText(label)).toBeTruthy()
     }
     // Google is configured but awaiting the one-time sign-in.
-    expect(screen.getByText('Sign-in required')).toBeTruthy()
-    const link = screen.getByRole('link', { name: 'Sign-in required' })
+    expect(within(c).getByText('Sign-in required')).toBeTruthy()
+    const link = within(c).getByRole('link', { name: 'Sign-in required' })
     expect(link.getAttribute('href')).toBe('https://accounts.example.com/login')
     // HA and push are configured.
-    expect(screen.getAllByText('Configured')).toHaveLength(2)
+    expect(within(c).getAllByText('Configured')).toHaveLength(2)
     // Only the chat integration is off.
-    expect(screen.getAllByText('Not configured')).toHaveLength(1)
+    expect(within(c).getAllByText('Not configured')).toHaveLength(1)
   })
 
   it('summarizes the full-dashboard embed config (default dashboard)', () => {
@@ -263,7 +290,7 @@ describe('settings: services in use', () => {
       },
     })
     go('Services')
-    expect(screen.getAllByText('Not configured')).toHaveLength(4)
+    expect(within(content()).getAllByText('Not configured')).toHaveLength(4)
   })
 })
 
@@ -516,5 +543,194 @@ describe('settings: theme toggle', () => {
     fireEvent.click(light)
     expect(onThemeChange).toHaveBeenCalledTimes(1)
     expect(onThemeChange).toHaveBeenCalledWith('light')
+  })
+})
+
+describe('settings: Home Assistant section', () => {
+  const entity = {
+    entity_id: 'light.kitchen',
+    label: 'Kitchen',
+    friendly: 'Kitchen light',
+    state: 'on',
+    attributes: {},
+    last_updated: '2026-01-01T00:00:00Z',
+    last_changed: '2026-01-01T00:00:00Z',
+  }
+
+  it('adds a button tile for an entity and persists the full list', async () => {
+    const board: ApiBoard = {
+      ha_entities: [],
+      ha_labels: {},
+      calendars: [],
+      refresh_seconds: 30,
+      views: {
+        order: ['calendar', 'chat', 'home', 'push'],
+        hidden: [],
+        calendar_mode: 'month',
+        sizes: { ...defaultSizes },
+      },
+    }
+    const { calls } = stubViewsApi(board, [entity])
+    renderPanel({ views: board.views ?? undefined })
+    go('Home Assistant')
+
+    // The entity picker is fed by the entity list (the option's label).
+    await screen.findByText('Kitchen')
+    const input = within(content()).getByRole('combobox', { name: 'Home Assistant entity' }) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'light.kitchen' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add tile' }))
+
+    await waitFor(() => expect(calls.length).toBe(1))
+    expect(calls[0].body).toEqual({
+      ha_tiles: [{ id: 'ha-1', entity: 'light.kitchen', kind: 'button' }],
+    })
+    // The save answer lands: the row shows the new tile.
+    await waitFor(() => expect(document.querySelectorAll('.ha-row')).toHaveLength(1))
+    expect(board.views?.ha_tiles).toHaveLength(1)
+  })
+
+  it('adds a labeled visual tile with a sequential id', async () => {
+    const board: ApiBoard = {
+      ha_entities: [],
+      ha_labels: {},
+      calendars: [],
+      refresh_seconds: 30,
+      views: {
+        order: ['calendar', 'chat', 'home', 'push'],
+        hidden: [],
+        calendar_mode: 'month',
+        sizes: { ...defaultSizes },
+        ha_tiles: [{ id: 'ha-1', entity: 'light.kitchen', kind: 'button' }],
+      },
+    }
+    const { calls } = stubViewsApi(board, [
+      entity,
+      {
+        entity_id: 'sensor.temperature',
+        label: 'Temperature',
+        friendly: 'Temperature',
+        state: '21.5',
+        attributes: {},
+        last_updated: '2026-01-01T00:00:00Z',
+        last_changed: '2026-01-01T00:00:00Z',
+      },
+    ])
+    renderPanel({ views: board.views ?? undefined })
+    go('Home Assistant')
+    await waitFor(() => expect(document.querySelectorAll('.ha-row')).toHaveLength(1))
+
+    fireEvent.click(within(content()).getByRole('button', { name: 'Visual' }))
+    const input = within(content()).getByRole('combobox', { name: 'Home Assistant entity' }) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'sensor.temperature' } })
+    const label = within(content()).getByRole('textbox', { name: 'Tile label' }) as HTMLInputElement
+    fireEvent.change(label, { target: { value: 'Temp' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add tile' }))
+
+    await waitFor(() => expect(calls.length).toBe(1))
+    expect(calls[0].body).toEqual({
+      ha_tiles: [
+        { id: 'ha-1', entity: 'light.kitchen', kind: 'button' },
+        { id: 'ha-2', entity: 'sensor.temperature', kind: 'visual', label: 'Temp' },
+      ],
+    })
+    await waitFor(() => expect(document.querySelectorAll('.ha-row')).toHaveLength(2))
+  })
+
+  it('removes a tile (the list is a full replacement)', async () => {
+    const board: ApiBoard = {
+      ha_entities: [],
+      ha_labels: {},
+      calendars: [],
+      refresh_seconds: 30,
+      views: {
+        order: ['calendar', 'chat', 'home', 'push', 'ha-1'],
+        hidden: [],
+        calendar_mode: 'month',
+        sizes: { ...defaultSizes },
+        ha_tiles: [{ id: 'ha-1', entity: 'light.kitchen', kind: 'button' }],
+      },
+    }
+    const { calls } = stubViewsApi(board, [entity])
+    renderPanel({ views: board.views ?? undefined })
+    go('Home Assistant')
+    await waitFor(() => expect(document.querySelectorAll('.ha-row')).toHaveLength(1))
+
+    fireEvent.click(screen.getByRole('button', { name: /Remove .* tile/ }))
+    await waitFor(() => expect(calls.length).toBe(1))
+    expect(calls[0].body).toEqual({ ha_tiles: [] })
+    expect(board.views?.ha_tiles).toEqual([])
+  })
+
+  it('shows the not-configured note (and no form) when HA is off', async () => {
+    const board: ApiBoard = {
+      ha_entities: [],
+      ha_labels: {},
+      calendars: [],
+      refresh_seconds: 30,
+      views: {
+        order: ['calendar', 'chat', 'home', 'push'],
+        hidden: [],
+        calendar_mode: 'month',
+        sizes: { ...defaultSizes },
+      },
+    }
+    const fetchMock = vi.fn().mockImplementation(async (input: unknown) => {
+      const url = String(input)
+      if (url === '/api/ha/entities') {
+        return new Response(
+          JSON.stringify({ error: 'homeassistant_not_configured', detail: 'set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN' }),
+          { status: 503, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response(JSON.stringify({ error: 'not_configured' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderPanel({ views: board.views ?? undefined })
+    go('Home Assistant')
+
+    await screen.findByText(/Home Assistant is not configured/)
+    expect(within(content()).queryByRole('button', { name: 'Add tile' })).toBeNull()
+  })
+
+  it('reports a failed save and rolls the tile list back', async () => {
+    const board: ApiBoard = {
+      ha_entities: [],
+      ha_labels: {},
+      calendars: [],
+      refresh_seconds: 30,
+      views: {
+        order: ['calendar', 'chat', 'home', 'push'],
+        hidden: [],
+        calendar_mode: 'month',
+        sizes: { ...defaultSizes },
+      },
+    }
+    const fetchMock = vi.fn().mockImplementation(async (input: unknown) => {
+      if (String(input) === '/api/config/views') {
+        return new Response(
+          JSON.stringify({ error: 'board_file_not_writable', detail: 'denied' }),
+          { status: 503, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response(JSON.stringify({ entities: [entity], total: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderPanel({ views: board.views ?? undefined })
+    go('Home Assistant')
+    await screen.findByText('Kitchen')
+
+    const input = within(content()).getByRole('combobox', { name: 'Home Assistant entity' }) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'light.kitchen' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add tile' }))
+
+    await screen.findByText(/board_file_not_writable — denied/)
+    // The failed add did not stick: the tile list is empty again.
+    expect(document.querySelectorAll('.ha-row')).toHaveLength(0)
   })
 })

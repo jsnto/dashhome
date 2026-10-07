@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
-import { ApiError, api } from '../api'
+import { ApiError, api, type HAEntity } from '../api'
 import { emitRefreshSeconds } from '../refreshBus'
-import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, ViewId } from '../types'
+import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, HABoardTile, HAKind } from '../types'
+import { VIEW_IDS } from '../types'
 import type { Theme } from '../theme'
-import { TILE_SIZE_LABELS, VIEW_LABELS, normalizeViews } from '../utils'
+import { TILE_SIZE_LABELS, VIEW_LABELS, isHATileId, normalizeViews } from '../utils'
 
 interface Props {
   cfg: ApiConfig | null
@@ -16,14 +17,31 @@ interface Props {
   onClose: () => void
 }
 
-type SectionId = 'appearance' | 'tiles' | 'services' | 'updates'
+type SectionId = 'appearance' | 'tiles' | 'ha' | 'services' | 'updates'
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'tiles', label: 'Tiles' },
+  { id: 'ha', label: 'Home Assistant' },
   { id: 'services', label: 'Services' },
   { id: 'updates', label: 'Updates' },
 ]
+
+/** The display name of any board tile (a built-in view or an HA tile). */
+function tileName(id: string, views: BoardViews): string {
+  if ((VIEW_IDS as readonly string[]).includes(id)) return VIEW_LABELS[id as keyof typeof VIEW_LABELS]
+  const t = views.ha_tiles?.find((x) => x.id === id)
+  return t ? (t.label && t.label.trim() !== '' ? t.label : t.entity) : id
+}
+
+/** The next free Home Assistant tile id (ha-1, ha-2, …). */
+function nextHATileId(tiles: HABoardTile[]): string {
+  const used = new Set(tiles.map((t) => t.id))
+  for (let n = 1; ; n++) {
+    const id = `ha-${n}`
+    if (!used.has(id)) return id
+  }
+}
 
 /**
  * Read-only summary of the integrations this deployment actually has
@@ -74,11 +92,12 @@ function serviceRows(cfg: ApiConfig): {
 
 /**
  * The Tiles section: which dashboard tiles are on the main screen
- * (show/hide each of the four), in what board order, and how the Calendar
- * tile renders. Every change is persisted to the board file as it happens
- * (partial updates; the server keeps the fields the request omits). Tile
- * sizes are edited on the board itself (the header's Edit tiles mode),
- * not here; the current size step is shown per tile.
+ * (show/hide each tile — the four views and any Home Assistant tiles),
+ * in what board order, and how the Calendar tile renders. Every change is
+ * persisted to the board file as it happens (partial updates; the server
+ * keeps the fields the request omits). Tile size and placement are edited
+ * on the board itself (the header's Edit tiles mode), not here; the
+ * current size step is shown per tile.
  */
 function TilesSection({
   views,
@@ -96,7 +115,7 @@ function TilesSection({
   useEffect(() => setLocal(views), [views])
 
   const apply = async (
-    body: { order?: ViewId[]; hidden?: ViewId[]; calendar_mode?: CalendarMode },
+    body: { order?: string[]; hidden?: string[]; calendar_mode?: CalendarMode },
     next: BoardViews,
   ) => {
     if (saving) return
@@ -115,14 +134,14 @@ function TilesSection({
     }
   }
 
-  const toggleHidden = (id: ViewId) => {
+  const toggleHidden = (id: string) => {
     const nextHidden = local.hidden.includes(id)
       ? local.hidden.filter((h) => h !== id)
       : [...local.hidden, id]
     void apply({ hidden: nextHidden }, { ...local, hidden: nextHidden })
   }
 
-  const move = (id: ViewId, delta: number) => {
+  const move = (id: string, delta: number) => {
     const i = local.order.indexOf(id)
     const j = i + delta
     if (i < 0 || j < 0 || j >= local.order.length) return
@@ -141,15 +160,20 @@ function TilesSection({
       <h3>Tiles</h3>
       <p className="note">
         Which dashboard tiles are on the main screen and in what board order. Changes
-        save immediately. Resize a tile in place from the board's Edit tiles mode.
+        save immediately. Resize a tile or place it in the grid from the board's
+        Edit tiles mode.
       </p>
       {local.order.map((id, i) => {
+        const name = tileName(id, local)
         const hidden = local.hidden.includes(id)
         return (
           <div className="view-row" key={id}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="view-name">{VIEW_LABELS[id]}</div>
-              <div className="view-size">{TILE_SIZE_LABELS[local.sizes[id]]} tile</div>
+              <div className="view-name">
+                {name}
+                {isHATileId(id) && <span className="view-ha-badge">HA</span>}
+              </div>
+              <div className="view-size">{TILE_SIZE_LABELS[local.sizes[id] ?? 'm']}</div>
             </div>
             <div className="view-controls">
               <label className="view-toggle">
@@ -158,7 +182,7 @@ function TilesSection({
                   checked={!hidden}
                   disabled={saving}
                   onChange={() => toggleHidden(id)}
-                  aria-label={`Show ${VIEW_LABELS[id]}`}
+                  aria-label={`Show ${name}`}
                 />
                 {hidden ? 'Hidden' : 'Visible'}
               </label>
@@ -167,8 +191,8 @@ function TilesSection({
                   className="btn small"
                   disabled={saving || i === 0}
                   onClick={() => move(id, -1)}
-                  aria-label={`Move ${VIEW_LABELS[id]} up`}
-                  title={`Move ${VIEW_LABELS[id]} up`}
+                  aria-label={`Move ${name} up`}
+                  title={`Move ${name} up`}
                 >
                   ↑
                 </button>
@@ -176,8 +200,8 @@ function TilesSection({
                   className="btn small"
                   disabled={saving || i === local.order.length - 1}
                   onClick={() => move(id, 1)}
-                  aria-label={`Move ${VIEW_LABELS[id]} down`}
-                  title={`Move ${VIEW_LABELS[id]} down`}
+                  aria-label={`Move ${name} down`}
+                  title={`Move ${name} down`}
                 >
                   ↓
                 </button>
@@ -224,16 +248,222 @@ function TilesSection({
 }
 
 /**
+ * The Home Assistant section: adds and removes the HA-backed board tiles
+ * (views.ha_tiles) — first-class tiles bound to exactly one HA entity
+ * each, from the entities HA reports (GET /api/ha/entities). A button
+ * tile fires the board's allowlisted action (toggle) from the board; a
+ * visual tile shows the entity's state. Entity states are polled, never
+ * stored; no HA secret ever reaches the board file or the browser.
+ */
+function HASection({
+  views,
+  onBoard,
+}: {
+  views: BoardViews
+  onBoard?: (board: ApiBoard) => void
+}) {
+  const [tiles, setTiles] = useState<HABoardTile[]>(views.ha_tiles ?? [])
+  const [entities, setEntities] = useState<HAEntity[] | null>(null)
+  const [haOff, setHaOff] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<ApiError | null>(null)
+  const [entity, setEntity] = useState('')
+  const [kind, setKind] = useState<HAKind>('button')
+  const [label, setLabel] = useState('')
+
+  useEffect(() => setTiles(views.ha_tiles ?? []), [views])
+
+  // The entity picker's source (and the honest "not configured" state).
+  useEffect(() => {
+    let on = true
+    api
+      .getHAEntities()
+      .then((r) => {
+        if (!on) return
+        setEntities(r.entities)
+        setHaOff(false)
+      })
+      .catch((e) => {
+        if (!on) return
+        if (e instanceof ApiError && e.code === 'homeassistant_not_configured') {
+          setHaOff(true)
+        }
+      })
+    return () => {
+      on = false
+    }
+  }, [])
+
+  // Persist the full ha_tiles list (the endpoint replaces the list); the
+  // server re-normalizes the order/hidden/geometry around the new set.
+  const persist = (next: HABoardTile[]) => {
+    if (busy) return
+    const before = tiles
+    setBusy(true)
+    setErr(null)
+    setTiles(next)
+    api
+      .setViews({ ha_tiles: next })
+      .then((board) => {
+        onBoard?.(board)
+        setEntity('')
+        setLabel('')
+      })
+      .catch((e) => {
+        setTiles(before)
+        setErr(e instanceof ApiError ? e : new ApiError(0, 'save_failed', String(e)))
+      })
+      .finally(() => setBusy(false))
+  }
+
+  const add = () => {
+    const entityId = entity.trim()
+    if (entityId === '' || haOff) return
+    persist([...tiles, { id: nextHATileId(tiles), entity: entityId, ...(label.trim() !== '' ? { label: label.trim() } : {}), kind }])
+  }
+
+  const remove = (id: string) => {
+    persist(tiles.filter((t) => t.id !== id))
+  }
+
+  return (
+    <section className="settings-section">
+      <h3>Home Assistant</h3>
+      <p className="note">
+        Board tiles bound to Home Assistant entities: a <em>button</em> tile fires the
+        allowlisted action (toggle) from the board, a <em>visual</em> tile shows the
+        entity's state. Each tile is bound to exactly one entity; states are polled,
+        never stored.
+      </p>
+
+      {tiles.length > 0 && (
+        <div className="ha-list">
+          {tiles.map((t) => (
+            <div className="view-row ha-row" key={t.id}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="view-name">
+                  {tileName(t.id, { ...views, ha_tiles: tiles })}
+                  <span className="view-ha-badge">{t.kind}</span>
+                </div>
+                <div className="view-size" title={t.entity}>
+                  {t.entity}
+                </div>
+              </div>
+              <div className="view-controls">
+                <button
+                  className="btn small danger"
+                  disabled={busy}
+                  onClick={() => remove(t.id)}
+                  aria-label={`Remove ${tileName(t.id, { ...views, ha_tiles: tiles })} tile`}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {haOff ? (
+        <p className="note">
+          Home Assistant is not configured. Set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN and
+          restart the server to add tiles.
+        </p>
+      ) : (
+        <form
+          className="ha-add"
+          onSubmit={(e) => {
+            e.preventDefault()
+            add()
+          }}
+        >
+          <div className="settings-row">
+            <div>
+              <div className="settings-row-label">Entity</div>
+              <div className="settings-row-desc">
+                The HA entity this tile binds to (type to search the entity list).
+              </div>
+            </div>
+            <input
+              className="ha-entity-input"
+              list="ha-entity-options"
+              value={entity}
+              onChange={(e) => setEntity(e.target.value)}
+              placeholder="light.kitchen"
+              aria-label="Home Assistant entity"
+              required
+            />
+          </div>
+          <datalist id="ha-entity-options">
+            {(entities ?? []).map((e) => (
+              <option key={e.entity_id} value={e.entity_id}>
+                {e.label || e.entity_id}
+              </option>
+            ))}
+          </datalist>
+          <div className="settings-row">
+            <div>
+              <div className="settings-row-label">Tile kind</div>
+            </div>
+            <div className="tabs" role="group" aria-label="Tile kind">
+              <button
+                type="button"
+                className={kind === 'button' ? 'tab on' : 'tab'}
+                aria-pressed={kind === 'button'}
+                onClick={() => setKind('button')}
+              >
+                Button
+              </button>
+              <button
+                type="button"
+                className={kind === 'visual' ? 'tab on' : 'tab'}
+                aria-pressed={kind === 'visual'}
+                onClick={() => setKind('visual')}
+              >
+                Visual
+              </button>
+            </div>
+          </div>
+          <div className="settings-row">
+            <div>
+              <div className="settings-row-label">Label (optional)</div>
+              <div className="settings-row-desc">
+                Shown on the tile instead of the entity's own label.
+              </div>
+            </div>
+            <input
+              className="ha-label-input"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Kitchen"
+              aria-label="Tile label"
+            />
+          </div>
+          <button className="btn" type="submit" disabled={busy || entity.trim() === ''}>
+            {busy ? 'Saving…' : 'Add tile'}
+          </button>
+        </form>
+      )}
+      {err && (
+        <p className="note err">
+          {err.code} — {err.detail}
+        </p>
+      )}
+    </section>
+  )
+}
+
+/**
  * The settings page: a left sidebar menu navigating the sections
- * (Appearance, Tiles, Services, Updates). Stays an overlay over the live
- * dashboard; closes from the Close button, a click on the backdrop outside
- * the card, or Escape.
+ * (Appearance, Tiles, Home Assistant, Services, Updates). Stays an overlay
+ * over the live dashboard; closes from the Close button, a click on the
+ * backdrop outside the card, or Escape.
  */
 export default function SettingsPanel({
   cfg,
   theme,
   onThemeChange,
-  views = normalizeViews(undefined),
+  views = normalizeViews(null),
   onBoard,
   onClose,
 }: Props) {
@@ -366,6 +596,8 @@ export default function SettingsPanel({
             )}
 
             {section === 'tiles' && <TilesSection views={views} onBoard={onBoard} />}
+
+            {section === 'ha' && <HASection views={views} onBoard={onBoard} />}
 
             {section === 'services' && (
               <section className="settings-section">

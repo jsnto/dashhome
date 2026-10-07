@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
-import type { ApiBoard, ApiEvent, BoardViews, CalendarMode, TileSize, ViewId } from './types'
+import type { ApiBoard, ApiEvent, BoardViews, CalendarMode, TileGeometry, TileSize, ViewId } from './types'
 
 const integrationsOff = {
   homeassistant: false,
@@ -89,10 +89,12 @@ function upcomingEvents() {
 /** The raw `views` section of the board file (a freehand-editable
  *  surface, so the fixtures may omit fields the backend normalizes). */
 type RawViews = {
-  order?: ViewId[]
-  hidden?: ViewId[]
+  order?: string[]
+  hidden?: string[]
   calendar_mode?: CalendarMode
   sizes?: Partial<Record<ViewId, TileSize>>
+  geometry?: Record<string, { x: number; y: number; w: number; h: number } | null>
+  ha_tiles?: Array<{ id: string; entity: string; kind: string; label?: string }>
 }
 
 /** Stand-in backend that serves a board with an editable views section
@@ -102,6 +104,7 @@ type RawViews = {
 function stubBoardServer(
   initialViews: RawViews | undefined,
   events: ApiEvent[] = upcomingEvents(),
+  haEntities: unknown[] = [],
 ) {
   const board = {
     ha_entities: [],
@@ -111,6 +114,7 @@ function stubBoardServer(
     views: initialViews ?? null,
   } as unknown as ApiBoard
   const calls: string[] = []
+  const haServiceCalls: Array<{ entity_id?: string; action?: string }> = []
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
@@ -131,14 +135,43 @@ function stubBoardServer(
       }
       const sizes = { ...DEFAULT_SIZES, ...(cur.sizes ?? {}) }
       if (body.sizes) Object.assign(sizes, body.sizes)
+      // Geometry merges per tile (a null entry clears that tile's placement,
+      // restoring automatic placement), mirroring the backend.
+      let geometry = { ...(cur.geometry ?? {}) } as Record<string, unknown>
+      if (body.geometry) {
+        for (const [id, cell] of Object.entries(body.geometry as Record<string, unknown>)) {
+          if (cell === null) delete geometry[id]
+          else geometry[id] = cell
+        }
+      }
       const next: BoardViews = {
         order: (body.order as ViewId[]) ?? cur.order,
         hidden: body.hidden !== undefined ? (body.hidden as ViewId[]) : cur.hidden,
         calendar_mode: (body.calendar_mode as CalendarMode) ?? cur.calendar_mode,
         sizes,
+        ...(geometry && Object.keys(geometry).length > 0 ? { geometry: geometry as Record<string, TileGeometry> } : {}),
+        ...(body.ha_tiles !== undefined ? { ha_tiles: body.ha_tiles as never[] } : cur.ha_tiles !== undefined ? { ha_tiles: cur.ha_tiles } : {}),
       }
       board.views = next
       return json({ board })
+    }
+    if (url === '/api/ha/entities') {
+      const entities = haEntities ?? []
+      return json({ entities, total: entities.length })
+    }
+    if (url === '/api/ha/service' && init?.method === 'POST') {
+      const req = JSON.parse(String(init.body)) as { entity_id?: string; action?: string }
+      haServiceCalls.push(req)
+      const ents = (haEntities ?? []) as Array<{ entity_id: string; state: string }>
+      const ent = ents.find((e) => e.entity_id === req.entity_id)
+      if (!ent) {
+        return json({ error: 'entity_not_found', detail: `entity_not_found: ${req.entity_id}` }, 404)
+      }
+      if (req.action === 'turn_on') ent.state = 'on'
+      else if (req.action === 'turn_off') ent.state = 'off'
+      else if (req.action === 'toggle') ent.state = ent.state === 'on' ? 'off' : 'on'
+      else return json({ error: 'bad_action', detail: 'action must be toggle, turn_on or turn_off' }, 400)
+      return json({ ok: true, entity_id: req.entity_id, action: req.action, result: { state: ent.state } })
     }
     if (url === '/api/calendars') {
       return json({
@@ -155,7 +188,7 @@ function stubBoardServer(
     return json({ error: 'not_configured' }, 503)
   })
   vi.stubGlobal('fetch', fetchMock)
-  return { fetchMock, board, calls }
+  return { fetchMock, board, calls, haServiceCalls, haEntities }
 }
 
 function boardEl() {
@@ -753,5 +786,315 @@ describe('app: calendar modes (settings.calendar_mode)', () => {
     render(<App />)
     await waitFor(() => expect(document.querySelector('.month-grid')).toBeTruthy())
     expect(document.querySelector('.schedule')).toBeNull()
+  })
+})
+
+// --- Shared helpers for the placement/drag/HA tests ----------------------
+
+/** Stub the board's box + computed gap so the drag math has real numbers:
+ *  6 columns of 100px and 2 rows of 150px with a 16px gap. */
+function stubBoardBox(board?: HTMLElement) {
+  const el = board ?? boardEl()
+  const origRect = el.getBoundingClientRect.bind(el)
+  el.getBoundingClientRect = () =>
+    ({
+      left: 0,
+      top: 0,
+      width: 680,
+      height: 316,
+      x: 0,
+      y: 0,
+      right: 680,
+      bottom: 316,
+      toJSON: () => null,
+    }) as DOMRect
+  const origGCS = window.getComputedStyle
+  window.getComputedStyle = (node: Element) =>
+    new Proxy(origGCS(node), {
+      get: (t, k) =>
+        k === 'columnGap' ? '16px' : (t as unknown as Record<PropertyKey, unknown>)[k],
+    }) as unknown as CSSStyleDeclaration
+  return () => {
+    el.getBoundingClientRect = origRect
+    window.getComputedStyle = origGCS
+  }
+}
+
+/** One column/row pitch in the stubbed box. */
+const PITCH_X = 116 // 100 + 16
+const PITCH_Y = 166 // 150 + 16
+
+/** jsdom's fireEvent.pointer* builds bare Events without clientX/Y;
+ *  dispatch a real MouseEvent (the handlers only read clientX/Y/bubbles). */
+function firePointer(el: Element | Window, type: string, x: number, y: number) {
+  el.dispatchEvent(
+    new window.MouseEvent(type, {
+      clientX: x,
+      clientY: y,
+      button: 0,
+      buttons: 1,
+      bubbles: true,
+      cancelable: true,
+    }),
+  )
+}
+
+const geometryOf = (board: { views?: BoardViews | null }) =>
+  ((board.views?.geometry ?? {}) as Record<string, unknown>)
+
+describe('app: tile placement (edit mode)', () => {
+  const placedViews = {
+    order: ['calendar', 'chat', 'home', 'push'],
+    hidden: [],
+    calendar_mode: 'month' as const,
+    sizes: { calendar: 'm', chat: 'm', home: 'm', push: 'm' } as Partial<Record<ViewId, TileSize>>,
+    geometry: { home: { x: 1, y: 2, w: 3, h: 1 } },
+  }
+
+  it('drags a placed tile to a free cell and persists the placement', async () => {
+    const { board, calls } = stubBoardServer(placedViews)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    const restoreBox = stubBoardBox()
+
+    const home = document.querySelector('[data-win="home"]') as HTMLElement
+    const grip = home.querySelector('.tile-grip') as HTMLElement
+    // Grab in row 2 and drag one row down: the cell (1,3) is free.
+    await act(async () => {
+      firePointer(grip, 'pointerdown', 10, 200)
+    })
+    await act(async () => {
+      firePointer(window, 'pointermove', 10, 200 + PITCH_Y)
+    })
+
+    // The live preview snaps to the target cell.
+    expect(home.className).toContain('dragging')
+    expect(home.className).not.toContain('preview-invalid')
+    expect(home.style.gridColumn).toBe('1 / span 3')
+    expect(home.style.gridRow).toBe('3 / span 1')
+
+    await act(async () => {
+      firePointer(window, 'pointerup', 10, 200 + PITCH_Y)
+    })
+    restoreBox()
+
+    await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 1, y: 3, w: 3, h: 1 }))
+    const put = calls.filter((c) => c === 'PUT /api/config/views')
+    expect(put.length).toBe(1)
+    // The board re-renders from the saved placement.
+    await waitFor(() => expect(home.style.gridRow).toBe('3 / span 1'))
+  })
+
+  it('refuses a drop that overlaps a neighbour and snaps back', async () => {
+    const { board, calls } = stubBoardServer(placedViews)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    const restoreBox = stubBoardBox()
+
+    const cal = document.querySelector('[data-win="calendar"]') as HTMLElement
+    const grip = cal.querySelector('.tile-grip') as HTMLElement
+    // Drag calendar one column right: (2,1,3,1) overlaps chat at (4,1).
+    await act(async () => {
+      firePointer(grip, 'pointerdown', 10, 10)
+    })
+    await act(async () => {
+      firePointer(window, 'pointermove', 10 + PITCH_X, 10)
+    })
+
+    expect(cal.className).toContain('dragging')
+    expect(cal.className).toContain('preview-invalid')
+    expect(cal.style.gridColumn).toBe('2 / span 3')
+
+    await act(async () => {
+      firePointer(window, 'pointerup', 10 + PITCH_X, 10)
+    })
+    restoreBox()
+
+    // No save went out; the tile snaps back to its automatic placement.
+    expect(calls.filter((c) => c === 'PUT /api/config/views')).toHaveLength(0)
+    expect(cal.className).not.toContain('preview-invalid')
+    expect(cal.style.gridColumn).toBe('')
+    expect(geometryOf(board).calendar).toBeUndefined()
+  })
+
+  it('nudges a placed tile one cell with the move controls', async () => {
+    const { board } = stubBoardServer(placedViews)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    fireEvent.click(screen.getByRole('button', { name: 'move Home right' }))
+    await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 2, y: 2, w: 3, h: 1 }))
+
+    // The right edge is clamped: a width-3 tile cannot start past column 4.
+    fireEvent.click(screen.getByRole('button', { name: 'move Home right' }))
+    await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 3, y: 2, w: 3, h: 1 }))
+    fireEvent.click(screen.getByRole('button', { name: 'move Home right' }))
+    fireEvent.click(screen.getByRole('button', { name: 'move Home right' }))
+    await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 4, y: 2, w: 3, h: 1 }))
+  })
+
+  it('changes a placed tile height with the height stepper', async () => {
+    const { board } = stubBoardServer(placedViews)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    fireEvent.click(screen.getByRole('button', { name: 'increase height of Home' }))
+    await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 1, y: 2, w: 3, h: 2 }))
+    fireEvent.click(screen.getByRole('button', { name: 'decrease height of Home' }))
+    await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 1, y: 2, w: 3, h: 1 }))
+    // Height never drops below 1.
+    fireEvent.click(screen.getByRole('button', { name: 'decrease height of Home' }))
+    await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 1, y: 2, w: 3, h: 1 }))
+  })
+
+  it('keeps a placed tile in sync when its size step changes (width follows)', async () => {
+    const { board } = stubBoardServer(placedViews)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    const homeGroup = screen.getByRole('group', { name: 'Home tile size' })
+    fireEvent.click(within(homeGroup).getByRole('button', { name: 'S' }))
+    await waitFor(() => {
+      expect((board.views?.sizes as Record<string, string>)?.home).toBe('s')
+      expect(geometryOf(board).home).toEqual({ x: 1, y: 2, w: 2, h: 1 })
+    })
+  })
+
+  it('renders no placement affordances outside edit mode', () => {
+    stubBoardServer(placedViews)
+    render(<App />)
+    expect(document.querySelector('.tile-grip')).toBeNull()
+    expect(document.querySelector('.tile-resize')).toBeNull()
+  })
+})
+
+describe('app: Home Assistant board tiles', () => {
+  const haViews = {
+    order: ['calendar', 'chat', 'home', 'push', 'ha-lamp', 'ha-temp'],
+    hidden: [],
+    calendar_mode: 'month' as const,
+    sizes: { calendar: 'm', chat: 'm', home: 'm', push: 'm', 'ha-lamp': 's', 'ha-temp': 's' } as Partial<Record<string, TileSize>>,
+    geometry: { 'ha-lamp': { x: 1, y: 3, w: 2, h: 1 } },
+    ha_tiles: [
+      { id: 'ha-lamp', entity: 'light.living_room', kind: 'button', label: 'Lamp' },
+      { id: 'ha-temp', entity: 'sensor.living_room_temperature', kind: 'visual', label: 'Temp' },
+    ],
+  }
+  const haEntities = [
+    {
+      entity_id: 'light.living_room',
+      label: 'Living room',
+      friendly: 'Living room light',
+      state: 'on',
+      attributes: {},
+      last_updated: '2026-01-01T00:00:00Z',
+      last_changed: '2026-01-01T00:00:00Z',
+    },
+    {
+      entity_id: 'sensor.living_room_temperature',
+      label: 'Temperature',
+      friendly: 'Living room temperature',
+      state: '21.5',
+      attributes: {},
+      last_updated: '2026-01-01T00:00:00Z',
+      last_changed: '2026-01-01T00:00:00Z',
+    },
+  ]
+
+  it('renders HA tiles with their polled state and fires the button action', async () => {
+    const { haServiceCalls } = stubBoardServer(haViews, upcomingEvents(), haEntities)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(6))
+
+    const lamp = document.querySelector('[data-win="ha-lamp"]') as HTMLElement
+    expect(lamp.querySelector('.ha-card')).toBeTruthy()
+    // The button tile's action label follows the entity state (on → "Turn off").
+    const turnOff = await screen.findByRole('button', { name: 'Turn off' })
+    expect(within(lamp).getByText('Lamp')).toBeTruthy()
+    fireEvent.click(turnOff)
+
+    await waitFor(() => expect(haServiceCalls).toEqual([
+      { entity_id: 'light.living_room', action: 'toggle' },
+    ]))
+    // The tile re-polls after the action and shows the new state.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Turn on' })).toBeTruthy()
+    })
+
+    // The visual tile shows the entity's state and id.
+    const temp = document.querySelector('[data-win="ha-temp"]') as HTMLElement
+    expect(temp.querySelector('.ha-state')?.textContent).toBe('21.5')
+    expect(within(temp).getByText('sensor.living_room_temperature')).toBeTruthy()
+  })
+
+  it('reports the not-configured state instead of failing when HA is off', async () => {
+    const { fetchMock } = stubBoardServer(haViews, upcomingEvents(), [])
+    vi.stubGlobal(
+      'fetch',
+      async (input: unknown, init?: RequestInit) => {
+        if (String(input) === '/api/ha/entities') {
+          return new Response(
+            JSON.stringify({
+              error: 'homeassistant_not_configured',
+              detail: 'set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN',
+            }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        return fetchMock(input, init)
+      },
+    )
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(6))
+
+    const lamp = document.querySelector('[data-win="ha-lamp"]') as HTMLElement
+    await waitFor(() => {
+      expect(lamp.textContent).toContain('Home Assistant is not configured')
+    })
+    const action = lamp.querySelector('.ha-action') as HTMLButtonElement | null
+    expect(action?.disabled).toBe(true)
+  })
+
+  it('honors a stored HA tile placement and order on the board', async () => {
+    stubBoardServer(haViews, upcomingEvents(), haEntities)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toEqual([
+      'calendar',
+      'chat',
+      'home',
+      'push',
+      'ha-lamp',
+      'ha-temp',
+    ]))
+    const lamp = document.querySelector('[data-win="ha-lamp"]') as HTMLElement
+    expect(lamp.style.gridColumn).toBe('1 / span 2')
+    expect(lamp.style.gridRow).toBe('3 / span 1')
+  })
+})
+
+describe('app: narrow fallback with stored placements', () => {
+  it('stacks the tiles (stored placements suspended) on a narrow viewport', async () => {
+    stubNarrow(true)
+    stubBoardServer({
+      order: ['push', 'home', 'chat', 'calendar'],
+      hidden: [],
+      calendar_mode: 'month',
+      sizes: { calendar: 'l', chat: 'xl', home: 'm', push: 's' } as Partial<Record<ViewId, TileSize>>,
+      geometry: { home: { x: 1, y: 2, w: 3, h: 1 } },
+    })
+    render(<App />)
+    expect(boardEl().hasAttribute('data-narrow')).toBe(true)
+    // Board order is kept in the stack; the inline placement spans are
+    // dropped so the CSS !important overrides win.
+    const home = document.querySelector('[data-win="home"]') as HTMLElement
+    expect(home.style.gridColumn).toBe('')
+    expect(home.style.gridRow).toBe('')
   })
 })
