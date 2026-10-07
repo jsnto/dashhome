@@ -34,6 +34,9 @@ type Board struct {
 	// HAEmbed configures the full-dashboard iframe section. Optional;
 	// missing means "embed the default dashboard, no token in the URL".
 	HAEmbed *HAEmbed `json:"ha_embed,omitempty"`
+	// Grid is the tile grid's dimensions (columns x rows). Optional;
+	// missing (or an invalid stored value) means the default 12x12.
+	Grid *BoardGrid `json:"grid,omitempty"`
 	// Views configures the dashboard's tile layout: which tiles are shown,
 	// in what order, how the Calendar tile renders, and how big each tile
 	// is. Optional; missing means the default board (all four tiles in the
@@ -79,15 +82,15 @@ type Views struct {
 	// month grid, "schedule" a chronological list of upcoming events.
 	CalendarMode string `json:"calendar_mode"`
 	// Sizes maps each tile ID to its tile size step ("s", "m", "l", "xl":
-	// the column span on the board's 6-column grid) — the width of a tile
-	// without explicit geometry. After normalization it always holds
-	// every board tile ID with a valid step.
+	// a fraction of the grid's width — a third, half, two thirds, or the
+	// full width) — the width of a tile without explicit geometry. After
+	// normalization it always holds every board tile ID with a valid step.
 	Sizes map[string]string `json:"sizes"`
 	// Geometry maps a tile ID to its explicit grid placement (where the
-	// tile starts on the 6-column grid and how far it spans). Tiles
-	// without an entry (or with a repaired entry) keep auto-placement: they
-	// flow in board order at their size step's width. After normalization
-	// the entries are always in bounds and overlap-free.
+	// tile starts on the tile grid and how far it spans). Tiles without an
+	// entry (or with a repaired entry) keep auto-placement: they flow in
+	// board order at their size step's width. After normalization the
+	// entries are always in bounds and overlap-free.
 	Geometry GeometryMap `json:"geometry,omitempty"`
 	// HATiles is the set of Home Assistant board tiles; each one's ID is a
 	// board tile ID alongside the four view IDs. After normalization the
@@ -95,11 +98,11 @@ type Views struct {
 	HATiles []HABoardTile `json:"ha_tiles,omitempty"`
 }
 
-// TileGeometry is a tile's explicit grid placement on the board's
-// 6-column grid: the 1-based column (X) and row (Y) where the tile
-// starts, its column span (W) and row span (H). The board's rows are
-// unbounded (it grows downward as needed), so only the column bounds are
-// closed: 1 <= X <= 7-W, 1 <= W <= 6, Y >= 1, H >= 1.
+// TileGeometry is a tile's explicit grid placement on the board's tile
+// grid (cols x rows units): the 1-based column (X) and row (Y) where the
+// tile starts, its column span (W) and row span (H). The cell must stay
+// inside the grid: 1 <= X <= cols-W+1, 1 <= W <= cols, 1 <= Y <= rows-H+1,
+// 1 <= H <= rows.
 type TileGeometry struct {
 	X int `json:"x"`
 	Y int `json:"y"`
@@ -137,6 +140,31 @@ func (m *GeometryMap) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// BoardGrid is the board's tile grid dimensions: the number of columns
+// (Cols) and rows (Rows) the grid is split into. Each unit is one of the
+// Cols columns and one of the Rows rows, so the default 12x12 grid splits
+// the board's width and height evenly into 12 units each.
+type BoardGrid struct {
+	Cols int `json:"cols"`
+	Rows int `json:"rows"`
+}
+
+// effective returns the grid dimensions with stored values repaired to the
+// valid range: an absent grid, or an out-of-range dimension, falls back to
+// the per-axis default (the board file is a freehand-editable surface).
+func (g *BoardGrid) effective() (int, int) {
+	cols, rows := BoardGridDefaultCols, BoardGridDefaultRows
+	if g != nil {
+		if g.Cols >= BoardGridMin && g.Cols <= BoardGridMax {
+			cols = g.Cols
+		}
+		if g.Rows >= BoardGridMin && g.Rows <= BoardGridMax {
+			rows = g.Rows
+		}
+	}
+	return cols, rows
+}
+
 // HABoardTile is a Home Assistant board tile: it binds one HA entity, has
 // a display label, and a kind. A "button" tile performs a standard action
 // on the entity when clicked; a "visual" tile shows the entity's current
@@ -167,21 +195,30 @@ const (
 	CalendarModeSchedule = "schedule"
 )
 
-// The tile size steps, from smallest to widest. "m" (half the board's
-// width) is the default: four medium tiles form the board's default 2x2.
+// The tile size steps, from smallest to widest. The step is a fraction of
+// the grid's width: "m" (half the board's width) is the default, so four
+// medium tiles form the board's default 2x2.
 const (
-	ViewSizeSmall  = "s"  // a third of the board's width
-	ViewSizeMedium = "m"  // half the board's width (the default)
-	ViewSizeLarge  = "l"  // two thirds of the board's width
-	ViewSizeXLarge = "xl" // the full board width
+	ViewSizeSmall  = "s"  // a third of the grid's width
+	ViewSizeMedium = "m"  // half the grid's width (the default)
+	ViewSizeLarge  = "l"  // two thirds of the grid's width
+	ViewSizeXLarge = "xl" // the full grid width
 )
 
 var viewIDs = []string{ViewCalendar, ViewChat, ViewHome, ViewPush}
 
 var viewSizes = []string{ViewSizeSmall, ViewSizeMedium, ViewSizeLarge, ViewSizeXLarge}
 
-// BoardGridCols is the width (in columns) of the board's tile grid.
-const BoardGridCols = 6
+// The board's tile grid is cols x rows units, each unit split evenly (one
+// of `cols` columns, one of `rows` rows). The dimensions are user-editable
+// from the settings screen (persisted as board.grid) and default to 12x12;
+// the bounds keep the units usable on screen.
+const (
+	BoardGridDefaultCols = 12
+	BoardGridDefaultRows = 12
+	BoardGridMin         = 1
+	BoardGridMax         = 24
+)
 
 // The Home Assistant tile kinds.
 const (
@@ -273,6 +310,15 @@ func (c *Config) RefreshSeconds() int {
 		return 30
 	}
 	return c.Board.RefreshSeconds
+}
+
+// GridDims returns the effective tile grid dimensions (columns, rows):
+// the stored board.grid repaired to the valid range, the default 12x12
+// when absent (per axis). Safe to read while the board mutates.
+func (c *Config) GridDims() (int, int) {
+	c.boardMu.RLock()
+	defer c.boardMu.RUnlock()
+	return c.Board.Grid.effective()
 }
 
 // Load reads configuration from the environment. A missing, empty,
@@ -401,6 +447,50 @@ func ValidateRefreshSeconds(n int) error {
 	return nil
 }
 
+// ValidateGrid reports whether dims are a sane tile grid: each dimension
+// a whole number of units within the usable range.
+func ValidateGrid(cols, rows int) error {
+	if cols < BoardGridMin || cols > BoardGridMax || rows < BoardGridMin || rows > BoardGridMax {
+		return fmt.Errorf("grid dimensions must be between %d and %d units", BoardGridMin, BoardGridMax)
+	}
+	return nil
+}
+
+// SetGrid validates the grid dimensions, persists the whole board to the
+// board file, and updates the in-memory board only after the write
+// succeeds, so a failed write leaves the running config (and the file)
+// unchanged. Stored placements that no longer fit the new grid are
+// repaired at the same time (their tiles fall back to auto placement),
+// exactly as a views write repairs them. Mirrors SetRefreshSeconds: a
+// validation error is returned as-is, and a persistence failure is wrapped
+// in ErrBoardFileNotWritable (an absent board file path is
+// ErrNoBoardFile).
+func (c *Config) SetGrid(cols, rows int) error {
+	if err := ValidateGrid(cols, rows); err != nil {
+		return err
+	}
+	if c.BoardFile == "" {
+		return ErrNoBoardFile
+	}
+	c.boardMu.Lock()
+	updated := c.Board
+	updated.Grid = &BoardGrid{Cols: cols, Rows: rows}
+	if updated.Views != nil {
+		views := *updated.Views
+		repaired := normalizeViews(&views, cols, rows)
+		updated.Views = &repaired
+	}
+	err := WriteBoardFile(c.BoardFile, updated)
+	if err == nil {
+		c.Board = updated
+	}
+	c.boardMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrBoardFileNotWritable, err)
+	}
+	return nil
+}
+
 // SetRefreshSeconds validates n, persists the whole board to the board file,
 // and updates the in-memory board only after the write succeeds, so a failed
 // write leaves the running config (and the file) unchanged. A persistence
@@ -516,19 +606,22 @@ func normalizeHATiles(raw []HABoardTile) []HABoardTile {
 	return out
 }
 
-// validGeometry reports whether g is an in-bounds grid placement (the
-// board is 6 columns wide; rows are unbounded).
-func validGeometry(g *TileGeometry) bool {
+// validGeometry reports whether g is an in-bounds grid placement on the
+// cols x rows grid (the board's effective grid dimensions).
+func validGeometry(g *TileGeometry, cols, rows int) bool {
 	if g == nil {
 		return false
 	}
-	if g.W < 1 || g.W > BoardGridCols {
+	if g.W < 1 || g.W > cols {
 		return false
 	}
-	if g.X < 1 || g.X+g.W-1 > BoardGridCols {
+	if g.X < 1 || g.X+g.W-1 > cols {
 		return false
 	}
-	if g.Y < 1 || g.H < 1 {
+	if g.Y < 1 || g.Y+g.H-1 > rows {
+		return false
+	}
+	if g.H < 1 {
 		return false
 	}
 	return true
@@ -539,11 +632,12 @@ func geometryOverlaps(a, b *TileGeometry) bool {
 }
 
 // normalizeGeometry repairs the stored placements: an entry is kept only
-// for a known tile ID, in bounds, and non-overlapping with the entries
-// kept before it (processed in board order). A dropped entry leaves the
-// tile auto-placed — exactly the tile's no-geometry behavior. The result
-// is always a valid, non-overlapping layout.
-func normalizeGeometry(geo map[string]*TileGeometry, order []string, known map[string]bool) map[string]*TileGeometry {
+// for a known tile ID, in bounds on the cols x rows grid, and
+// non-overlapping with the entries kept before it (processed in board
+// order). A dropped entry leaves the tile auto-placed — exactly the tile's
+// no-geometry behavior. The result is always a valid, non-overlapping
+// layout.
+func normalizeGeometry(geo map[string]*TileGeometry, order []string, known map[string]bool, cols, rows int) map[string]*TileGeometry {
 	out := map[string]*TileGeometry{}
 	kept := make([]*TileGeometry, 0, len(order))
 	for _, id := range order {
@@ -551,7 +645,7 @@ func normalizeGeometry(geo map[string]*TileGeometry, order []string, known map[s
 			continue
 		}
 		g, ok := geo[id]
-		if !ok || !validGeometry(g) {
+		if !ok || !validGeometry(g, cols, rows) {
 			continue
 		}
 		p := *g
@@ -577,13 +671,14 @@ func normalizeGeometry(geo map[string]*TileGeometry, order []string, known map[s
 // board tile IDs (the four view IDs plus the HA tile IDs), hidden holds
 // only known IDs, calendar_mode is "month" or "schedule", sizes holds a
 // valid step for every tile ID, geometry holds only in-bounds
-// non-overlapping placements (a repaired entry falls back to auto
-// placement), and ha_tiles holds only valid entries with distinct IDs.
-// Safe to read while the board mutates.
+// non-overlapping placements on the effective grid (a repaired entry falls
+// back to auto placement), and ha_tiles holds only valid entries with
+// distinct IDs. Safe to read while the board mutates.
 func (c *Config) ViewConfig() Views {
 	c.boardMu.RLock()
 	defer c.boardMu.RUnlock()
-	return normalizeViews(c.Board.Views)
+	cols, rows := c.Board.Grid.effective()
+	return normalizeViews(c.Board.Views, cols, rows)
 }
 
 // SetViews applies the provided tile-layout fields (nil = keep the
@@ -601,6 +696,7 @@ func (c *Config) ViewConfig() Views {
 // error is returned as-is, and a persistence failure is wrapped in
 // ErrBoardFileNotWritable (an absent board file path is ErrNoBoardFile).
 func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[string]string, geometry *map[string]*TileGeometry, haTiles *[]HABoardTile) error {
+	cols, rows := c.BoardSnapshot().Grid.effective()
 	// Validation runs against the prospective tile ID set: the incoming
 	// HA tiles when provided, the currently effective ones otherwise.
 	var effHA []HABoardTile
@@ -610,7 +706,7 @@ func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[stri
 			return err
 		}
 	} else {
-		effHA = normalizeViews(c.BoardSnapshot().Views).HATiles
+		effHA = normalizeViews(c.BoardSnapshot().Views, cols, rows).HATiles
 	}
 	ids := tileIDSet(tileIDs(effHA))
 	if order != nil {
@@ -634,7 +730,7 @@ func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[stri
 		}
 	}
 	if geometry != nil {
-		if err := checkGeometry(*geometry, ids); err != nil {
+		if err := checkGeometry(*geometry, ids, cols, rows); err != nil {
 			return err
 		}
 	}
@@ -642,7 +738,7 @@ func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[stri
 		return ErrNoBoardFile
 	}
 	c.boardMu.Lock()
-	views := normalizeViews(c.Board.Views)
+	views := normalizeViews(c.Board.Views, cols, rows)
 	if haTiles != nil {
 		views.HATiles = append([]HABoardTile{}, (*haTiles)...) // definitions replaced
 	}
@@ -676,7 +772,7 @@ func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[stri
 	// Final normalization over the finished layout: repairs order/hidden/
 	// sizes to the final tile set and drops out-of-bounds or overlapping
 	// placements (their tiles fall back to auto placement).
-	final := normalizeViews(&views)
+	final := normalizeViews(&views, cols, rows)
 	updated.Views = &final
 	err := WriteBoardFile(c.BoardFile, updated)
 	if err == nil {
@@ -784,10 +880,10 @@ func checkHATiles(tiles []HABoardTile) error {
 }
 
 // checkGeometry reports whether geometry is a per-tile map of known board
-// tile IDs to in-bounds placements (a nil value is valid: it clears the
-// tile's geometry; an empty map is valid: it changes nothing). Overlaps
-// are not a write error — normalization repairs them.
-func checkGeometry(geometry map[string]*TileGeometry, ids map[string]bool) error {
+// tile IDs to in-bounds placements on the cols x rows grid (a nil value is
+// valid: it clears the tile's geometry; an empty map is valid: it changes
+// nothing). Overlaps are not a write error — normalization repairs them.
+func checkGeometry(geometry map[string]*TileGeometry, ids map[string]bool, cols, rows int) error {
 	for id, g := range geometry {
 		if !ids[id] {
 			return fmt.Errorf("views.geometry keys may only be board tile IDs (the four view IDs or a views.ha_tiles id)")
@@ -795,24 +891,24 @@ func checkGeometry(geometry map[string]*TileGeometry, ids map[string]bool) error
 		if g == nil {
 			continue
 		}
-		if !validGeometry(g) {
-			return fmt.Errorf("views.geometry.%s must be {x, y, w, h} within the board's %d-column grid (1 <= w <= %d, 1 <= x <= %d-w, y >= 1, h >= 1)", id, BoardGridCols, BoardGridCols, BoardGridCols+1)
+		if !validGeometry(g, cols, rows) {
+			return fmt.Errorf("views.geometry.%s must be {x, y, w, h} within the board's %dx%d grid (1 <= w <= %d, 1 <= x <= %d-w+1, 1 <= h <= %d, 1 <= y <= %d-h+1)", id, cols, rows, cols, cols, rows, rows)
 		}
 	}
 	return nil
 }
 
-// normalizeViews fills in defaults and repairs stored values: ha_tiles
-// keeps only valid entries with distinct IDs, order becomes a permutation
-// of the board tile IDs (the four view IDs plus the HA tile IDs; known IDs
-// in stored order first, missing IDs appended in default order), hidden
-// keeps only known distinct IDs, calendar_mode falls back to "month", sizes
-// becomes a complete map of every board tile ID to a valid step (unknown
-// keys dropped, absent or invalid values fall back to the default step
-// "m"), and geometry keeps only in-bounds, non-overlapping placements for
-// known tiles (processed in board order; a dropped entry leaves the tile
-// auto-placed).
-func normalizeViews(v *Views) Views {
+// normalizeViews fills in defaults and repairs stored values on the
+// cols x rows grid: ha_tiles keeps only valid entries with distinct IDs,
+// order becomes a permutation of the board tile IDs (the four view IDs
+// plus the HA tile IDs; known IDs in stored order first, missing IDs
+// appended in default order), hidden keeps only known distinct IDs,
+// calendar_mode falls back to "month", sizes becomes a complete map of
+// every board tile ID to a valid step (unknown keys dropped, absent or
+// invalid values fall back to the default step "m"), and geometry keeps
+// only in-bounds, non-overlapping placements for known tiles (processed in
+// board order; a dropped entry leaves the tile auto-placed).
+func normalizeViews(v *Views, cols, rows int) Views {
 	out := DefaultViews()
 	if v == nil {
 		return out
@@ -855,7 +951,7 @@ func normalizeViews(v *Views) Views {
 			out.Sizes[id] = size
 		}
 	}
-	out.Geometry = normalizeGeometry(v.Geometry, order, known)
+	out.Geometry = normalizeGeometry(v.Geometry, order, known, cols, rows)
 	out.HATiles = haTiles
 	return out
 }

@@ -5,6 +5,7 @@ import type {
   CalendarInfo,
   CalendarMode,
   ChatMessage,
+  GridDims,
   HABoardTile,
   Push,
   TileGeometry,
@@ -84,6 +85,16 @@ export const api = {
     request<{ board: ApiBoard }>('/config/refresh', {
       method: 'PUT',
       body: JSON.stringify({ refresh_seconds: seconds }),
+    }).then((b) => b.board),
+
+  /**
+   * Persist the board's tile grid dimensions (board.grid, cols x rows
+   * units) server-side; the response carries the whole board section.
+   */
+  setGrid: (grid: GridDims) =>
+    request<{ board: ApiBoard }>('/config/grid', {
+      method: 'PUT',
+      body: JSON.stringify(grid),
     }).then((b) => b.board),
 
   /**

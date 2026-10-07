@@ -57,6 +57,7 @@ func (s *Server) Engine() *gin.Engine {
 	api := r.Group("/api")
 	api.GET("/config", s.getConfig)
 	api.PUT("/config/refresh", s.putConfigRefresh)
+	api.PUT("/config/grid", s.putConfigGrid)
 	api.PUT("/config/views", s.putConfigViews)
 	api.GET("/calendars", s.listCalendars)
 	api.GET("/events", s.listEvents)
@@ -159,6 +160,37 @@ func (s *Server) putConfigRefresh(c *gin.Context) {
 	if err := s.cfg.SetRefreshSeconds(*req.RefreshSeconds); err != nil {
 		status := http.StatusBadRequest
 		code := "bad_refresh_seconds"
+		if errors.Is(err, config.ErrNoBoardFile) {
+			status, code = http.StatusServiceUnavailable, "no_board_file"
+		} else if errors.Is(err, config.ErrBoardFileNotWritable) {
+			status, code = http.StatusServiceUnavailable, "board_file_not_writable"
+		}
+		fail(c, status, code, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"board": s.boardJSON()})
+}
+
+// putConfigGrid persists the board's tile grid dimensions (board.grid:
+// cols x rows units, each unit split evenly) to the board file. Same
+// exposure as GET /api/config: the dashboard itself has no login; the
+// board file is deliberately a non-secret config surface.
+func (s *Server) putConfigGrid(c *gin.Context) {
+	var req struct {
+		Cols *int `json:"cols"`
+		Rows *int `json:"rows"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "bad_request", `body must be JSON {"cols": n, "rows": n}`)
+		return
+	}
+	if req.Cols == nil || req.Rows == nil {
+		fail(c, http.StatusBadRequest, "bad_request", "cols and rows are required")
+		return
+	}
+	if err := s.cfg.SetGrid(*req.Cols, *req.Rows); err != nil {
+		status := http.StatusBadRequest
+		code := "bad_grid"
 		if errors.Is(err, config.ErrNoBoardFile) {
 			status, code = http.StatusServiceUnavailable, "no_board_file"
 		} else if errors.Is(err, config.ErrBoardFileNotWritable) {

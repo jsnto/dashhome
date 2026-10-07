@@ -10,8 +10,9 @@ import {
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { REFRESH_SECONDS_EVENT } from './refreshBus'
-import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, ViewId } from './types'
+import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, GridDims, ViewId } from './types'
 import type { Theme } from './theme'
+import { normalizeGrid, normalizeViews } from './utils'
 import SettingsPanel from './components/SettingsPanel'
 
 /** Fixture: HA + push configured, Google configured but awaiting sign-in, chat off. */
@@ -35,6 +36,7 @@ interface PanelProps {
   theme?: Theme
   onThemeChange?: (t: Theme) => void
   views?: BoardViews
+  grid?: GridDims
   onBoard?: (b: ApiBoard) => void
   onClose?: () => void
 }
@@ -42,12 +44,14 @@ interface PanelProps {
 function renderPanel(props: PanelProps = {}) {
   const onThemeChange = props.onThemeChange ?? vi.fn()
   const onClose = props.onClose ?? vi.fn()
+  const cfg = props.cfg ?? fixtureConfig
   const view = render(
     <SettingsPanel
-      cfg={props.cfg ?? fixtureConfig}
+      cfg={cfg}
       theme={props.theme ?? 'dark'}
       onThemeChange={onThemeChange}
       views={props.views}
+      grid={props.grid ?? normalizeGrid(cfg.board.grid)}
       onBoard={props.onBoard}
       onClose={onClose}
     />,
@@ -78,6 +82,8 @@ function renderPanelWithLiveCfg(initial: ApiConfig) {
         cfg={cfg}
         theme="dark"
         onThemeChange={() => {}}
+        views={normalizeViews(null)}
+        grid={normalizeGrid(cfg?.board.grid)}
         onBoard={(board) => {
           signals.board = board
           setCfg((c) => (c ? { ...c, board } : c))
@@ -129,6 +135,23 @@ function stubViewsApi(board: ApiBoard, haEntities: unknown[] = []) {
       }
       board.views = merged
       return new Response(JSON.stringify({ board: { ...board, views: merged } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    if (url === '/api/config/grid' && init?.method === 'PUT') {
+      const body = JSON.parse(String(init.body)) as { cols?: number; rows?: number }
+      if (
+        typeof body.cols !== 'number' || typeof body.rows !== 'number' ||
+        body.cols < 1 || body.cols > 24 || body.rows < 1 || body.rows > 24
+      ) {
+        return new Response(JSON.stringify({ error: 'bad_grid', detail: 'grid dimensions must be between 1 and 24' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      board.grid = { cols: body.cols, rows: body.rows }
+      return new Response(JSON.stringify({ board }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
@@ -529,6 +552,123 @@ describe('settings: tiles section', () => {
     )
     expect(names).toEqual(['Calendar', 'Hermes chat', 'Home', 'Hermes push'])
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the board grid row with the default 12 x 12 units', () => {
+    stubViewsApi({ ...fixtureConfig.board })
+    renderPanel()
+    go('Tiles')
+
+    expect(within(content()).getByText('Board grid')).toBeTruthy()
+    const cols = screen.getByRole('spinbutton', { name: 'Grid columns' }) as HTMLInputElement
+    const rows = screen.getByRole('spinbutton', { name: 'Grid rows' }) as HTMLInputElement
+    expect(cols.value).toBe('12')
+    expect(rows.value).toBe('12')
+  })
+
+  it('shows the stored grid from the board config', () => {
+    stubViewsApi({ ...fixtureConfig.board, grid: { cols: 8, rows: 5 } })
+    renderPanel({ grid: { cols: 8, rows: 5 } })
+    go('Tiles')
+    const cols = screen.getByRole('spinbutton', { name: 'Grid columns' }) as HTMLInputElement
+    const rows = screen.getByRole('spinbutton', { name: 'Grid rows' }) as HTMLInputElement
+    expect(cols.value).toBe('8')
+    expect(rows.value).toBe('5')
+  })
+
+  it('PUTs the new grid dimensions and adopts the server answer', async () => {
+    const board: ApiBoard = { ...fixtureConfig.board }
+    const fetchMock = stubViewsApi(board).fetchMock
+    renderPanel()
+    go('Tiles')
+
+    const cols = screen.getByRole('spinbutton', { name: 'Grid columns' }) as HTMLInputElement
+    const rows = screen.getByRole('spinbutton', { name: 'Grid rows' }) as HTMLInputElement
+    fireEvent.change(cols, { target: { value: '8' } })
+    fireEvent.change(rows, { target: { value: '5' } })
+    fireEvent.click(within(content()).getByRole('button', { name: 'Save' }))
+
+    await screen.findByText(/Saved — the board grid is now 8 by 5 units./)
+    const put = (fetchMock.mock.calls as Array<[string, RequestInit]>).find(
+      ([url]) => url === '/api/config/grid',
+    )
+    expect(put).toBeTruthy()
+    expect(JSON.parse(String(put![1].body))).toEqual({ cols: 8, rows: 5 })
+    // The answer is adopted: the fields and the board file hold 8x5.
+    expect((cols as HTMLInputElement).value).toBe('8')
+    expect((rows as HTMLInputElement).value).toBe('5')
+    expect(board.grid).toEqual({ cols: 8, rows: 5 })
+  })
+
+  it('keeps a typed grid value when a views save refreshes the config', async () => {
+    stubViewsApi({ ...fixtureConfig.board })
+    const { signals } = renderPanelWithLiveCfg(fixtureConfig)
+    go('Tiles')
+    const cols = screen.getByRole('spinbutton', { name: 'Grid columns' }) as HTMLInputElement
+    fireEvent.change(cols, { target: { value: '9' } })
+
+    // A tiles-section save persists and refreshes the config underneath
+    // the open panel (onBoard adopts the answer as a fresh cfg).
+    fireEvent.click(screen.getByRole('button', { name: 'Move Calendar down' }))
+    await vi.waitFor(() => expect(signals.board).toBeTruthy())
+    await act(async () => {})
+
+    // The typed value survived the config refresh (the stored grid is
+    // still the default, so the untouched field re-seeds to 12; the
+    // edited one keeps its draft).
+    const reopened = screen.getByRole('spinbutton', { name: 'Grid columns' }) as HTMLInputElement
+    expect(reopened.value).toBe('9')
+    const rows = screen.getByRole('spinbutton', { name: 'Grid rows' }) as HTMLInputElement
+    expect(rows.value).toBe('12')
+  })
+
+  it('reports an out-of-range grid without saving', async () => {
+    const fetchMock = stubViewsApi({ ...fixtureConfig.board }).fetchMock
+    renderPanel()
+    go('Tiles')
+
+    const cols = screen.getByRole('spinbutton', { name: 'Grid columns' }) as HTMLInputElement
+    fireEvent.change(cols, { target: { value: '99' } })
+    // The browser's own constraint validation (max=24) blocks the
+    // submit on a real click; submit the form directly to exercise the
+    // validation the handler runs on every submission.
+    fireEvent.submit(
+      within(content()).getByRole('button', { name: 'Save' }).closest('form') as HTMLFormElement,
+    )
+
+    await screen.findByText(/bad_grid — Grid dimensions must be whole numbers between 1 and 24./)
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('/api/config/grid'),
+      expect.anything(),
+    )
+    expect(cols.value).toBe('99') // the draft is kept for correction
+  })
+
+  it('reports a failed grid save and keeps the previous dimensions', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (input: unknown) => {
+      if (String(input) === '/api/config/grid') {
+        return new Response(
+          JSON.stringify({ error: 'board_file_not_writable', detail: 'denied' }),
+          { status: 503, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response(JSON.stringify({ error: 'not_configured' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderPanel()
+    go('Tiles')
+
+    const cols = screen.getByRole('spinbutton', { name: 'Grid columns' }) as HTMLInputElement
+    fireEvent.change(cols, { target: { value: '8' } })
+    fireEvent.click(within(content()).getByRole('button', { name: 'Save' }))
+
+    await screen.findByText(/board_file_not_writable — denied/)
+    // The failed save did not change the stored dimensions (the draft is
+    // kept so the user can correct and retry).
+    expect(cols.value).toBe('8')
   })
 })
 

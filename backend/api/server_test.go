@@ -685,6 +685,138 @@ func TestPutConfigViewsBoardFileNotWritable(t *testing.T) {
 	}
 }
 
+func TestPutConfigGrid(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds": 45}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	cfg.Board.RefreshSeconds = 45
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
+
+	// Persist the grid dimensions; the board file's other fields are kept.
+	w := do(r, "PUT", "/api/config/grid", map[string]any{"cols": 8, "rows": 10}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Board struct {
+			RefreshSeconds int            `json:"refresh_seconds"`
+			Grid           map[string]int `json:"grid"`
+		} `json:"board"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Board.RefreshSeconds != 45 {
+		t.Errorf("response refresh_seconds = %d, want preserved 45", resp.Board.RefreshSeconds)
+	}
+	if resp.Board.Grid["cols"] != 8 || resp.Board.Grid["rows"] != 10 {
+		t.Errorf("response grid = %+v, want 8x10", resp.Board.Grid)
+	}
+
+	// Persisted to the board file, other fields preserved.
+	data, _ := os.ReadFile(file)
+	if !strings.Contains(string(data), `"grid"`) || !strings.Contains(string(data), `"cols": 8`) ||
+		!strings.Contains(string(data), `"rows": 10`) {
+		t.Errorf("grid not written to the board file: %s", data)
+	}
+	if !strings.Contains(string(data), `"refresh_seconds": 45`) {
+		t.Errorf("other board fields not preserved: %s", data)
+	}
+
+	// Visible via GET /api/config.
+	wg := do(r, "GET", "/api/config", nil, nil)
+	var getResp struct {
+		Board struct {
+			Grid map[string]int `json:"grid"`
+		} `json:"board"`
+	}
+	json.NewDecoder(wg.Body).Decode(&getResp)
+	if getResp.Board.Grid["cols"] != 8 || getResp.Board.Grid["rows"] != 10 {
+		t.Errorf("GET grid = %+v, want 8x10", getResp.Board.Grid)
+	}
+}
+
+func TestPutConfigGridInvalid(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds": 30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
+
+	cases := []struct {
+		name string
+		body any
+	}{
+		{"cols-below-min", map[string]any{"cols": 0, "rows": 12}},
+		{"cols-above-max", map[string]any{"cols": 25, "rows": 12}},
+		{"rows-below-min", map[string]any{"cols": 12, "rows": 0}},
+		{"rows-above-max", map[string]any{"cols": 12, "rows": 25}},
+		{"missing-cols", map[string]any{"rows": 12}},
+		{"missing-both", map[string]any{}},
+		{"wrong-type", "not-json"},
+	}
+	for _, tc := range cases {
+		w := do(r, "PUT", "/api/config/grid", tc.body, map[string]string{"Content-Type": "application/json"})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code = %d, want 400: %s", tc.name, w.Code, w.Body.String())
+		}
+		var resp struct {
+			Error string `json:"error"`
+		}
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp.Error != "bad_grid" && resp.Error != "bad_request" {
+			t.Errorf("%s: error = %q, want bad_grid/bad_request", tc.name, resp.Error)
+		}
+	}
+
+	// Invalid updates leave the effective grid at the default and the file
+	// untouched.
+	if cols, rows := cfg.GridDims(); cols != 12 || rows != 12 {
+		t.Errorf("grid changed by invalid updates: %dx%d", cols, rows)
+	}
+	data, _ := os.ReadFile(file)
+	if strings.Contains(string(data), `"grid"`) {
+		t.Errorf("invalid updates wrote to the board file: %s", data)
+	}
+}
+
+func TestPutConfigGridRepairsViews(t *testing.T) {
+	// Shrinking the grid repairs stored placements that no longer fit: the
+	// write succeeds (repair, not a write error), and the answer serves
+	// the repaired layout.
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"views": {"geometry": {"chat": {"x": 7, "y": 1, "w": 6, "h": 1}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
+
+	w := do(r, "PUT", "/api/config/grid", map[string]any{"cols": 6, "rows": 6}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Board struct {
+			Views struct {
+				Geometry map[string]map[string]int `json:"geometry"`
+			} `json:"views"`
+		} `json:"board"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Board.Views.Geometry) != 0 {
+		t.Errorf("repaired geometry = %+v, want empty (chat falls back to auto placement)", resp.Board.Views.Geometry)
+	}
+}
+
 func TestPutConfigViewsGeometryAndHATiles(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "dashhome.json")
@@ -811,9 +943,11 @@ func TestPutConfigViewsGeometryHATilesInvalid(t *testing.T) {
 		name string
 		body any
 	}{
-		{"geometry-out-of-bounds", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 7, "y": 1, "w": 2, "h": 1}}}},
-		{"geometry-too-wide", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 1, "y": 1, "w": 7, "h": 1}}}},
-		{"geometry-crosses-edge", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 6, "y": 1, "w": 2, "h": 1}}}},
+		{"geometry-out-of-bounds", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 13, "y": 1, "w": 2, "h": 1}}}},
+		{"geometry-too-wide", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 1, "y": 1, "w": 13, "h": 1}}}},
+		{"geometry-crosses-edge", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 12, "y": 1, "w": 2, "h": 1}}}},
+		{"geometry-below-bottom", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 1, "y": 13, "w": 2, "h": 1}}}},
+		{"geometry-crosses-bottom", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 1, "y": 12, "w": 2, "h": 2}}}},
 		{"geometry-zero-height", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 1, "y": 1, "w": 2, "h": 0}}}},
 		{"geometry-unknown-tile", map[string]any{"geometry": map[string]any{"nope": map[string]int{"x": 1, "y": 1, "w": 2, "h": 1}}}},
 		{"geometry-not-an-object", map[string]any{"geometry": map[string]any{"calendar": "wide"}}},

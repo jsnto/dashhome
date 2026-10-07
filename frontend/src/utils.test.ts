@@ -1,39 +1,59 @@
 import { describe, expect, it } from 'vitest'
 import {
-  GRID_COLS,
+  GRID_DEFAULTS,
+  GRID_MAX,
+  GRID_MIN,
   haTileLabel,
   haTileState,
   isHATileId,
   isValidGeometry,
   normalizeGeometry,
+  normalizeGrid,
   normalizeHATiles,
   normalizeViews,
   rectsOverlap,
-  STEP_WIDTH,
   visibleOrder,
   VIEW_LABELS,
 } from './utils'
 
-describe('grid constants', () => {
-  it('the board is a 6-column grid with the documented size spans', () => {
-    expect(GRID_COLS).toBe(6)
-    expect(STEP_WIDTH).toEqual({ s: 2, m: 3, l: 4, xl: 6 })
+describe('grid dimensions', () => {
+  it('the board grid defaults to 12x12 and the usable range is 1..24', () => {
+    expect(GRID_DEFAULTS).toEqual({ cols: 12, rows: 12 })
+    expect(GRID_MIN).toBe(1)
+    expect(GRID_MAX).toBe(24)
+  })
+
+  it('normalizeGrid repairs a stored grid (per-axis fallback to the default)', () => {
+    expect(normalizeGrid(undefined)).toEqual({ cols: 12, rows: 12 })
+    expect(normalizeGrid(null)).toEqual({ cols: 12, rows: 12 })
+    expect(normalizeGrid({})).toEqual({ cols: 12, rows: 12 })
+    expect(normalizeGrid({ cols: 8, rows: 5 })).toEqual({ cols: 8, rows: 5 })
+    // an out-of-range dimension falls back per axis (freehand-editable
+    // board file surface)
+    expect(normalizeGrid({ cols: 99, rows: 4 })).toEqual({ cols: 12, rows: 4 })
+    expect(normalizeGrid({ cols: 6, rows: 0 })).toEqual({ cols: 6, rows: 12 })
+    expect(normalizeGrid({ cols: 25, rows: 25 })).toEqual({ cols: 12, rows: 12 })
+    expect(normalizeGrid({ cols: -3, rows: 1.5 })).toEqual({ cols: 12, rows: 12 })
+    expect(normalizeGrid({ cols: '8', rows: null })).toEqual({ cols: 12, rows: 12 })
   })
 })
 
 describe('isValidGeometry', () => {
-  it('accepts exactly the in-bounds 1-based integer cells', () => {
+  it('accepts exactly the in-bounds 1-based integer cells (12x12 grid)', () => {
     expect(isValidGeometry({ x: 1, y: 1, w: 1, h: 1 })).toBe(true)
-    expect(isValidGeometry({ x: 6, y: 1, w: 1, h: 9 })).toBe(true)
-    expect(isValidGeometry({ x: 1, y: 1, w: 6, h: 1 })).toBe(true)
+    expect(isValidGeometry({ x: 12, y: 12, w: 1, h: 1 })).toBe(true)
+    expect(isValidGeometry({ x: 1, y: 1, w: 12, h: 12 })).toBe(true)
     // out of bounds
     expect(isValidGeometry({ x: 0, y: 1, w: 1, h: 1 })).toBe(false)
-    expect(isValidGeometry({ x: 7, y: 1, w: 1, h: 1 })).toBe(false)
+    expect(isValidGeometry({ x: 13, y: 1, w: 1, h: 1 })).toBe(false)
     expect(isValidGeometry({ x: 1, y: 1, w: 0, h: 1 })).toBe(false)
-    expect(isValidGeometry({ x: 1, y: 1, w: 7, h: 1 })).toBe(false)
-    expect(isValidGeometry({ x: 2, y: 1, w: 6, h: 1 })).toBe(false) // 2+6 > 6
+    expect(isValidGeometry({ x: 1, y: 1, w: 13, h: 1 })).toBe(false)
+    expect(isValidGeometry({ x: 2, y: 1, w: 12, h: 1 })).toBe(false) // 2+12 > 12
     expect(isValidGeometry({ x: 1, y: 0, w: 1, h: 1 })).toBe(false)
+    expect(isValidGeometry({ x: 1, y: 13, w: 1, h: 1 })).toBe(false)
+    expect(isValidGeometry({ x: 1, y: 12, w: 1, h: 2 })).toBe(false) // 12+2 > 12
     expect(isValidGeometry({ x: 1, y: 1, w: 1, h: 0 })).toBe(false)
+    expect(isValidGeometry({ x: 1, y: 1, w: 1, h: 13 })).toBe(false)
     // not integers
     expect(isValidGeometry({ x: 1.5, y: 1, w: 1, h: 1 })).toBe(false)
     expect(isValidGeometry({ x: '1', y: 1, w: 1, h: 1 })).toBe(false)
@@ -41,6 +61,13 @@ describe('isValidGeometry', () => {
     expect(isValidGeometry(null)).toBe(false)
     expect(isValidGeometry('a')).toBe(false)
     expect(isValidGeometry(42)).toBe(false)
+  })
+
+  it('follows the configured grid dimensions', () => {
+    expect(isValidGeometry({ x: 7, y: 1, w: 1, h: 1 }, 6, 12)).toBe(false)
+    expect(isValidGeometry({ x: 6, y: 1, w: 1, h: 1 }, 6, 12)).toBe(true)
+    expect(isValidGeometry({ x: 1, y: 7, w: 1, h: 1 }, 12, 6)).toBe(false)
+    expect(isValidGeometry({ x: 1, y: 6, w: 1, h: 1 }, 12, 6)).toBe(true)
   })
 })
 
@@ -76,12 +103,25 @@ describe('normalizeGeometry', () => {
       {
         calendar: { x: 1, y: 1, w: 3, h: 1 },
         chat: { x: 2, y: 1, w: 3, h: 1 }, // overlaps calendar
-        home: { x: 8, y: 1, w: 1, h: 1 }, // out of bounds
+        home: { x: 13, y: 1, w: 1, h: 1 }, // out of bounds (past the right edge)
       },
       order,
       ids,
     )
     expect(out).toEqual({ calendar: { x: 1, y: 1, w: 3, h: 1 } })
+  })
+
+  it('drops row out-of-bounds entries by the grid rows', () => {
+    const out = normalizeGeometry(
+      {
+        calendar: { x: 1, y: 13, w: 1, h: 1 }, // below the bottom edge (12 rows)
+        chat: { x: 1, y: 12, w: 1, h: 2 }, // crosses the bottom edge
+        home: { x: 1, y: 12, w: 1, h: 1 }, // the bottom row itself is fine
+      },
+      order,
+      ids,
+    )
+    expect(out).toEqual({ home: { x: 1, y: 12, w: 1, h: 1 } })
   })
 
   it('tolerates a missing/odd raw map', () => {

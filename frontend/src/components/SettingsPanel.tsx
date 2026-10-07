@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
 import { ApiError, api, type HAEntity } from '../api'
 import { emitRefreshSeconds } from '../refreshBus'
-import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, HABoardTile, HAKind } from '../types'
+import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, GridDims, HABoardTile, HAKind } from '../types'
 import { VIEW_IDS } from '../types'
 import type { Theme } from '../theme'
-import { TILE_SIZE_LABELS, VIEW_LABELS, isHATileId, normalizeViews } from '../utils'
+import {
+  GRID_MAX,
+  GRID_MIN,
+  TILE_SIZE_LABELS,
+  VIEW_LABELS,
+  isHATileId,
+  normalizeGrid,
+  normalizeViews,
+} from '../utils'
 
 interface Props {
   cfg: ApiConfig | null
@@ -12,6 +20,9 @@ interface Props {
   onThemeChange: (t: Theme) => void
   /** Effective view layout (defaults already filled in). */
   views?: BoardViews
+  /** The board's effective tile grid (cols x rows units), repaired.
+   *  (Derived from cfg by the caller; the Tiles section edits it.) */
+  grid: GridDims
   /** Adopt a board just persisted server-side (keeps the dashboard in sync). */
   onBoard?: (board: ApiBoard) => void
   onClose: () => void
@@ -101,9 +112,11 @@ function serviceRows(cfg: ApiConfig): {
  */
 function TilesSection({
   views,
+  grid,
   onBoard,
 }: {
   views: BoardViews
+  grid: GridDims
   onBoard?: (board: ApiBoard) => void
 }) {
   // Optimistic local state: updated immediately, reverted if the save
@@ -111,6 +124,64 @@ function TilesSection({
   const [local, setLocal] = useState<BoardViews>(views)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<ApiError | null>(null)
+
+  // The board's tile grid dimensions, edited here and persisted server-side
+  // (board.grid). Same adopt-only-while-untouched pattern as the refresh
+  // interval: the section's saves refresh the config underneath an open
+  // panel (App adopts the answer via onBoard), and that must not clobber
+  // an in-progress edit.
+  const [gridCols, setGridCols] = useState(String(grid.cols))
+  const [gridRows, setGridRows] = useState(String(grid.rows))
+  const gridSeedRef = useRef(`${grid.cols}x${grid.rows}`)
+  const [gridSaving, setGridSaving] = useState(false)
+  const [gridSavedMsg, setGridSavedMsg] = useState<string | null>(null)
+  const [gridErr, setGridErr] = useState<ApiError | null>(null)
+
+  useEffect(() => {
+    const v = `${grid.cols}x${grid.rows}`
+    if (gridSeedRef.current === `${gridCols}x${gridRows}`) {
+      gridSeedRef.current = v
+      setGridCols(String(grid.cols))
+      setGridRows(String(grid.rows))
+    }
+    // gridCols/gridRows are deliberately not dependencies: the fields are
+    // adopted only on grid changes, not on every keystroke.
+  }, [grid]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveGrid = async (e: FormEvent) => {
+    e.preventDefault()
+    const cols = Number(gridCols)
+    const rows = Number(gridRows)
+    if (
+      !Number.isInteger(cols) || !Number.isInteger(rows) ||
+      cols < GRID_MIN || cols > GRID_MAX || rows < GRID_MIN || rows > GRID_MAX
+    ) {
+      setGridErr(
+        new ApiError(
+          0,
+          'bad_grid',
+          `Grid dimensions must be whole numbers between ${GRID_MIN} and ${GRID_MAX}.`,
+        ),
+      )
+      return
+    }
+    setGridSaving(true)
+    setGridErr(null)
+    setGridSavedMsg(null)
+    try {
+      const board = await api.setGrid({ cols, rows })
+      const applied = normalizeGrid(board.grid)
+      setGridCols(String(applied.cols))
+      setGridRows(String(applied.rows))
+      gridSeedRef.current = `${applied.cols}x${applied.rows}`
+      onBoard?.(board)
+      setGridSavedMsg(`Saved — the board grid is now ${applied.cols} by ${applied.rows} units.`)
+    } catch (e) {
+      setGridErr(e instanceof ApiError ? e : new ApiError(0, 'save_failed', String(e)))
+    } finally {
+      setGridSaving(false)
+    }
+  }
 
   useEffect(() => setLocal(views), [views])
 
@@ -241,6 +312,51 @@ function TilesSection({
       {err && (
         <p className="note err">
           {err.code} — {err.detail}
+        </p>
+      )}
+
+      <div className="settings-row">
+        <div>
+          <div className="settings-row-label">Board grid</div>
+          <div className="settings-row-desc">
+            The board is split evenly into this many units across (columns) and down
+            (rows); a tile spans whole units. 1–{GRID_MAX} each. Placements that no
+            longer fit a smaller grid fall back to automatic placement.
+          </div>
+        </div>
+        <form className="settings-grid" onSubmit={saveGrid}>
+          <input
+            className="num-input"
+            type="number"
+            min={GRID_MIN}
+            max={GRID_MAX}
+            step={1}
+            inputMode="numeric"
+            value={gridCols}
+            onChange={(e) => setGridCols(e.target.value)}
+            aria-label="Grid columns"
+          />
+          <span className="settings-interval-unit">×</span>
+          <input
+            className="num-input"
+            type="number"
+            min={GRID_MIN}
+            max={GRID_MAX}
+            step={1}
+            inputMode="numeric"
+            value={gridRows}
+            onChange={(e) => setGridRows(e.target.value)}
+            aria-label="Grid rows"
+          />
+          <button className="btn" type="submit" disabled={gridSaving}>
+            {gridSaving ? 'Saving…' : 'Save'}
+          </button>
+        </form>
+      </div>
+      {gridSavedMsg && <p className="note saved">{gridSavedMsg}</p>}
+      {gridErr && (
+        <p className="note err">
+          {gridErr.code} — {gridErr.detail}
         </p>
       )}
     </section>
@@ -464,6 +580,7 @@ export default function SettingsPanel({
   theme,
   onThemeChange,
   views = normalizeViews(null),
+  grid,
   onBoard,
   onClose,
 }: Props) {
@@ -595,7 +712,7 @@ export default function SettingsPanel({
               </section>
             )}
 
-            {section === 'tiles' && <TilesSection views={views} onBoard={onBoard} />}
+            {section === 'tiles' && <TilesSection views={views} grid={grid} onBoard={onBoard} />}
 
             {section === 'ha' && <HASection views={views} onBoard={onBoard} />}
 

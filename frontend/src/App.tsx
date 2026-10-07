@@ -3,15 +3,15 @@ import { api, ApiError } from './api'
 import type {
   ApiBoard,
   ApiConfig,
+  GridDims,
   NormalizedViews,
   TileGeometry,
-  TileSize,
   ViewId,
 } from './types'
-import { TILE_SIZES, VIEW_IDS } from './types'
+import { VIEW_IDS } from './types'
 import { useTheme } from './useTheme'
 import { useHAEntities } from './useHAEntities'
-import { GRID_COLS, normalizeViews, TILE_SIZE_LABELS, VIEW_LABELS, visibleOrder } from './utils'
+import { normalizeGrid, normalizeViews, VIEW_LABELS, visibleOrder } from './utils'
 import CalendarSection from './components/CalendarSection'
 import ChatPanel, { type UiMsg } from './components/ChatPanel'
 import FullscreenButton from './components/FullscreenButton'
@@ -21,22 +21,22 @@ import PushPanel from './components/PushPanel'
 import SettingsPanel from './components/SettingsPanel'
 import {
   autoLayout,
-  boardRows,
+  clampCell,
   dragCell,
   dropRefused,
   GridMetrics,
   measureGrid,
-  stepWidth,
 } from './tileGrid'
 
 /**
  * The tile board: the four views (plus any Home Assistant tiles) are the
- * tiles of a reflowing 6-column grid. A tile either flows automatically
- * (its size step's span) or sits at a stored placement (the board file's
- * views.geometry, which the server repairs). Edit mode exposes the
- * placement affordances: drag with the grip or title, nudge with the move
- * buttons, change the height, resize from the corner, and the size
- * stepper (which also drives a placed tile's width).
+ * tiles of a grid of cols x rows units (12 x 12 by default, editable in
+ * settings and persisted to the board file as board.grid). A tile either
+ * flows automatically (its size step's fraction of the grid's width) or
+ * sits at a stored placement (the board file's views.geometry, which the
+ * server repairs). Edit mode exposes the placement affordances: drag with
+ * the grip, set the width and height in units (numeric fields or the
+ * corner resize handle), both snapping to the grid.
  */
 
 // The stacked mobile fallback: below this breakpoint the board is a single
@@ -66,10 +66,6 @@ function useNarrow(): boolean {
 const isViewId = (id: string): id is ViewId =>
   (VIEW_IDS as readonly string[]).includes(id)
 
-// A tile's column span for its size step (the size stepper doubles as the
-// width control on a placed tile).
-const widthForSize = (size: TileSize | string | undefined) => stepWidth(size)
-
 export default function App() {
   const [cfg, setCfg] = useState<ApiConfig | null>(null)
   const [theme, setTheme] = useTheme()
@@ -85,27 +81,32 @@ export default function App() {
   // attempt).
   const [layoutErr, setLayoutErr] = useState<ApiError | null>(null)
   const [savingSize, setSavingSize] = useState(false)
+  // The width/height a user is typing into a tile's size fields, if any:
+  // { id, w, h } as raw input strings, committed on Enter/blur.
+  const [sizeDraft, setSizeDraft] = useState<{ id: string; w: string; h: string } | null>(null)
+
+  // The board's effective tile grid (cols x rows units): the board file's
+  // board.grid repaired to valid dimensions, defaulting to 12x12. Every
+  // layout, bounds and pixel computation below runs on these dimensions.
+  const grid = useMemo<GridDims>(() => normalizeGrid(cfg?.board.grid), [cfg])
 
   // Effective tile layout: the board file's views section with defaults
   // filled in (absent configuration = exactly today's board).
   const views = useMemo<NormalizedViews>(
-    () => normalizeViews(cfg?.board.views ?? null),
-    [cfg],
+    () => normalizeViews(cfg?.board.views ?? null, grid),
+    [cfg, grid],
   )
   // The tiles in board order; hidden tiles are omitted entirely (not
   // rendered, so they need no data polling).
-  const visible = useMemo(() => visibleOrder(views), [views])
+  const visible = useMemo(() => visibleOrder(views, grid), [views, grid])
 
   // The visible tiles' effective layout: the stored placements plus the
-  // auto flow of the rest — the board's rendered positions. The
-  // drag/resize pixel math and the placement controls all act on this.
+  // auto flow of the rest — the board's rendered positions. The drag
+  // pixel math and the size controls all act on this.
   const layout = useMemo(
-    () => autoLayout(visible, views.sizes, views.geometry),
-    [visible, views],
+    () => autoLayout(visible, views.sizes, views.geometry, grid.cols),
+    [visible, views, grid],
   )
-  // The board's total rows (that layout), used for the drag/resize
-  // pixel math.
-  const rows = useMemo(() => boardRows(layout), [layout])
 
   // Home Assistant tiles shown on the board drive the entity-state polling;
   // hidden HA tiles are skipped.
@@ -173,11 +174,10 @@ export default function App() {
       ]
     : []
 
-  // Persist a board-views patch (sizes and/or geometry) through the
-  // guarded write path; the server's answer (the saved, re-normalized
-  // layout) is adopted. One in-flight layout save at a time.
+  // Persist a board-views geometry patch through the guarded write path;
+  // the server's answer (the saved, re-normalized layout) is adopted.
+  // One in-flight layout save at a time.
   const commitViews = (patch: {
-    sizes?: Partial<Record<string, TileSize>>
     geometry?: Record<string, TileGeometry | null>
   }) => {
     if (!cfg) return
@@ -200,58 +200,39 @@ export default function App() {
     setEditMode(!editMode)
   }
 
-  // Change a tile's size step on the board: the tile's CSS span (and, for
-  // a placed tile, its geometry width) is persisted through the same
-  // guarded write path as the settings saves.
-  const changeSize = (id: string, size: TileSize) => {
-    if (savingSize || size === views.sizes[id]) return
-    // A placed tile's width follows the size step (the stepper is its
-    // width control); a new cell that overlaps a neighbour is refused
-    // (the tile stays where it is) instead of committed.
-    let cell: TileGeometry | null = null
-    const g = views.geometry[id]
-    if (g) {
-      const w = Math.min(widthForSize(size), GRID_COLS)
-      cell = { ...g, w, x: Math.max(1, Math.min(GRID_COLS - w + 1, g.x)) }
-      if (dropRefused(id, cell, visible, views.sizes, views.geometry)) return
-    }
-    setSavingSize(true)
-    setLayoutErr(null)
-    const patch: {
-      sizes: Partial<Record<string, TileSize>>
-      geometry?: Record<string, TileGeometry | null>
-    } = { sizes: { [id]: size } }
-    if (cell) patch.geometry = { [id]: cell }
-    commitViews(patch)
+  // Type a width or height (in grid units) into a tile's size field; the
+  // draft keeps the raw strings until committed, and a tile whose draft is
+  // cleared (or that is not the drafted one) shows its stored value.
+  const onSizeChange = (id: string, field: 'w' | 'h', value: string) => {
+    const g = layout[id]
+    if (!g) return
+    setSizeDraft((cur) => ({
+      id,
+      w: field === 'w' ? value : cur?.id === id ? cur.w : String(g.w),
+      h: field === 'h' ? value : cur?.id === id ? cur.h : String(g.h),
+    }))
   }
 
-  // A one-cell nudge from the on-tile move controls (placed tiles only).
-  const nudge = (id: string, dx: number, dy: number) => {
-    const g = views.geometry[id]
-    if (!g || savingSize) return
-    const cell: TileGeometry = {
-      ...g,
-      x: Math.max(1, Math.min(GRID_COLS - g.w + 1, g.x + dx)),
-      y: Math.max(1, g.y + dy),
-    }
-    if (cell.x === g.x && cell.y === g.y) return
-    if (dropRefused(id, cell, visible, views.sizes, views.geometry)) return
+  // Commit the width/height a user typed into a tile's size fields: the
+  // tile is placed (or re-placed) at the cell it currently renders with
+  // the new span, clamped into the cols x rows grid. A commit that would
+  // overlap a neighbour or no longer fit the grid is refused (the fields
+  // revert to the stored layout) — the same contract as a refused drag.
+  const commitSize = () => {
+    const draft = sizeDraft
+    setSizeDraft(null)
+    if (!draft) return
+    const cur = layout[draft.id]
+    if (!cur) return
+    const w = parseInt(draft.w, 10)
+    const h = parseInt(draft.h, 10)
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) return
+    const cell = clampCell({ x: cur.x, y: cur.y, w, h }, grid.cols, grid.rows)
+    if (cell.x === cur.x && cell.y === cur.y && cell.w === cur.w && cell.h === cur.h) return
+    if (dropRefused(draft.id, cell, visible, views.sizes, views.geometry, grid.cols, grid.rows)) return
     setSavingSize(true)
     setLayoutErr(null)
-    commitViews({ geometry: { [id]: cell } })
-  }
-
-  // Grow/shrink a tile's height (rows are unbounded), pinning an
-  // unplaced tile at the cell it currently renders in.
-  const stepHeight = (id: string, delta: number) => {
-    if (savingSize) return
-    const h = Math.max(1, layout[id].h + delta)
-    if (h === layout[id].h) return
-    const cell: TileGeometry = { ...layout[id], h }
-    if (dropRefused(id, cell, visible, views.sizes, views.geometry)) return
-    setSavingSize(true)
-    setLayoutErr(null)
-    commitViews({ geometry: { [id]: cell } })
+    commitViews({ geometry: { [draft.id]: cell } })
   }
 
   // --- Drag & drop (edit mode only). The live drag data lives in a ref;
@@ -280,7 +261,7 @@ export default function App() {
   const beginDrag = (id: string, mode: 'move' | 'resize', e: React.PointerEvent) => {
     if (!editMode || narrow) return
     if (!boardElRef.current) return
-    const metrics = measureGrid(boardElRef.current, rows)
+    const metrics = measureGrid(boardElRef.current, grid.rows, grid.cols)
     if (!metrics) return
     const origin = layout[id]
     dragRef.current = {
@@ -302,11 +283,11 @@ export default function App() {
       const dyPx = e.clientY - d.startClientY
       if (!d.moved && d.mode === 'move' && Math.hypot(dxPx, dyPx) < 4) return
       d.moved = true
-      const cell = dragCell(d.mode, d.origin, dxPx, dyPx, d.metrics)
-      const refused = dropRefused(d.id, cell, visible, views.sizes, views.geometry)
+      const cell = dragCell(d.mode, d.origin, dxPx, dyPx, d.metrics, grid.cols, grid.rows)
+      const refused = dropRefused(d.id, cell, visible, views.sizes, views.geometry, grid.cols, grid.rows)
       setPreview({ id: d.id, cell, refused })
     },
-    [visible, views],
+    [visible, views, grid],
   )
 
   const endDrag = useCallback(
@@ -461,25 +442,23 @@ export default function App() {
         data-edit={editMode || undefined}
         data-max={maximized ?? undefined}
         data-narrow={narrow || undefined}
+        style={{ '--grid-cols': grid.cols, '--grid-rows': grid.rows } as React.CSSProperties}
         onClick={handleBoardClick}
       >
         {visible.map((id) => {
           const maxed = maximized === id
-          const geo = views.geometry[id]
           const pv = preview?.id === id ? preview : null
           const dragging = pv !== null
-          // Inline placement only while a tile is placed, dragged, or (via
-          // the .maxed class) maximized: auto-placed tiles keep the CSS
-          // size spans, and data-narrow overrides everything (CSS
-          // !important) for the stacked fallback.
-          const placedStyle = dragging
-            ? {
-                gridColumn: `${pv.cell.x} / span ${pv.cell.w}`,
-                gridRow: `${pv.cell.y} / span ${pv.cell.h}`,
-              }
-            : geo
-              ? { gridColumn: `${geo.x} / span ${geo.w}`, gridRow: `${geo.y} / span ${geo.h}` }
-              : undefined
+          // The board's effective cell for this tile (the drag preview
+          // while dragging, its effective layout otherwise): the layout
+          // math is the single source of truth for rendering — every
+          // tile gets an explicit placement. Maximizing and the
+          // data-narrow override win (CSS !important / data-max).
+          const cell = dragging ? pv.cell : layout[id]
+          const placedStyle = {
+            gridColumn: `${cell.x} / span ${cell.w}`,
+            gridRow: `${cell.y} / span ${cell.h}`,
+          }
           return (
             <div
               key={id}
@@ -496,53 +475,53 @@ export default function App() {
               style={maxed || narrow ? undefined : placedStyle}
             >
               {editMode && (
-                <div className="tile-edit" role="group" aria-label={`${VIEW_LABELS[id as ViewId] ?? tileName(id)} tile size`}>
-                  <span className="tile-edit-label">Size</span>
-                  {TILE_SIZES.map((s) => (
-                    <button
-                      key={s}
-                      className="tile-size-btn"
-                      aria-pressed={views.sizes[id] === s}
-                      disabled={savingSize}
-                      onClick={() => changeSize(id, s)}
-                      title={`${TILE_SIZE_LABELS[s]} tile`}
-                    >
-                      {s.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {editMode && (
                 <div
-                  className="tile-layout"
+                  className="tile-edit"
                   role="group"
-                  aria-label={`${tileName(id)} tile placement`}
+                  aria-label={`${tileName(id)} tile controls`}
                 >
-                  <span className="tile-grip" title="Drag to move this tile" onPointerDown={(e) => beginDrag(id, 'move', e)}>
+                  <span
+                    className="tile-grip"
+                    title="Drag to move this tile"
+                    onPointerDown={(e) => beginDrag(id, 'move', e)}
+                  >
                     ⠿
                   </span>
-                  <span className="tile-move">
-                    <button type="button" className="btn tiny" title="Move left" aria-label={`move ${tileName(id)} left`} onClick={() => nudge(id, -1, 0)}>
-                      ←
-                    </button>
-                    <button type="button" className="btn tiny" title="Move right" aria-label={`move ${tileName(id)} right`} onClick={() => nudge(id, 1, 0)}>
-                      →
-                    </button>
-                    <button type="button" className="btn tiny" title="Move up" aria-label={`move ${tileName(id)} up`} onClick={() => nudge(id, 0, -1)}>
-                      ↑
-                    </button>
-                    <button type="button" className="btn tiny" title="Move down" aria-label={`move ${tileName(id)} down`} onClick={() => nudge(id, 0, 1)}>
-                      ↓
-                    </button>
+                  <span className="tile-size-field" title="Width, in grid units">
+                    <span className="tile-size-unit">W</span>
+                    <input
+                      className="tile-size-input"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={grid.cols}
+                      aria-label={`width of ${tileName(id)} in grid units`}
+                      value={sizeDraft?.id === id ? sizeDraft.w : String(layout[id].w)}
+                      disabled={savingSize}
+                      onChange={(e) => onSizeChange(id, 'w', e.target.value)}
+                      onBlur={commitSize}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitSize()
+                      }}
+                    />
                   </span>
-                  <span className="tile-h" title="Tile height (rows)">
-                    <button type="button" className="btn tiny" title="Make shorter" aria-label={`decrease height of ${tileName(id)}`} onClick={() => stepHeight(id, -1)}>
-                      −
-                    </button>
-                    <span className="tile-h-val">{views.geometry[id]?.h ?? 1}</span>
-                    <button type="button" className="btn tiny" title="Make taller" aria-label={`increase height of ${tileName(id)}`} onClick={() => stepHeight(id, 1)}>
-                      +
-                    </button>
+                  <span className="tile-size-field" title="Height, in grid units">
+                    <span className="tile-size-unit">H</span>
+                    <input
+                      className="tile-size-input"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={grid.rows}
+                      aria-label={`height of ${tileName(id)} in grid units`}
+                      value={sizeDraft?.id === id ? sizeDraft.h : String(layout[id].h)}
+                      disabled={savingSize}
+                      onChange={(e) => onSizeChange(id, 'h', e.target.value)}
+                      onBlur={commitSize}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitSize()
+                      }}
+                    />
                   </span>
                 </div>
               )}
@@ -572,6 +551,7 @@ export default function App() {
           theme={theme}
           onThemeChange={setTheme}
           views={views}
+          grid={grid}
           onBoard={(board: ApiBoard) => setCfg((c) => (c ? { ...c, board } : c))}
           onClose={() => setShowSettings(false)}
         />

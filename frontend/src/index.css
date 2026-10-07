@@ -132,54 +132,41 @@ body {
   text-decoration: underline;
 }
 
-/* board: a reflowing tile grid. The four views are the tiles (calendar,
-   chat, home, push); each tile spans one of the size steps (s/m/l/xl) of
-   the 6-column grid, and the grid reflows by tile size and by how many
-   tiles are visible (hidden tiles are not rendered). Rows split the
-   board's height evenly, so the tiles always fill the board exactly and
-   their cards scroll inside when their content is taller.
-   data-edit marks the board's edit mode (each tile shows a size control;
-   App mounts those only while editing). data-max fills the board with one
-   tile (the title-click maximize). data-narrow is the stacked mobile
-   fallback: a single column of full-width tiles, driven from matchMedia
-   in App.tsx (not a CSS media query) so there is one source of truth. */
+/* board: a full-height tile grid of cols x rows units (12 x 12 by
+   default; the board's --grid-cols/--grid-rows custom properties, set
+   from App.tsx off the board file's board.grid, split the width into
+   `cols` equal columns and the height into `rows` equal rows). The four
+   views are the tiles (calendar, chat, home, push, plus any Home
+   Assistant tiles); each tile gets an explicit placement from the board's
+   effective layout (the stored placements plus the auto flow of the
+   rest) and occupies only its own units — it is not stretched to fill
+   the remaining board height. If the layout overflows the grid rows the
+   grid stretches (the auto row rule covers the overflow). data-edit
+   marks the board's edit mode (each tile shows its move grip and the
+   width/height fields; App mounts those only while editing). data-max
+   fills the board with one tile (the title-click maximize). data-narrow
+   is the stacked mobile fallback: a single column of full-width tiles,
+   driven from matchMedia in App.tsx (not a CSS media query) so there is
+   one source of truth. */
 
 .board {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(var(--grid-cols, 12), 1fr);
+  grid-template-rows: repeat(var(--grid-rows, 12), minmax(0, 1fr));
   grid-auto-rows: minmax(0, 1fr);
   gap: 16px;
   flex: 1;
   min-height: 0;
 }
 
-/* each tile is a flex column: the optional edit-mode size row, then the
-   section card that fills the rest */
+/* each tile is a flex column: the optional edit-mode control row, then
+   the section card that fills the rest */
 .tile {
   position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-}
-
-/* the tile size steps: the column span on the 6-column grid. The default
-   step "m" (half the width) makes four tiles fill the board as a 2x2, the
-   default board. */
-.tile[data-size='s'] {
-  grid-column: span 2;
-}
-
-.tile[data-size='m'] {
-  grid-column: span 3;
-}
-
-.tile[data-size='l'] {
-  grid-column: span 4;
-}
-
-.tile[data-size='xl'] {
-  grid-column: span 6;
 }
 
 /* every tile hidden: a centered note instead of an empty board */
@@ -231,9 +218,10 @@ body {
   cursor: pointer;
 }
 
-/* edit mode: the per-tile size control above the card (a small segmented
-   S/M/L/XL control). App renders it only while the board is in edit mode,
-   so the normal board stays free of editing affordances. */
+/* edit mode: the per-tile control row above the card: the drag grip
+   (move), and the width/height fields (grid units). App renders it only
+   while the board is in edit mode, so the normal board stays free of
+   editing affordances. */
 .tile-edit {
   flex: none;
   display: flex;
@@ -242,44 +230,47 @@ body {
   margin-bottom: 8px;
 }
 
-.tile-edit-label {
-  font-size: 11px;
-  font-weight: 650;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-dim);
-}
-
-.tile-size-btn {
-  padding: 2px 8px;
-  font-size: 11.5px;
-  font-weight: 600;
+/* one width/height field: a small pill holding the unit letter and a
+   compact number input (committed on Enter/blur) */
+.tile-size-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--bg-card-2);
+}
+
+.tile-size-unit {
+  font-size: 11px;
+  font-weight: 650;
   color: var(--text-dim);
-  cursor: pointer;
 }
 
-.tile-size-btn:hover:not(:disabled) {
+.tile-size-input {
+  width: 3.4em;
+  padding: 1px 0;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.tile-size-field:has(.tile-size-input:focus) {
   border-color: var(--accent);
-  color: var(--accent);
 }
 
-.tile-size-btn[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--bg);
-}
-
-.tile-size-btn:disabled {
+.tile-size-input:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-/* the edit-mode placement affordances: the drag grip (move), the
-   whole-cell move buttons (the keyboard/click path), the height stepper
-   (rows are unbounded), and the corner resize handle (width + height). */
+/* the edit-mode move affordance: the drag grip (the width/height fields
+   and the corner resize handle cover sizing). */
 .tile-grip {
   flex: none;
   padding: 1px 7px;
@@ -303,22 +294,7 @@ body {
   cursor: grabbing;
 }
 
-.tile-move,
-.tile-h {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.tile-h-val {
-  min-width: 14px;
-  text-align: center;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-dim);
-}
-
-/* the corner resize handle (bottom-right of the tile) */
+/* the corner resize handle (bottom-right of the tile; width + height) */
 .tile-resize {
   position: absolute;
   right: 6px;
@@ -474,9 +450,12 @@ body {
 
 /* stacked mobile fallback: a single column of full-width tiles, each
    getting an equal share of the board's height (the board still fills the
-   viewport; the tiles keep their board order) */
+   viewport; the tiles keep their board order). The explicit grid rows
+   are reset so the auto-placed tiles (grid-row: auto) each take one
+   equal row of their own. */
 .board[data-narrow] {
   grid-template-columns: 1fr;
+  grid-template-rows: none;
 }
 
 .board[data-narrow] .tile {

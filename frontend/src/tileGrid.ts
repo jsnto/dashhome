@@ -1,17 +1,25 @@
 import type { TileGeometry, TileSize } from './types'
-import { GRID_COLS, STEP_WIDTH, rectsOverlap } from './utils'
+import { GRID_DEFAULTS, rectsOverlap } from './utils'
 
 /**
  * Pure board-grid logic (no DOM): automatic placement, bounds, and the
  * pointer → cell math that drives drag/resize snapping. The layout rules
  * mirror both the backend's geometry repair (config.normalizeGeometry)
- * and the browser's CSS grid auto flow for unpositioned items.
+ * and the browser's CSS grid auto flow for unpositioned items. Every
+ * function takes the grid's dimensions as a parameter (defaulting to the
+ * 12x12 default grid), so the math follows the board's effective grid.
  */
 
-/** The column span an auto-placed tile takes at each size step. */
-export function stepWidth(size: TileSize | string | undefined): number {
-  if (size === 's' || size === 'm' || size === 'l' || size === 'xl') return STEP_WIDTH[size]
-  return STEP_WIDTH.m
+/** The fraction of the grid's width a size step spans (the documented step
+ *  meanings: a third, half, two thirds, or the full width). */
+const STEP_FRAC: Record<TileSize, number> = { s: 1 / 3, m: 1 / 2, l: 2 / 3, xl: 1 }
+
+/** The column span an auto-placed tile takes at each size step (rounded
+ *  to whole units of the `cols`-column grid, clamped into it). */
+export function stepWidth(size: TileSize | string | undefined, cols = GRID_DEFAULTS.cols): number {
+  const frac =
+    size === 's' || size === 'm' || size === 'l' || size === 'xl' ? STEP_FRAC[size] : STEP_FRAC.m
+  return Math.max(1, Math.min(Math.round(frac * cols), cols))
 }
 
 /**
@@ -29,7 +37,7 @@ export function autoLayout(
   order: string[],
   sizes: Record<string, TileSize | string | undefined>,
   fixed: Record<string, TileGeometry> = {},
-  cols = GRID_COLS,
+  cols = GRID_DEFAULTS.cols,
 ): Record<string, TileGeometry> {
   const placed: TileGeometry[] = []
   for (const id of order) {
@@ -47,13 +55,15 @@ export function autoLayout(
       out[id] = f
       continue
     }
-    const w = Math.min(stepWidth(sizes[id]), cols)
+    const w = Math.min(stepWidth(sizes[id], cols), cols)
     let y = cursorY
     let cell: TileGeometry | null = null
     while (!cell) {
       // A width-w tile starting at x occupies columns x..x+w-1, so x may
       // reach cols-w+1 (an xl tile fills the row from column 1). Rows
-      // beyond the cursor restart the scan at column 1.
+      // beyond the cursor restart the scan at column 1. (Rows are open
+      // for the auto flow: if the board overflows its grid rows the grid
+      // stretches; user-placed cells stay bounded by clampCell/dropRefused.)
       for (let x = y === cursorY ? cursorX : 1; x <= cols - w + 1; x++) {
         if (free(y, x, w)) {
           cell = { x, y, w, h: 1 }
@@ -70,27 +80,19 @@ export function autoLayout(
   return out
 }
 
-/** The total grid rows a computed layout needs (1 when nothing is placed). */
-export function boardRows(layout: Record<string, TileGeometry>): number {
-  let rows = 1
-  for (const cell of Object.values(layout)) {
-    rows = Math.max(rows, cell.y + cell.h - 1)
-  }
-  return rows
-}
-
 /**
  * A cell the user tried to drag/resize to, clamped back into the grid:
- * the width can never exceed the board, the column can never cross the
- * right edge, and rows start at 1. (Out-of-board drops are refused at the
- * drop, never partially applied — this clamp keeps the LIVE PREVIEW
- * sensible while the pointer is still outside the board.)
+ * the width can never exceed the board's columns, the height its rows,
+ * and the cell can never cross the right or bottom edge. (Out-of-board
+ * drops are refused at the drop, never partially applied — this clamp
+ * keeps the LIVE PREVIEW sensible while the pointer is still outside the
+ * board.)
  */
-export function clampCell(g: TileGeometry, cols = GRID_COLS): TileGeometry {
+export function clampCell(g: TileGeometry, cols = GRID_DEFAULTS.cols, rows = GRID_DEFAULTS.rows): TileGeometry {
   const w = Math.max(1, Math.min(Math.round(g.w), cols))
-  const h = Math.max(1, Math.round(g.h))
+  const h = Math.max(1, Math.min(Math.round(g.h), rows))
   const x = Math.max(1, Math.min(Math.round(g.x), cols - w + 1))
-  const y = Math.max(1, Math.round(g.y))
+  const y = Math.max(1, Math.min(Math.round(g.y), rows - h + 1))
   return { x, y, w, h }
 }
 
@@ -110,12 +112,13 @@ export interface GridMetrics {
 
 /**
  * Measure the board grid in client pixels from the board element's box:
- * the content width splits into `cols` columns with `gap` between them.
- * Degenerate (zero-size) boxes yield a null metrics object — callers must
- * treat that as "cannot measure" (the jsdom tests stub getBoundingClientRect
+ * the content width splits into `cols` columns and the content height
+ * into `rows` rows, each with `gap` between the units. Degenerate
+ * (zero-size) boxes yield a null metrics object — callers must treat
+ * that as "cannot measure" (the jsdom tests stub getBoundingClientRect
  * to exercise the real math).
  */
-export function measureGrid(board: HTMLElement, rows: number, cols = GRID_COLS): GridMetrics | null {
+export function measureGrid(board: HTMLElement, rows: number, cols = GRID_DEFAULTS.cols): GridMetrics | null {
   const r = board.getBoundingClientRect()
   if (r.width <= 0 || r.height <= 0 || rows < 1) return null
   let gap = 0
@@ -138,21 +141,24 @@ export function dragCell(
   dxPx: number,
   dyPx: number,
   m: GridMetrics,
-  cols = GRID_COLS,
+  cols = GRID_DEFAULTS.cols,
+  rows = GRID_DEFAULTS.rows,
 ): TileGeometry {
   const dx = Math.round(dxPx / (m.colW + m.gap))
   const dy = Math.round(dyPx / (m.rowH + m.gap))
   if (mode === 'move') {
-    return clampCell({ x: origin.x + dx, y: origin.y + dy, w: origin.w, h: origin.h }, cols)
+    return clampCell({ x: origin.x + dx, y: origin.y + dy, w: origin.w, h: origin.h }, cols, rows)
   }
-  return clampCell({ x: origin.x, y: origin.y, w: origin.w + dx, h: origin.h + dy }, cols)
+  return clampCell({ x: origin.x, y: origin.y, w: origin.w + dx, h: origin.h + dy }, cols, rows)
 }
 
 /**
- * Whether a drop at `cell` is refused: the cell would overlap any other
- * placed tile (their cells come from the board's effective layout —
- * geometry entries plus the auto flow for the rest). Bounds are
- * guaranteed by clampCell/dragCell.
+ * Whether a drop at `cell` is refused: the cell is outside the cols x
+ * rows grid, or it would overlap any other placed tile (their cells come
+ * from the board's effective layout — geometry entries plus the auto flow
+ * for the rest). Cells from clampCell/dragCell are already in bounds; the
+ * bounds test keeps the contract (out-of-board drops are refused, never
+ * partially applied) for callers that build cells directly.
  */
 export function dropRefused(
   id: string,
@@ -160,8 +166,10 @@ export function dropRefused(
   order: string[],
   sizes: Record<string, TileSize | string | undefined>,
   geometry: Record<string, TileGeometry>,
-  cols = GRID_COLS,
+  cols = GRID_DEFAULTS.cols,
+  rows = GRID_DEFAULTS.rows,
 ): boolean {
+  if (cell.x + cell.w - 1 > cols || cell.y + cell.h - 1 > rows) return true
   const layout = autoLayout(order, sizes, geometry, cols)
   for (const other of order) {
     if (other === id) continue

@@ -18,11 +18,15 @@ dashhome is a single Go process (Gin) on port **3000** that integrates with
   to. Pushes are recorded durably, the **latest push is always shown** on the
   dashboard, and previous pushes are browsable in tabs (newest first).
 
-The board is a **tile grid** on a 6-column grid: the four views (calendar,
+The board is a **tile grid** on a 12 × 12 unit grid (12 units wide and 12
+units tall by default — each unit an even twelfth of the board's width or
+height — and the board spans its full height): the four views (calendar,
 chat, home, push) are the tiles, each sized to one of the size steps (small
-/ medium / large / full width), and the grid reflows by tile size and by how
-many tiles are shown. Home Assistant-backed tiles (button / visual, each
-bound to one entity — see the Home Assistant section) join the grid as
+/ medium / large / full width, in units of the grid width), and the grid
+reflows by tile size and by how many tiles are shown. The grid's dimensions
+(1–24 units per axis) are editable in the settings screen and persisted to
+the board file as `board.grid`. Home Assistant-backed tiles (button / visual,
+each bound to one entity — see the Home Assistant section) join the grid as
 first-class tiles. A tile's position is automatic by default, but it can be
 fixed to a cell (Edit tiles mode or hand-edited `views.geometry`); fixed
 tiles keep their spot while the rest reflow around them. Clicking a tile's
@@ -39,15 +43,17 @@ HA board tiles — a button or visual tile bound to one entity each, picked
 from `GET /api/ha/entities`; persisted to `dashhome.json` as
 `views.ha_tiles`), a read-only summary of
 which integrations are actually configured (including the full-dashboard
-embed settings), and the live-update interval (how often the Hermes push
-panel polls the backend, persisted to `dashhome.json`). The header's
-*Edit tiles* toggle switches the board into an edit mode, where each tile's
-size step is changed in place, fixed tiles can be dragged to another cell
-(or nudged by one cell, or resized from the corner / stepped in height —
-overlaps and drops off the board are refused and the tile snaps back), and
-the affordances are keyboard-operable buttons; placements and sizes are
-persisted to `dashhome.json` the same way (the tile set and order are
-managed from the settings screen).
+embed settings), the board grid dimensions (how many units wide and tall the
+tile grid is — `board.grid` in `dashhome.json`, default 12 × 12), and the
+live-update interval (how often the Hermes push panel polls the backend,
+persisted to `dashhome.json`). The header's *Edit tiles* toggle switches the
+board into an edit mode: each tile's width and height (in grid units) are
+set from numeric fields on the tile, tiles can be dragged to another cell
+(or resized by dragging the corner handle — every move snaps to the grid,
+and overlaps and drops off the board are refused and the tile snaps back);
+the affordances are keyboard-operable buttons; placements are persisted to
+`dashhome.json` the same way (the tile set and order are managed from the
+settings screen).
 
 Live updates: the Hermes push panel polls the backend on the configured
 interval; the backend fetches fresh data from each configured service on
@@ -345,6 +351,13 @@ the History tabs open any previous one.
   Google propagates the sharing.
 - `refresh_seconds` — UI polling interval hint (default 30, range 5–3600).
   Editable from the dashboard's settings screen, which persists it here.
+- `grid` — the tile grid's dimensions in units: `{"cols": N, "rows": M}`
+  (1–24 per axis, default 12 × 12). Each unit is an even `1/cols` slice of
+  the board's width and an even `1/rows` slice of its height; the board
+  always spans its full height, and a tile's stored cell must fit within
+  these bounds. Editable from the settings screen's Tiles section, which
+  persists it here; stored placements that fall outside a shrunken grid
+  are repaired back to automatic placement.
 - `ha_embed` — the full-dashboard iframe (optional; missing = default
 dashboard, no token in the URL):
   - `url_path` — dashboard `url_path` to embed (`null` = the default
@@ -354,8 +367,7 @@ dashboard, no token in the URL):
     only). Default `false`. See the notes above.
 - `views` — the dashboard's tile layout (optional; missing = the default
   board). Also persisted by the settings screen's Tiles section (tile set,
-  order, Home Assistant tiles) and the board's Edit tiles mode (sizes,
-  positions):
+  order, Home Assistant tiles) and the board's Edit tiles mode (positions):
   - `order` — the board tile IDs (the four view IDs `calendar`, `chat`,
     `home`, `push` plus every `views.ha_tiles` id) in the tile grid's
     reading order (row by row, left to right); the API always returns it
@@ -367,13 +379,16 @@ dashboard, no token in the URL):
     month grid) or `"schedule"` (a chronological list of upcoming
     events).
   - `sizes` — a per-tile map of board tile ID to size step: `"s"` (a third of
-    the board's width), `"m"` (half, the default), `"l"` (two thirds),
-    or `"xl"` (the full width). Missing/absent entries fall back to
+    the grid width), `"m"` (a half, the default), `"l"` (two thirds),
+    or `"xl"` (the full row). The step is a fraction of the grid's
+    `cols` (rounded, clamped to 1–`cols`); on the default 12-unit grid
+    that is 4 / 6 / 8 / 12 units. Missing/absent entries fall back to
     `"m"`.
   - `geometry` — a per-tile map of tile ID (view ID or HA tile ID) to a
     fixed grid cell `{"x", "y", "w", "h"}` (1-based columns and rows,
-    `w` ≤ 6, the cell must stay inside the board and must not overlap
-    another placed tile). Tiles with no entry are placed automatically
+    `1 ≤ x ≤ cols-w+1`, `1 ≤ y ≤ rows-h+1`, `w ≤ cols`, `h ≤ rows`, the
+    cell must stay inside the board and must not overlap another placed
+    tile). Tiles with no entry are placed automatically
     in board order (row by row); a fixed tile renders at its stored
     cell, width included. On load, invalid entries (out of bounds,
     non-integer, non-object, or overlapping) are dropped and the tile
@@ -393,9 +408,10 @@ dashboard, no token in the URL):
   (missing board tile IDs re-appear in the default order), an unknown
   `calendar_mode` falls back to `"month"`, `sizes` entries with an
   unknown board tile ID or an unknown step fall back to the default size,
-  `geometry` entries that are out of bounds or overlap a neighbour are
-  dropped (the tile falls back to automatic placement), and `ha_tiles`
-  entries with a bad id, entity, or kind are dropped.
+  `grid` dimensions outside 1–24 fall back to 12 per axis, `geometry`
+  entries that fall outside the grid (columns or rows) or overlap a
+  neighbour are dropped (the tile falls back to automatic placement), and
+  `ha_tiles` entries with a bad id, entity, or kind are dropped.
 
 Path: `CONFIG_FILE` (default `./dashhome.json`).
 
@@ -416,6 +432,7 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 | `GET /healthz` | Liveness probe |
 | `GET /api/config` | Dashboard config + integration status (no secrets) |
 | `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json` (the board file must be writable by the backend), `200 {board}` |
+| `PUT /api/config/grid` | `{"cols": n, "rows": m}` (1–24 per axis; both required) → set the tile grid's dimensions (each unit an even slice of the board's width/height; the board spans its full height) and persist to `dashhome.json` (the board file must be writable by the backend); stored placements that fall outside the new grid are repaired back to automatic placement, `400 bad_grid` for out-of-range or missing fields, `503` when the board file is missing or not writable, `200 {board}` |
 | `PUT /api/config/views` | `{"order": [...], "hidden": [...], "calendar_mode": "month"\|"schedule", "sizes": {tile: "s"\|"m"\|"l"\|"xl"}, "geometry": {tile: {"x": n, "y": n, "w": n, "h": n} \| null}, "ha_tiles": [...]}` (any subset of the fields; omitted fields keep their value, `sizes`/`geometry` change only the tiles they list, a `null` geometry entry clears that tile's placement, and `ha_tiles` replaces the list) → persist the dashboard's tile layout to `dashhome.json` (the board file must be writable by the backend); placements that fall outside the board are refused with `400 bad_views` (as are other invalid field values), and overlapping stored entries are dropped on load and on save — the tile falls back to automatic placement — `503` when the board file is missing or not writable, `200 {board}` |
 | `GET /api/calendars` | Calendar tabs: the configured `calendars` (shown even if the API's calendar list omits them), else every calendar visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
