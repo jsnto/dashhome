@@ -295,9 +295,10 @@ describe('app: tile board', () => {
     render(<App />)
 
     await waitFor(() => expect(tileWins()).toHaveLength(4))
-    // The size steps land on the board as grid spans (data-size), which
-    // the CSS maps to the column spans (xl = the full board width, s a
-    // third, l two thirds); the grid reflows around them.
+    // The size steps land on the board as the data-size attribute; the
+    // board's effective layout gives each tile its step's column span
+    // (xl = the full grid width, s a third, l two thirds), and the grid
+    // reflows around them.
     expect(boardEl().querySelectorAll('.tile[data-size="xl"]')).toHaveLength(2)
     expect(boardEl().querySelectorAll('.tile[data-size="s"]')).toHaveLength(1)
     expect(boardEl().querySelectorAll('.tile[data-size="l"]')).toHaveLength(1)
