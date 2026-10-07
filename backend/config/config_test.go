@@ -605,6 +605,27 @@ func sameStrings(got, want []string) bool {
 	return true
 }
 
+func mapsEqual(got, want map[string]string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for k, v := range want {
+		if got[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func defaultSizes() map[string]string {
+	return map[string]string{
+		ViewCalendar: ViewSizeMedium,
+		ViewChat:     ViewSizeMedium,
+		ViewHome:     ViewSizeMedium,
+		ViewPush:     ViewSizeMedium,
+	}
+}
+
 func viewsCfg(t *testing.T, content string) (*Config, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -634,11 +655,20 @@ func TestViewConfigDefaults(t *testing.T) {
 	if v.CalendarMode != CalendarModeMonth {
 		t.Errorf("default calendar_mode = %q, want %q", v.CalendarMode, CalendarModeMonth)
 	}
+	if !mapsEqual(v.Sizes, defaultSizes()) {
+		t.Errorf("default sizes = %v, want every view at the default step", v.Sizes)
+	}
 
 	// A board file that sets no views key at all behaves identically.
 	empty, _ := viewsCfg(t, `{"refresh_seconds": 15}`)
 	if v2 := empty.ViewConfig(); !sameStrings(v2.Order, v.Order) || len(v2.Hidden) != 0 || v2.CalendarMode != CalendarModeMonth {
 		t.Errorf("absent views = %+v, want the default layout", v2)
+	}
+
+	// A views section without a sizes key behaves like the default sizes.
+	noSizes, _ := viewsCfg(t, `{"views": {"order": ["calendar", "chat", "home", "push"], "hidden": []}}`)
+	if v3 := noSizes.ViewConfig(); !mapsEqual(v3.Sizes, defaultSizes()) {
+		t.Errorf("absent sizes = %v, want the default sizes", v3.Sizes)
 	}
 }
 
@@ -647,7 +677,8 @@ func TestViewConfigRepairsStoredValues(t *testing.T) {
 		"views": {
 			"order": ["push", "bogus", "chat", "push"],
 			"hidden": ["home", "unknown", "home"],
-			"calendar_mode": "weird"
+			"calendar_mode": "weird",
+			"sizes": {"calendar": "l", "home": "giant", "nope": "m", "chat": "xl"}
 		}
 	}`)
 	v := cfg.ViewConfig()
@@ -662,6 +693,16 @@ func TestViewConfigRepairsStoredValues(t *testing.T) {
 	if v.CalendarMode != CalendarModeMonth {
 		t.Errorf("repaired calendar_mode = %q, want %q", v.CalendarMode, CalendarModeMonth)
 	}
+	// Valid sizes kept; an invalid value (and the unknown key) fall back
+	// to the default step, and views with no stored entry get it too.
+	if !mapsEqual(v.Sizes, map[string]string{
+		ViewCalendar: ViewSizeLarge,
+		ViewChat:     ViewSizeXLarge,
+		ViewHome:     ViewSizeMedium,
+		ViewPush:     ViewSizeMedium,
+	}) {
+		t.Errorf("repaired sizes = %v", v.Sizes)
+	}
 }
 
 func TestSetViewsRoundTrip(t *testing.T) {
@@ -669,13 +710,23 @@ func TestSetViewsRoundTrip(t *testing.T) {
 	order := []string{ViewChat, ViewHome, ViewPush, ViewCalendar}
 	hidden := []string{ViewHome}
 	mode := CalendarModeSchedule
-	if err := cfg.SetViews(&order, &hidden, &mode); err != nil {
+	sizes := map[string]string{ViewCalendar: ViewSizeLarge, ViewPush: ViewSizeXLarge}
+	if err := cfg.SetViews(&order, &hidden, &mode, &sizes); err != nil {
 		t.Fatalf("SetViews: %v", err)
 	}
 
 	v := cfg.ViewConfig()
 	if !sameStrings(v.Order, order) || !sameStrings(v.Hidden, hidden) || v.CalendarMode != CalendarModeSchedule {
 		t.Errorf("in-memory views = %+v", v)
+	}
+	// The provided size entries change, the rest keep the default step.
+	if !mapsEqual(v.Sizes, map[string]string{
+		ViewCalendar: ViewSizeLarge,
+		ViewChat:     ViewSizeMedium,
+		ViewHome:     ViewSizeMedium,
+		ViewPush:     ViewSizeXLarge,
+	}) {
+		t.Errorf("in-memory sizes = %v", v.Sizes)
 	}
 
 	data, err := os.ReadFile(file)
@@ -691,6 +742,9 @@ func TestSetViewsRoundTrip(t *testing.T) {
 	}
 	if !sameStrings(onDisk.Views.Order, order) || !sameStrings(onDisk.Views.Hidden, hidden) || onDisk.Views.CalendarMode != CalendarModeSchedule {
 		t.Errorf("on-disk views = %+v", onDisk.Views)
+	}
+	if !mapsEqual(onDisk.Views.Sizes, v.Sizes) {
+		t.Errorf("on-disk sizes = %v, in-memory = %v", onDisk.Views.Sizes, v.Sizes)
 	}
 	// Other board fields are preserved.
 	if onDisk.RefreshSeconds != 45 || !sameStrings(onDisk.HAEntityIDs, []string{"climate.thermo"}) {
@@ -708,6 +762,9 @@ func TestSetViewsRoundTrip(t *testing.T) {
 	if !sameStrings(v2.Order, order) || !sameStrings(v2.Hidden, hidden) || v2.CalendarMode != CalendarModeSchedule {
 		t.Errorf("reloaded views = %+v", v2)
 	}
+	if !mapsEqual(v2.Sizes, v.Sizes) {
+		t.Errorf("reloaded sizes = %v, want %v", v2.Sizes, v.Sizes)
+	}
 }
 
 func TestSetViewsPartialUpdate(t *testing.T) {
@@ -717,7 +774,7 @@ func TestSetViewsPartialUpdate(t *testing.T) {
 
 	// Only the mode changes; order and hidden keep their stored values.
 	mode := CalendarModeMonth
-	if err := cfg.SetViews(nil, nil, &mode); err != nil {
+	if err := cfg.SetViews(nil, nil, &mode, nil); err != nil {
 		t.Fatalf("SetViews(mode): %v", err)
 	}
 	v := cfg.ViewConfig()
@@ -728,7 +785,7 @@ func TestSetViewsPartialUpdate(t *testing.T) {
 
 	// Only the order changes.
 	order := []string{ViewPush, ViewChat, ViewHome, ViewCalendar}
-	if err := cfg.SetViews(&order, nil, nil); err != nil {
+	if err := cfg.SetViews(&order, nil, nil, nil); err != nil {
 		t.Fatalf("SetViews(order): %v", err)
 	}
 	v = cfg.ViewConfig()
@@ -738,12 +795,37 @@ func TestSetViewsPartialUpdate(t *testing.T) {
 
 	// An empty hidden list clears the hidden set.
 	empty := []string{}
-	if err := cfg.SetViews(nil, &empty, nil); err != nil {
+	if err := cfg.SetViews(nil, &empty, nil, nil); err != nil {
 		t.Fatalf("SetViews(hidden=[]): %v", err)
 	}
 	v = cfg.ViewConfig()
 	if !sameStrings(v.Order, order) || len(v.Hidden) != 0 {
 		t.Errorf("after hidden=[] update = %+v", v)
+	}
+
+	// Only one tile's size changes; the other tiles keep their effective
+	// sizes (the board file set no sizes at all, so they are the default).
+	oneSize := map[string]string{ViewChat: ViewSizeSmall}
+	if err := cfg.SetViews(nil, nil, nil, &oneSize); err != nil {
+		t.Fatalf("SetViews(sizes): %v", err)
+	}
+	v = cfg.ViewConfig()
+	if !mapsEqual(v.Sizes, map[string]string{
+		ViewCalendar: ViewSizeMedium,
+		ViewChat:     ViewSizeSmall,
+		ViewHome:     ViewSizeMedium,
+		ViewPush:     ViewSizeMedium,
+	}) {
+		t.Errorf("after sizes-only update = %+v", v)
+	}
+
+	// An empty sizes map changes nothing.
+	none := map[string]string{}
+	if err := cfg.SetViews(nil, nil, nil, &none); err != nil {
+		t.Fatalf("SetViews(sizes={}): %v", err)
+	}
+	if !mapsEqual(cfg.ViewConfig().Sizes, v.Sizes) {
+		t.Errorf("empty sizes map changed the sizes: %v", cfg.ViewConfig().Sizes)
 	}
 }
 
@@ -754,18 +836,22 @@ func TestSetViewsInvalidLeavesStateUntouched(t *testing.T) {
 		order  []string
 		hidden []string
 		m      *string
+		sizes  *map[string]string
 	}{
-		{"order-missing-view", []string{ViewCalendar, ViewChat, ViewHome}, nil, nil},
-		{"order-duplicate", []string{ViewCalendar, ViewCalendar, ViewHome, ViewPush}, nil, nil},
-		{"order-unknown", []string{ViewCalendar, ViewChat, ViewHome, "nope"}, nil, nil},
-		{"order-extra", []string{ViewCalendar, ViewChat, ViewHome, ViewPush, ViewPush}, nil, nil},
-		{"hidden-unknown", nil, []string{"nope"}, nil},
-		{"hidden-duplicate", nil, []string{ViewPush, ViewPush}, nil},
-		{"mode-invalid", nil, nil, ptrString("grid")},
+		{"order-missing-view", []string{ViewCalendar, ViewChat, ViewHome}, nil, nil, nil},
+		{"order-duplicate", []string{ViewCalendar, ViewCalendar, ViewHome, ViewPush}, nil, nil, nil},
+		{"order-unknown", []string{ViewCalendar, ViewChat, ViewHome, "nope"}, nil, nil, nil},
+		{"order-extra", []string{ViewCalendar, ViewChat, ViewHome, ViewPush, ViewPush}, nil, nil, nil},
+		{"hidden-unknown", nil, []string{"nope"}, nil, nil},
+		{"hidden-duplicate", nil, []string{ViewPush, ViewPush}, nil, nil},
+		{"mode-invalid", nil, nil, ptrString("grid"), nil},
+		{"sizes-unknown-key", nil, nil, nil, ptrSizes(map[string]string{"nope": ViewSizeMedium})},
+		{"sizes-invalid-value", nil, nil, nil, ptrSizes(map[string]string{ViewCalendar: "giant"})},
+		{"sizes-mixed-invalid", nil, nil, nil, ptrSizes(map[string]string{ViewHome: ViewSizeLarge, ViewPush: "huge"})},
 	}
 	before := cfg.ViewConfig()
 	for _, tc := range cases {
-		err := cfg.SetViews(nilIfNil(tc.order), nilIfNil(tc.hidden), tc.m)
+		err := cfg.SetViews(nilIfNil(tc.order), nilIfNil(tc.hidden), tc.m, tc.sizes)
 		if err == nil {
 			t.Fatalf("%s: unexpected success", tc.name)
 		}
@@ -776,6 +862,9 @@ func TestSetViewsInvalidLeavesStateUntouched(t *testing.T) {
 	after := cfg.ViewConfig()
 	if !sameStrings(after.Order, before.Order) || !sameStrings(after.Hidden, before.Hidden) || after.CalendarMode != before.CalendarMode {
 		t.Errorf("state changed by invalid updates: %+v -> %+v", before, after)
+	}
+	if !mapsEqual(after.Sizes, before.Sizes) {
+		t.Errorf("sizes changed by invalid updates: %v -> %v", before.Sizes, after.Sizes)
 	}
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -795,10 +884,12 @@ func nilIfNil(s []string) *[]string {
 
 func ptrString(s string) *string { return &s }
 
+func ptrSizes(m map[string]string) *map[string]string { return &m }
+
 func TestSetViewsNoBoardFile(t *testing.T) {
 	cfg := &Config{}
 	order := []string{ViewCalendar, ViewChat, ViewHome, ViewPush}
-	if err := cfg.SetViews(&order, nil, nil); !errors.Is(err, ErrNoBoardFile) {
+	if err := cfg.SetViews(&order, nil, nil, nil); !errors.Is(err, ErrNoBoardFile) {
 		t.Errorf("err = %v, want ErrNoBoardFile", err)
 	}
 }
@@ -811,7 +902,7 @@ func TestSetViewsDirectoryPathIsNotWritable(t *testing.T) {
 	}
 	cfg := &Config{BoardFile: file}
 	order := []string{ViewChat, ViewCalendar, ViewHome, ViewPush}
-	if err := cfg.SetViews(&order, nil, nil); !errors.Is(err, ErrBoardFileNotWritable) {
+	if err := cfg.SetViews(&order, nil, nil, nil); !errors.Is(err, ErrBoardFileNotWritable) {
 		t.Fatalf("err = %v, want ErrBoardFileNotWritable", err)
 	}
 	v := cfg.ViewConfig()
@@ -825,7 +916,7 @@ func TestSetRefreshSecondsPreservesViews(t *testing.T) {
 	order := []string{ViewChat, ViewHome, ViewPush, ViewCalendar}
 	hidden := []string{ViewPush}
 	mode := CalendarModeSchedule
-	if err := cfg.SetViews(&order, &hidden, &mode); err != nil {
+	if err := cfg.SetViews(&order, &hidden, &mode, nil); err != nil {
 		t.Fatalf("SetViews: %v", err)
 	}
 	if err := cfg.SetRefreshSeconds(60); err != nil {

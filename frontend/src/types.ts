@@ -7,7 +7,7 @@ export interface HAEmbed {
   token_url?: boolean
 }
 
-/** The four dashboard views, in the default board order (the 2x2 layout's reading order: main-top, main-bottom, side-top, side-bottom). */
+/** The four dashboard views (the board's tiles), in the default board order (the tile grid's reading order: row by row, left to right). */
 export const VIEW_IDS = ['calendar', 'chat', 'home', 'push'] as const
 
 export type ViewId = (typeof VIEW_IDS)[number]
@@ -15,7 +15,15 @@ export type ViewId = (typeof VIEW_IDS)[number]
 /** How the Calendar view renders. */
 export type CalendarMode = 'month' | 'schedule'
 
-/** The board's view layout (the optional `views` object of the board file). */
+/** The tile size steps (column spans on the board's 6-column grid), smallest to widest. */
+export const TILE_SIZES = ['s', 'm', 'l', 'xl'] as const
+
+export type TileSize = (typeof TILE_SIZES)[number]
+
+/** The default tile size: half the board's width (four of them form the default 2x2 board). */
+export const DEFAULT_TILE_SIZE: TileSize = 'm'
+
+/** The board's tile layout (the optional `views` object of the board file). */
 export interface BoardViews {
   /** View IDs in board order; always a permutation of VIEW_IDS. */
   order: ViewId[]
@@ -23,6 +31,8 @@ export interface BoardViews {
   hidden: ViewId[]
   /** How the Calendar view renders: 'month' (grid) or 'schedule' (list). */
   calendar_mode: CalendarMode
+  /** Per-tile size step; always complete (every view ID, a valid step). */
+  sizes: Record<ViewId, TileSize>
 }
 
 export interface ApiBoard {

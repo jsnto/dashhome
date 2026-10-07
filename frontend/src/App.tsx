@@ -1,8 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from './api'
-import type { ApiConfig, ApiBoard, BoardViews } from './types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { api, ApiError } from './api'
+import type { ApiBoard, ApiConfig, BoardViews, TileSize, ViewId } from './types'
+import { TILE_SIZES } from './types'
 import { useTheme } from './useTheme'
-import { normalizeViews } from './utils'
+import { normalizeViews, TILE_SIZE_LABELS, VIEW_LABELS } from './utils'
 import CalendarSection from './components/CalendarSection'
 import ChatPanel, { type UiMsg } from './components/ChatPanel'
 import FullscreenButton from './components/FullscreenButton'
@@ -11,65 +12,59 @@ import PushPanel from './components/PushPanel'
 import SettingsPanel from './components/SettingsPanel'
 
 /**
- * Window split proportions, kept in React state (session-only — they reset
- * on reload) and exposed to the CSS as flex-grow ratios via the --col /
- * --main / --side custom properties set on .layout. On desktop --col splits
- * the layout width; on the stacked mobile fallback the same properties
- * split the rows, so every handle keeps working in both layouts.
+ * The tile board: the four views are the tiles of a reflowing grid. Each
+ * visible view is a tile (calendar, chat, home, push) that spans one of
+ * the size steps (s/m/l/xl) of the board's 6-column grid; the grid
+ * reflows by tile size and by how many tiles are visible. Tiles are in
+ * board order (the views section's order), and a hidden tile is not
+ * rendered at all (it needs no data polling).
  */
-const COL_FRAC = 7 / 12 // matches the original 7fr / 5fr column split
-const ROW_FRAC = 0.5
-const MIN_FRAC = 0.1
-const MAX_FRAC = 0.9
+
+// The stacked mobile fallback: below this breakpoint the board is a single
+// column of full-width tiles (each tile gets an equal share of the
+// board's height). Driven from matchMedia (data-narrow on the board)
+// rather than a CSS media query, so there is one source of truth and the
+// fallback is testable.
 const NARROW_QUERY = '(max-width: 980px)'
 
-type WinId = 'calendar' | 'chat' | 'home' | 'push'
-type DragId = 'col' | 'main' | 'side'
-type Axis = 'x' | 'y'
-
-// The titles the windows actually show (their card-head h2); the resize
-// handles name their two neighbours, so these match the visible titles.
-const WIN_TITLES: Record<WinId, string> = {
-  calendar: 'Calendar',
-  chat: 'Hermes',
-  home: 'Home',
-  push: 'Hermes push',
-}
-
-interface DragSession {
-  id: DragId
-  axis: Axis
-  start: number
-  startFrac: number
-  size: number
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia(NARROW_QUERY).matches,
+  )
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return // no media queries (some test DOMs)
+    const mql = window.matchMedia(NARROW_QUERY)
+    const onChange = (e: MediaQueryListEvent) => setNarrow(e.matches)
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+  return narrow
 }
 
 export default function App() {
   const [cfg, setCfg] = useState<ApiConfig | null>(null)
   const [theme, setTheme] = useTheme()
   const [showSettings, setShowSettings] = useState(false)
+  // The board's edit mode: each visible tile shows a size control; the
+  // title-click maximize is suspended while it is on.
+  const [editMode, setEditMode] = useState(false)
+  // The tile whose title was last clicked (fills the board), if any.
+  const [maximized, setMaximized] = useState<ViewId | null>(null)
+  const narrow = useNarrow()
+  // A size save that failed (shown above the board, cleared on the next
+  // attempt).
+  const [sizeErr, setSizeErr] = useState<ApiError | null>(null)
+  const [savingSize, setSavingSize] = useState(false)
 
-  // Effective view layout: the board file's views section with defaults
-  // filled in (absent configuration = exactly today's board). The four
-  // views map one-to-one onto the board's slots in reading order
-  // (main-top, main-bottom, side-top, side-bottom): a view keeps its slot
-  // when the order changes, and a hidden view is not rendered at all (its
-  // slot stays empty and the view needs no data polling).
+  // Effective tile layout: the board file's views section with defaults
+  // filled in (absent configuration = exactly today's board).
   const views = useMemo<BoardViews>(() => normalizeViews(cfg?.board.views), [cfg])
-  const slotView = (slot: number): WinId | null => {
-    const id = views.order[slot]
-    return id !== undefined && !views.hidden.includes(id) ? id : null
-  }
-  const mainWins = [slotView(0), slotView(1)].filter((w): w is WinId => w !== null)
-  const sideWins = [slotView(2), slotView(3)].filter((w): w is WinId => w !== null)
-  const visible = [...mainWins, ...sideWins]
-
-  // Split proportions: left column's share, top window's share per column.
-  const [colFrac, setColFrac] = useState(COL_FRAC)
-  const [mainFrac, setMainFrac] = useState(ROW_FRAC)
-  const [sideFrac, setSideFrac] = useState(ROW_FRAC)
-  // The window whose title was last clicked (fills the layout), if any.
-  const [maximized, setMaximized] = useState<WinId | null>(null)
+  // The tiles in board order; hidden tiles are omitted entirely (not
+  // rendered, so they need no data polling).
+  const visible = views.order.filter((id) => !views.hidden.includes(id))
 
   // The Hermes chat transcript (and its id counter) lives here rather than
   // in ChatPanel: the backend is stateless (the client sends the whole
@@ -83,12 +78,6 @@ export default function App() {
     const id = chatIdRef.current++
     setChatMsgs((cur) => [...cur, { ...m, id }])
   }
-
-  const layoutRef = useRef<HTMLElement>(null)
-  const colMainRef = useRef<HTMLDivElement>(null)
-  const colSideRef = useRef<HTMLDivElement>(null)
-  const dragRef = useRef<DragSession | null>(null)
-  const [dragAxis, setDragAxis] = useState<Axis | null>(null)
 
   useEffect(() => {
     api
@@ -105,8 +94,8 @@ export default function App() {
       .catch(() => {})
   }, [showSettings])
 
-  // A maximized window that gets hidden in the settings must not leave the
-  // layout maximized to nothing: restore the full split.
+  // A maximized tile that gets hidden must not leave the board maximized
+  // to nothing: restore the full grid.
   const visibleKey = visible.join(',')
   useEffect(() => {
     if (maximized && !visible.includes(maximized)) setMaximized(null)
@@ -138,77 +127,50 @@ export default function App() {
       ]
     : []
 
-  const isNarrow = () =>
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia(NARROW_QUERY).matches
-
-  const handleDragStart = (id: DragId) => (e: React.PointerEvent<HTMLDivElement>) => {
-    // The column handle splits the columns left/right on desktop but the
-    // stacked rows on the narrow layout, so its drag axis follows the media
-    // query; the in-column handles always drag vertically.
-    const axis: Axis = id === 'col' ? (isNarrow() ? 'y' : 'x') : 'y'
-    const container =
-      id === 'col' ? layoutRef.current : id === 'main' ? colMainRef.current : colSideRef.current
-    const rect = container?.getBoundingClientRect()
-    const size = rect ? (axis === 'x' ? rect.width : rect.height) : 0
-    const startFrac = id === 'col' ? colFrac : id === 'main' ? mainFrac : sideFrac
-    dragRef.current = { id, axis, start: axis === 'x' ? e.clientX : e.clientY, startFrac, size }
-    setDragAxis(axis)
-    e.preventDefault()
-    e.currentTarget.setPointerCapture?.(e.pointerId)
+  // Entering edit mode clears a maximized tile: with the other tiles
+  // hidden there would be nothing to size.
+  const toggleEditMode = () => {
+    if (!editMode) setMaximized(null)
+    setEditMode(!editMode)
   }
 
-  const handleDragMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const d = dragRef.current
-    if (!d) return
-    const pos = d.axis === 'x' ? e.clientX : e.clientY
-    const delta = d.size > 0 ? (pos - d.start) / d.size : 0
-    const frac = Math.min(MAX_FRAC, Math.max(MIN_FRAC, d.startFrac + delta))
-    if (d.id === 'col') setColFrac(frac)
-    else if (d.id === 'main') setMainFrac(frac)
-    else setSideFrac(frac)
+  // Change a tile's size step on the board: persisted to the board file
+  // (the views section's per-tile sizes map) through the same guarded
+  // write path as the settings saves; the server's answer adopts the new
+  // layout. One in-flight save at a time (the controls disable while it
+  // runs); a failure is reported above the board.
+  const changeSize = (id: ViewId, size: TileSize) => {
+    if (savingSize || size === views.sizes[id]) return
+    setSavingSize(true)
+    setSizeErr(null)
+    api
+      .setViews({ sizes: { [id]: size } })
+      .then((board: ApiBoard) => setCfg((c) => (c ? { ...c, board } : c)))
+      .catch((e: unknown) =>
+        setSizeErr(e instanceof ApiError ? e : new ApiError(0, 'save_failed', String(e))),
+      )
+      .finally(() => setSavingSize(false))
   }
 
-  const handleDragEnd = () => {
-    dragRef.current = null
-    setDragAxis(null)
-  }
-
-  // While dragging, the resize cursor and no-select must follow the pointer
-  // even when it leaves the handle.
-  useEffect(() => {
-    const body = document.body
-    body.classList.toggle('resizing-x', dragAxis === 'x')
-    body.classList.toggle('resizing-y', dragAxis === 'y')
-    return () => {
-      body.classList.remove('resizing-x', 'resizing-y')
-    }
-  }, [dragAxis])
-
-  // Clicking a window's title (the h2 in .card-head) maximizes that window
-  // to the whole layout; clicking it again restores the previous split,
-  // which is kept in state so the proportions come back exactly.
-  const handleLayoutClick = (e: React.MouseEvent) => {
+  // Clicking a tile's title (the h2 in .card-head) fills the board with
+  // that tile; clicking it again restores the grid. Only the four
+  // dashboard tiles are maximizable, and nothing toggles while the board
+  // is in edit mode (sizing is the point then, and maximizing would hide
+  // the other tiles).
+  const handleBoardClick = (e: React.MouseEvent) => {
+    if (editMode) return
     const h2 = (e.target as HTMLElement).closest('h2')
     if (!h2?.closest('.card-head')) return
     const raw = h2.closest<HTMLElement>('[data-win]')?.dataset.win
-    // Only the four dashboard windows are maximizable; ignore anything else
-    // (and this narrows raw to WinId).
+    // Only the four dashboard tiles are maximizable; ignore anything else
+    // (and this narrows raw to ViewId).
     if (raw !== 'calendar' && raw !== 'chat' && raw !== 'home' && raw !== 'push') return
     setMaximized((m) => (m === raw ? null : raw))
   }
 
-  const dividerProps = (id: DragId) => ({
-    onPointerDown: handleDragStart(id),
-    onPointerMove: handleDragMove,
-    onPointerUp: handleDragEnd,
-    onPointerCancel: handleDragEnd,
-  })
-
-  // One dashboard window: the component is mounted only while the view is
+  // One dashboard tile: the component is mounted only while the view is
   // visible, so hidden views neither render nor poll for data.
-  const winNode = (id: WinId) => {
+  const winNode = (id: ViewId) => {
     switch (id) {
       case 'calendar':
         return <CalendarSection mode={views.calendar_mode} />
@@ -221,46 +183,6 @@ export default function App() {
       default:
         return null
     }
-  }
-
-  // A board column (main or side): its visible windows in slot order, with
-  // a resize handle between stacked windows. A lone window fills the
-  // column (no handle, no fixed share); an empty column is omitted entirely.
-  // The slot numbers (0-3) are the board's reading-order slots, so the
-  // data-slot attribute — and the drag-resized proportion attached to it —
-  // follows the slot, not the view.
-  const renderColumn = (col: 'main' | 'side') => {
-    const slots: [number, number] = col === 'main' ? [0, 1] : [2, 3]
-    const items: { win: WinId; slot: number }[] = []
-    for (const slot of slots) {
-      const win = slotView(slot)
-      if (win !== null) items.push({ win, slot })
-    }
-    if (items.length === 0) return null
-    return (
-      <div ref={col === 'main' ? colMainRef : colSideRef} className={`col-${col}`}>
-        {items.map(({ win, slot }, i) => (
-          <Fragment key={win}>
-            {i > 0 && (
-              <div
-                className="divider divider-h"
-                role="separator"
-                aria-orientation="horizontal"
-                aria-label={`Resize ${WIN_TITLES[items[i - 1].win]} and ${WIN_TITLES[win]}`}
-                {...dividerProps(col)}
-              />
-            )}
-            <div
-              className={items.length === 1 ? 'win solo' : 'win'}
-              data-win={win}
-              data-slot={slot % 2 === 0 ? `${col}-top` : `${col}-bottom`}
-            >
-              {winNode(win)}
-            </div>
-          </Fragment>
-        ))}
-      </div>
-    )
   }
 
   return (
@@ -279,6 +201,14 @@ export default function App() {
           </div>
           <button
             className="btn ghost small"
+            onClick={toggleEditMode}
+            aria-pressed={editMode}
+            title={editMode ? 'Leave the tile edit mode' : 'Edit the tiles\' sizes on the board'}
+          >
+            Edit tiles
+          </button>
+          <button
+            className="btn ghost small"
             onClick={() => setShowSettings((s) => !s)}
             aria-pressed={showSettings}
           >
@@ -288,38 +218,44 @@ export default function App() {
         </div>
       </header>
 
+      {sizeErr && (
+        <p className="note err board-err">
+          {sizeErr.code} — {sizeErr.detail}
+        </p>
+      )}
+
       <main
-        ref={layoutRef}
-        className="layout"
+        className="board"
+        data-edit={editMode || undefined}
         data-max={maximized ?? undefined}
-        data-max-col={maximized ? (mainWins.includes(maximized) ? 'main' : 'side') : undefined}
-        style={
-          {
-            '--col': colFrac,
-            '--col-r': 1 - colFrac,
-            '--main': mainFrac,
-            '--main-r': 1 - mainFrac,
-            '--side': sideFrac,
-            '--side-r': 1 - sideFrac,
-          } as React.CSSProperties
-        }
-        onClick={handleLayoutClick}
+        data-narrow={narrow || undefined}
+        onClick={handleBoardClick}
       >
-        {renderColumn('main')}
-        {mainWins.length > 0 && sideWins.length > 0 && (
-          <div
-            className="divider divider-v"
-            role="separator"
-            aria-label="Resize columns"
-            {...dividerProps('col')}
-          />
-        )}
-        {renderColumn('side')}
+        {visible.map((id) => (
+          <div key={id} className="tile" data-win={id} data-size={views.sizes[id]}>
+            {editMode && (
+              <div className="tile-edit" role="group" aria-label={`${VIEW_LABELS[id]} tile size`}>
+                <span className="tile-edit-label">Size</span>
+                {TILE_SIZES.map((s) => (
+                  <button
+                    key={s}
+                    className="tile-size-btn"
+                    aria-pressed={views.sizes[id] === s}
+                    disabled={savingSize}
+                    onClick={() => changeSize(id, s)}
+                    title={`${TILE_SIZE_LABELS[s]} tile`}
+                  >
+                    {s.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+            {winNode(id)}
+          </div>
+        ))}
         {visible.length === 0 && (
-          <div className="layout-empty">
-            <p className="note">
-              All dashboard views are hidden. Open Settings → Views to show one again.
-            </p>
+          <div className="board-empty">
+            <p className="note">All dashboard tiles are hidden. Open Settings → Tiles to show one again.</p>
           </div>
         )}
       </main>

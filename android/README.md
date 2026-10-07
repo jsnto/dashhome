@@ -8,14 +8,14 @@ stacked panes; wide displays (screen width ≥ 600 dp, e.g. tablets) get a
 one-page board that shows everything on one screen at a time, like the web
 dashboard — a single screen of live content windows: the main column is
 the Calendar section over the Hermes chat panel, the side column is the
-Home Assistant embed over the Hermes push panel (the web's 7fr/5fr column
-split as the default; the drag handles between the windows resize the
-splits, like the web's dividers). Every window shows its real section
+Home Assistant embed over the Hermes push panel (the 7fr/5fr column split
+as the default; the drag handles between the windows resize the splits).
+Every window shows its real section
 content inline and carries a title bar; tapping a window's title opens
 that section's existing full-screen view (drill down, back returns to the
 board) — inside those views the Calendar's month grid and selected day
-sit side by side, and the Hermes chat and push feed sit side by side — the
-same side-by-side reading as the web dashboard. Long content scrolls
+sit side by side, and the Hermes chat and push feed sit side by side.
+Long content scrolls
 inside its own window; the board itself fits the display. Settings is
 reachable from the board's top bar, like the web header's Settings button.
 

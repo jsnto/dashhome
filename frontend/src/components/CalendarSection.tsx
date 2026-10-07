@@ -66,7 +66,7 @@ function ScheduleList({ events }: { events: ApiEvent[] }) {
 }
 
 /**
- * The Calendar window: a month grid, or (when the board's views section
+ * The Calendar tile: a month grid, or (when the board's views section
  * sets calendar_mode "schedule") a chronological schedule summary of the
  * same loaded events. Month navigation and the Summary/per-calendar data
  * tabs work in both modes.
