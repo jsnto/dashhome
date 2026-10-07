@@ -42,12 +42,13 @@ persisted to `dashhome.json`), a Home Assistant section (add or remove the
 HA board tiles — a button or visual tile bound to one entity each, picked
 from `GET /api/ha/entities`; a new tile is placed by default at the first
 free 2 × 2 cell of the board's unit grid; persisted to `dashhome.json` as
-`views.ha_tiles`), a read-only summary of
-which integrations are actually configured (including the full-dashboard
-embed settings), the board grid dimensions (how many units wide and tall the
-tile grid is — `board.grid` in `dashhome.json`, default 12 × 12), and the
-live-update interval (how often the Hermes push panel polls the backend,
-persisted to `dashhome.json`). The header's *Edit tiles* toggle switches the
+`views.ha_tiles`), a Services section (the integrations in use and their
+status — including the full-dashboard embed settings — and each
+integration's service settings, editable and persisted to `dashhome.json`
+as `board.services`; see Configuration below), the board grid dimensions
+(how many units wide and tall the tile grid is — `board.grid` in
+`dashhome.json`, default 12 × 12), and the live-update interval (how often
+the Hermes push panel polls the backend, persisted to `dashhome.json`). The header's *Edit tiles* toggle switches the
 board into an edit mode: each tile's width and height (in grid units) are
 set from numeric fields on the tile, tiles can be dragged by their grip to
 another cell (or resized by dragging the corner handle — every move snaps to
@@ -57,7 +58,10 @@ fields are keyboard-operable; each tile's edit row also carries a remove
 control (one press, no confirm — a Home Assistant tile leaves
 `views.ha_tiles`, a built-in view is hidden; the tile's entity and data are
 never touched, and the tile can be added back from the settings screen);
-placements and removals are persisted to
+the row's edit button opens a modal with that tile's settings — the size
+step, the Calendar tile's view mode, a Home Assistant tile's entity, label,
+and kind — saved through the same path; placements, removals, and the
+modal's saves are persisted to
 `dashhome.json` the same way (the tile set and order are managed from the
 settings screen).
 
@@ -381,7 +385,9 @@ dashboard, no token in the URL):
     only). Default `false`. See the notes above.
 - `views` — the dashboard's tile layout (optional; missing = the default
   board). Also persisted by the settings screen's Tiles section (tile set,
-  order, Home Assistant tiles) and the board's Edit tiles mode (positions):
+  order, Home Assistant tiles) and the board's Edit tiles mode (positions,
+  plus the per-tile settings modal's size step, Calendar view mode, and HA
+  tile entity/label/kind):
   - `order` — the board tile IDs (the four view IDs `calendar`, `chat`,
     `home`, `push` plus every `views.ha_tiles` id) in the tile grid's
     reading order (row by row, left to right); the API always returns it
