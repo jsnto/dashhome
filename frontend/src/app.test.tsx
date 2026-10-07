@@ -895,6 +895,38 @@ describe('app: calendar modes (settings.calendar_mode)', () => {
   })
 })
 
+describe('app: calendar today highlight', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('highlights only today’s date cell in the month grid', async () => {
+    // Mocked date keeps the assertion deterministic (Sun 2025-06-15, so
+    // the grid shows June 2025 and today is unambiguous).
+    vi.useFakeTimers().setSystemTime(new Date(2025, 5, 15))
+    stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+
+    await vi.waitFor(() => expect(document.querySelector('.month-grid')).toBeTruthy())
+
+    const cells = [...document.querySelectorAll('.month-grid .cell')]
+    expect(cells).toHaveLength(42)
+    const today = cells.filter((c) => c.classList.contains('today'))
+    // Exactly one cell carries the highlight, and it is the 15th.
+    expect(today).toHaveLength(1)
+    expect(today[0].querySelector('.cell-day')?.textContent).toBe('15')
+    // The highlight is additive: event marks still render on the cell.
+    expect(today[0].textContent).toContain('Standup')
+    // Day selection still works on the highlighted cell.
+    fireEvent.click(today[0])
+    expect(today[0].classList.contains('sel')).toBe(true)
+  })
+})
+
 // --- Shared helpers for the placement/drag/HA tests ----------------------
 
 /** Stub the board's box + computed gap so the drag math has real numbers:

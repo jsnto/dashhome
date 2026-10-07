@@ -895,8 +895,16 @@ body {
   color: var(--text-dim);
 }
 
+/* Today's cell: a green tint so it reads as "now" and stays clearly
+   apart from the accent-colored selection ring, the event chips, and
+   the ordinary-day cells in both themes. */
+.cell.today {
+  background: color-mix(in srgb, var(--good) 16%, var(--bg-card-2));
+  border-color: color-mix(in srgb, var(--good) 55%, var(--border));
+}
+
 .cell.today .cell-day {
-  color: var(--accent);
+  color: var(--good);
   font-weight: 700;
 }
 
