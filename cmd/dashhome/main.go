@@ -42,9 +42,12 @@ func main() {
 	}
 
 	var haClient ha.StatesClient
+	var haSvc ha.ServiceCaller
 	var haDash ha.DashboardsClient
 	if cfg.HAConfigured() {
-		haClient = ha.NewClient(cfg.HAURL, cfg.HAToken)
+		client := ha.NewClient(cfg.HAURL, cfg.HAToken)
+		haClient = client
+		haSvc = client
 		haDash = ha.NewDashClient(cfg.HAURL, cfg.HAToken)
 	} else {
 		log.Print("home assistant: not configured")
@@ -67,7 +70,7 @@ func main() {
 		googleDep = cal
 	}
 
-	srv := api.NewServer(cfg, googleDep, haClient, haDash, hClient, pushes)
+	srv := api.NewServer(cfg, googleDep, haClient, haSvc, haDash, hClient, pushes)
 	engine := srv.Engine()
 	api.ServeStatic(engine, filepath.Join("frontend", "dist"))
 

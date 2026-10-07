@@ -68,9 +68,22 @@ func newTestGoogleOAuth(cache string) (*calendar.GoogleClient, error) {
 	})
 }
 
-type fakeHA struct{ states []ha.EntityState }
+type fakeHA struct {
+	states []ha.EntityState
+	// svc records service calls and fails them as configured.
+	svcCalls []string
+	svcErr   error
+}
 
 func (f *fakeHA) GetStates(ctx context.Context) ([]ha.EntityState, error) { return f.states, nil }
+
+func (f *fakeHA) CallService(ctx context.Context, service string, data map[string]any) (map[string]any, error) {
+	f.svcCalls = append(f.svcCalls, fmt.Sprintf("%s:%v", service, data))
+	if f.svcErr != nil {
+		return nil, f.svcErr
+	}
+	return map[string]any{"success": true}, nil
+}
 
 // fakeDash implements ha.DashboardsClient and records every call so tests
 // can assert force/reload handling without a real WS server.
@@ -127,13 +140,13 @@ func (f *fakeHermes) Chat(ctx context.Context, req hermes.ChatRequest) (string, 
 
 // --- helpers ---------------------------------------------------------------
 
-func newServer(t *testing.T, cfg *config.Config, google GoogleAPI, haC ha.StatesClient, herm hermes.Chatter, haDash ha.DashboardsClient) *gin.Engine {
+func newServer(t *testing.T, cfg *config.Config, google GoogleAPI, haC ha.StatesClient, haSvc ha.ServiceCaller, herm hermes.Chatter, haDash ha.DashboardsClient) *gin.Engine {
 	t.Helper()
 	pushes, err := store.NewFileStore(filepath.Join(t.TempDir(), "pushes"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewServer(cfg, google, haC, haDash, herm, pushes).Engine()
+	return NewServer(cfg, google, haC, haSvc, haDash, herm, pushes).Engine()
 }
 
 func do(r *gin.Engine, method, path string, body any, hdr map[string]string) *httptest.ResponseRecorder {
@@ -180,7 +193,7 @@ func testTime(s string) time.Time {
 // --- config / health ---------------------------------------------------------
 
 func TestHealthz(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "GET", "/healthz", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d", w.Code)
@@ -192,7 +205,7 @@ func TestGetConfig(t *testing.T) {
 	cfg.HAURL, cfg.HAToken = "https://ha.local", "tok"
 	cfg.HermesBaseURL = "https://hermes.local"
 	g := &fakeGoogle{hasToken: true, cals: []calendar.Calendar{{ID: "personal@example.com", Summary: "Personal"}}}
-	r := newServer(t, cfg, g, &fakeHA{}, &fakeHermes{}, nil)
+	r := newServer(t, cfg, g, &fakeHA{}, &fakeHA{}, &fakeHermes{}, nil)
 	w := do(r, "GET", "/api/config", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -224,7 +237,7 @@ func TestGetConfig(t *testing.T) {
 }
 
 func TestGetConfigUnconfiguredGoogle(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/config", nil, nil)
 	var resp struct {
 		Integrations struct {
@@ -252,7 +265,7 @@ func TestGetConfigSecretFree(t *testing.T) {
 	cfg.Google.ClientSecret = "super-secret-google-client"
 	cfg.Google.AccessToken = "ya29.super-secret-google-access"
 	g := &fakeGoogle{hasToken: true, cals: []calendar.Calendar{{ID: "personal@example.com", Summary: "Personal"}}}
-	r := newServer(t, cfg, g, &fakeHA{}, &fakeHermes{}, nil)
+	r := newServer(t, cfg, g, &fakeHA{}, &fakeHA{}, &fakeHermes{}, nil)
 	w := do(r, "GET", "/api/config", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -279,7 +292,7 @@ func TestPutConfigRefresh(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.BoardFile = file
-	r := newServer(t, cfg, nil, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
 
 	// Valid update: accepted, in-memory and on-disk, and visible via GET.
 	w := do(r, "PUT", "/api/config/refresh", map[string]any{"refresh_seconds": 45}, nil)
@@ -325,7 +338,7 @@ func TestPutConfigRefreshInvalid(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.BoardFile = file
-	r := newServer(t, cfg, nil, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
 
 	cases := []struct {
 		name string
@@ -357,7 +370,7 @@ func TestPutConfigRefreshInvalid(t *testing.T) {
 func TestPutConfigRefreshNoBoardFile(t *testing.T) {
 	cfg := cfgFor(t)
 	cfg.BoardFile = ""
-	r := newServer(t, cfg, nil, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
 	w := do(r, "PUT", "/api/config/refresh", map[string]any{"refresh_seconds": 45}, nil)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("code = %d, want 503: %s", w.Code, w.Body.String())
@@ -378,7 +391,7 @@ func TestPutConfigRefreshBoardFileNotWritable(t *testing.T) {
 	cfg := cfgFor(t)
 	cfg.BoardFile = file
 	cfg.Board.RefreshSeconds = 15
-	r := newServer(t, cfg, nil, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
 
 	w := do(r, "PUT", "/api/config/refresh", map[string]any{"refresh_seconds": 45}, nil)
 	if w.Code != http.StatusServiceUnavailable {
@@ -410,7 +423,7 @@ func TestGetConfigViewsDefault(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.BoardFile = file
-	r := newServer(t, cfg, nil, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
 
 	w := do(r, "GET", "/api/config", nil, nil)
 	if w.Code != 200 {
@@ -455,7 +468,7 @@ func TestPutConfigViews(t *testing.T) {
 	cfg := cfgFor(t)
 	cfg.BoardFile = file
 	cfg.Board.RefreshSeconds = 45
-	r := newServer(t, cfg, nil, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
 
 	// Full update: order, hidden, calendar mode, and per-tile sizes in one
 	// request.
@@ -577,7 +590,7 @@ func TestPutConfigViewsInvalid(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.BoardFile = file
-	r := newServer(t, cfg, nil, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
 
 	cases := []struct {
 		name string
@@ -626,7 +639,7 @@ func TestPutConfigViewsInvalid(t *testing.T) {
 func TestPutConfigViewsNoBoardFile(t *testing.T) {
 	cfg := cfgFor(t)
 	cfg.BoardFile = ""
-	r := newServer(t, cfg, nil, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
 	w := do(r, "PUT", "/api/config/views", map[string]any{"hidden": []string{"push"}}, nil)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("code = %d, want 503: %s", w.Code, w.Body.String())
@@ -649,7 +662,7 @@ func TestPutConfigViewsBoardFileNotWritable(t *testing.T) {
 	cfg := cfgFor(t)
 	cfg.BoardFile = file
 	cfg.Board.RefreshSeconds = 15
-	r := newServer(t, cfg, nil, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
 
 	w := do(r, "PUT", "/api/config/views", map[string]any{"hidden": []string{"push"}}, nil)
 	if w.Code != http.StatusServiceUnavailable {
@@ -672,6 +685,283 @@ func TestPutConfigViewsBoardFileNotWritable(t *testing.T) {
 	}
 }
 
+func TestPutConfigViewsGeometryAndHATiles(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds": 45}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	cfg.Board.RefreshSeconds = 45
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
+
+	type viewsJSON struct {
+		Order        []string                  `json:"order"`
+		Hidden       []string                  `json:"hidden"`
+		CalendarMode string                    `json:"calendar_mode"`
+		Sizes        map[string]string         `json:"sizes"`
+		Geometry     map[string]map[string]int `json:"geometry"`
+		HATiles      []map[string]string       `json:"ha_tiles"`
+	}
+	type boardResp struct {
+		Board struct {
+			RefreshSeconds int       `json:"refresh_seconds"`
+			Views          viewsJSON `json:"views"`
+		} `json:"board"`
+	}
+
+	// Full update: geometry + HA tiles in one request. The order is a
+	// permutation of the board tile IDs (the four views plus both HA
+	// tiles).
+	w := do(r, "PUT", "/api/config/views", map[string]any{
+		"order":         []string{"chat", "home", "ha-1", "push", "calendar", "ha-2"},
+		"calendar_mode": "month",
+		"sizes":         map[string]string{"ha-1": "s"},
+		"geometry": map[string]any{
+			"chat": map[string]int{"x": 1, "y": 1, "w": 3, "h": 2},
+			"home": map[string]int{"x": 4, "y": 1, "w": 3, "h": 2},
+			"ha-1": map[string]int{"x": 1, "y": 3, "w": 2, "h": 1},
+		},
+		"ha_tiles": []map[string]any{
+			{"id": "ha-1", "entity": "light.kitchen", "label": "Kitchen", "kind": "button"},
+			{"id": "ha-2", "entity": "sensor.temp", "label": "Temp", "kind": "visual"},
+		},
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp1 boardResp
+	json.NewDecoder(w.Body).Decode(&resp1)
+	v := resp1.Board.Views
+	if len(v.Order) != 6 || v.Order[2] != "ha-1" || v.Order[5] != "ha-2" {
+		t.Errorf("response order = %v", v.Order)
+	}
+	if len(v.HATiles) != 2 || v.HATiles[0]["entity"] != "light.kitchen" || v.HATiles[1]["kind"] != "visual" {
+		t.Errorf("response ha_tiles = %+v", v.HATiles)
+	}
+	if len(v.Geometry) != 3 {
+		t.Errorf("response geometry = %+v", v.Geometry)
+	}
+	if v.Geometry["chat"]["w"] != 3 || v.Geometry["chat"]["h"] != 2 {
+		t.Errorf("chat geometry = %+v", v.Geometry["chat"])
+	}
+	if v.Sizes["ha-1"] != "s" {
+		t.Errorf("ha-1 size = %q", v.Sizes["ha-1"])
+	}
+	if resp1.Board.RefreshSeconds != 45 {
+		t.Errorf("refresh_seconds = %d, want preserved 45", resp1.Board.RefreshSeconds)
+	}
+
+	// Persisted to the board file.
+	data, _ := os.ReadFile(file)
+	if !strings.Contains(string(data), `"geometry"`) || !strings.Contains(string(data), `"ha_tiles"`) ||
+		!strings.Contains(string(data), `"light.kitchen"`) {
+		t.Errorf("geometry/ha_tiles not written to the board file: %s", data)
+	}
+
+	// Partial update: only one tile's placement changes; a null entry
+	// clears a placement; the other fields keep their values.
+	w = do(r, "PUT", "/api/config/views", map[string]any{
+		"geometry": map[string]any{
+			"home": map[string]int{"x": 4, "y": 1, "w": 3, "h": 3},
+			"chat": nil,
+		},
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	// Fresh struct: json.Decode merges maps into a reused struct.
+	var resp2 boardResp
+	json.NewDecoder(w.Body).Decode(&resp2)
+	v = resp2.Board.Views
+	if len(v.Geometry) != 2 {
+		t.Fatalf("partial geometry = %+v, want ha-1 and the new home placement", v.Geometry)
+	}
+	if v.Geometry["home"]["h"] != 3 {
+		t.Errorf("home geometry = %+v", v.Geometry["home"])
+	}
+	if _, ok := v.Geometry["chat"]; ok {
+		t.Errorf("chat geometry not cleared: %+v", v.Geometry)
+	}
+	if len(v.HATiles) != 2 {
+		t.Errorf("partial update lost ha_tiles: %+v", v.HATiles)
+	}
+
+	// Visible via GET /api/config.
+	wg := do(r, "GET", "/api/config", nil, nil)
+	var getResp boardResp
+	json.NewDecoder(wg.Body).Decode(&getResp)
+	if len(getResp.Board.Views.Geometry) != 2 || len(getResp.Board.Views.HATiles) != 2 {
+		t.Errorf("GET views = %+v", getResp.Board.Views)
+	}
+}
+
+func TestPutConfigViewsGeometryHATilesInvalid(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds": 30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgFor(t)
+	cfg.BoardFile = file
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
+
+	cases := []struct {
+		name string
+		body any
+	}{
+		{"geometry-out-of-bounds", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 7, "y": 1, "w": 2, "h": 1}}}},
+		{"geometry-too-wide", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 1, "y": 1, "w": 7, "h": 1}}}},
+		{"geometry-crosses-edge", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 6, "y": 1, "w": 2, "h": 1}}}},
+		{"geometry-zero-height", map[string]any{"geometry": map[string]any{"calendar": map[string]int{"x": 1, "y": 1, "w": 2, "h": 0}}}},
+		{"geometry-unknown-tile", map[string]any{"geometry": map[string]any{"nope": map[string]int{"x": 1, "y": 1, "w": 2, "h": 1}}}},
+		{"geometry-not-an-object", map[string]any{"geometry": map[string]any{"calendar": "wide"}}},
+		{"ha-tiles-bad-id", map[string]any{"ha_tiles": []map[string]any{{"id": "nope", "entity": "light.x", "kind": "button"}}}},
+		{"ha-tiles-empty-entity", map[string]any{"ha_tiles": []map[string]any{{"id": "ha-1", "entity": "", "kind": "button"}}}},
+		{"ha-tiles-bad-kind", map[string]any{"ha_tiles": []map[string]any{{"id": "ha-1", "entity": "light.x", "kind": "grid"}}}},
+		{"ha-tiles-duplicate", map[string]any{"ha_tiles": []map[string]any{{"id": "ha-1", "entity": "light.x", "kind": "button"}, {"id": "ha-1", "entity": "light.y", "kind": "visual"}}}},
+		{"order-with-unknown-ha-id", map[string]any{"order": []string{"calendar", "chat", "home", "push", "ha-nope"}}},
+		{"sizes-unknown-ha-key", map[string]any{"sizes": map[string]string{"ha-nope": "m"}}},
+		{"hidden-unknown-ha-id", map[string]any{"hidden": []string{"ha-nope"}}},
+	}
+	for _, tc := range cases {
+		w := do(r, "PUT", "/api/config/views", tc.body, map[string]string{"Content-Type": "application/json"})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: code = %d, want 400: %s", tc.name, w.Code, w.Body.String())
+		}
+		var resp struct {
+			Error string `json:"error"`
+		}
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp.Error != "bad_views" && resp.Error != "bad_request" {
+			t.Errorf("%s: error = %q, want bad_views/bad_request", tc.name, resp.Error)
+		}
+	}
+
+	// Invalid updates leave the effective layout at the default.
+	v := cfg.ViewConfig()
+	if len(v.Order) != 4 || len(v.Hidden) != 0 || len(v.Geometry) != 0 || len(v.HATiles) != 0 {
+		t.Errorf("state changed by invalid updates: %+v", v)
+	}
+	data, _ := os.ReadFile(file)
+	if strings.Contains(string(data), `"views"`) || strings.Contains(string(data), `"geometry"`) || strings.Contains(string(data), `"ha_tiles"`) {
+		t.Errorf("invalid updates wrote to the board file: %s", data)
+	}
+}
+
+// --- Home Assistant service calls (button tiles) ---------------------------
+
+func TestHAServiceCall(t *testing.T) {
+	f := &fakeHA{states: []ha.EntityState{{EntityID: "light.kitchen", State: "on"}}}
+	r := newServer(t, cfgFor(t), nil, f, f, nil, nil)
+
+	for _, tc := range []struct {
+		action string
+		want   string
+	}{
+		{"toggle", "toggle:map[entity_id:light.kitchen]"},
+		{"turn_on", "turn_on:map[entity_id:light.kitchen]"},
+		{"turn_off", "turn_off:map[entity_id:light.kitchen]"},
+	} {
+		w := do(r, "POST", "/api/ha/service", map[string]any{"entity_id": "light.kitchen", "action": tc.action}, nil)
+		if w.Code != 200 {
+			t.Fatalf("%s: code = %d: %s", tc.action, w.Code, w.Body.String())
+		}
+		var resp struct {
+			OK       bool           `json:"ok"`
+			EntityID string         `json:"entity_id"`
+			Action   string         `json:"action"`
+			Result   map[string]any `json:"result"`
+		}
+		json.NewDecoder(w.Body).Decode(&resp)
+		if !resp.OK || resp.EntityID != "light.kitchen" || resp.Action != tc.action {
+			t.Errorf("%s: resp = %+v", tc.action, resp)
+		}
+	}
+	if len(f.svcCalls) != 3 || f.svcCalls[0] != "toggle:map[entity_id:light.kitchen]" {
+		t.Errorf("service calls = %v", f.svcCalls)
+	}
+}
+
+func TestHAServiceCallInvalidAction(t *testing.T) {
+	f := &fakeHA{}
+	r := newServer(t, cfgFor(t), nil, f, f, nil, nil)
+
+	// A free-form service or data payload is refused: only the fixed
+	// allowlist of standard actions is offered.
+	for _, body := range []any{
+		map[string]any{"entity_id": "light.kitchen", "action": "open"},
+		map[string]any{"entity_id": "light.kitchen", "action": "homeassistant/toggle"},
+		map[string]any{"entity_id": ""},
+		map[string]any{},
+	} {
+		w := do(r, "POST", "/api/ha/service", body, nil)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("body %v: code = %d, want 400: %s", body, w.Code, w.Body.String())
+		}
+	}
+	if len(f.svcCalls) != 0 {
+		t.Errorf("refused actions reached HA: %v", f.svcCalls)
+	}
+}
+
+func TestHAServiceCallNotConfigured(t *testing.T) {
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
+	w := do(r, "POST", "/api/ha/service", map[string]any{"entity_id": "light.kitchen", "action": "toggle"}, nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code = %d, want 503: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "homeassistant_not_configured" {
+		t.Errorf("error = %q", resp["error"])
+	}
+}
+
+func TestHAServiceCallUnknownEntity(t *testing.T) {
+	f := &fakeHA{svcErr: fmt.Errorf("%w: no such entity", ha.ErrEntityNotFound)}
+	r := newServer(t, cfgFor(t), nil, f, f, nil, nil)
+
+	w := do(r, "POST", "/api/ha/service", map[string]any{"entity_id": "light.nope", "action": "toggle"}, nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Error  string `json:"error"`
+		Detail string `json:"detail"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Error != "ha_entity_not_found" {
+		t.Errorf("error = %q, want ha_entity_not_found", resp.Error)
+	}
+	if !strings.Contains(resp.Detail, "light.nope") {
+		t.Errorf("detail = %q, want the entity named", resp.Detail)
+	}
+}
+
+func TestHAServiceCallUpstreamError(t *testing.T) {
+	f := &fakeHA{svcErr: errors.New("home assistant returned status 500: boom")}
+	r := newServer(t, cfgFor(t), nil, f, f, nil, nil)
+
+	w := do(r, "POST", "/api/ha/service", map[string]any{"entity_id": "light.kitchen", "action": "toggle"}, nil)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Error  string `json:"error"`
+		Detail string `json:"detail"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Error != "homeassistant_unavailable" {
+		t.Errorf("error = %q, want homeassistant_unavailable", resp.Error)
+	}
+	// No HA secret leaks into the error detail.
+	if strings.Contains(w.Body.String(), "super-secret") {
+		t.Errorf("secret leaked in response: %s", w.Body.String())
+	}
+}
+
 // --- calendars / events ------------------------------------------------------
 
 var testMonthStart = testTime("2026-03-01T00:00:00Z")
@@ -685,7 +975,7 @@ func eventCal(id, calID, summary string, start, end string, allDay bool) calenda
 }
 
 func TestListCalendarsNotConfigured(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/calendars", nil, nil)
 	if w.Code != 503 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -699,7 +989,7 @@ func TestListCalendarsNotConfigured(t *testing.T) {
 
 func TestListCalendarsLoginRequired(t *testing.T) {
 	g := &fakeGoogle{hasToken: false, loginURL: "https://accounts.google.example/login"}
-	r := newServer(t, cfgFor(t), g, nil, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/calendars", nil, nil)
 	if w.Code != 503 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -719,7 +1009,7 @@ func TestListCalendarsFilterAndLabels(t *testing.T) {
 		},
 	}
 	cfg := cfgFor(t)
-	r := newServer(t, cfg, g, nil, nil, nil)
+	r := newServer(t, cfg, g, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/calendars", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -757,7 +1047,7 @@ func TestListCalendarsConfiguredIDsNotInGoogleList(t *testing.T) {
 	cfg := cfgFor(t) // filter: personal@example.com (label "Personal")
 	cfg.Board.Calendars = append(cfg.Board.Calendars,
 		config.CalendarRef{ID: "captain@example.com", Label: "Captain's"})
-	r := newServer(t, cfg, g, nil, nil, nil)
+	r := newServer(t, cfg, g, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/calendars", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -801,7 +1091,7 @@ func TestListCalendarsConfiguredMergeWithGoogleList(t *testing.T) {
 		{ID: "personal@example.com", Label: "Personal"},
 		{ID: "ghost@example.com"}, // no label, not in the list either
 	}
-	r := newServer(t, cfg, g, nil, nil, nil)
+	r := newServer(t, cfg, g, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/calendars", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -841,7 +1131,7 @@ func TestListCalendarsNoConfiguredArrayShowsAllVisible(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.Board.Calendars = nil // no filter
-	r := newServer(t, cfg, g, nil, nil, nil)
+	r := newServer(t, cfg, g, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/calendars", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -888,7 +1178,7 @@ func TestDuplicateConfiguredCalendarIDDeduped(t *testing.T) {
 		{ID: "a@example.com"},
 		{ID: "dup@example.com"},
 	}
-	r := newServer(t, cfg, g, nil, nil, nil)
+	r := newServer(t, cfg, g, nil, nil, nil, nil)
 
 	w := do(r, "GET", "/api/calendars", nil, nil)
 	if w.Code != 200 {
@@ -944,7 +1234,7 @@ func TestListEventsSummaryCombined(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.Board.Calendars = []config.CalendarRef{} // no filter: all calendars
-	r := newServer(t, cfg, g, nil, nil, nil)
+	r := newServer(t, cfg, g, nil, nil, nil, nil)
 
 	w := do(r, "GET", "/api/events?start=2026-03-01T00:00:00Z&end=2026-03-31T23:59:59Z", nil, nil)
 	if w.Code != 200 {
@@ -974,7 +1264,7 @@ func TestListEventsSummaryCombined(t *testing.T) {
 	}
 	// Date-only inputs must be accepted and mapped onto a sane range.
 	g2 := &fakeGoogle{hasToken: true, cals: g.cals, events: g.events}
-	r2 := newServer(t, cfg, g2, nil, nil, nil)
+	r2 := newServer(t, cfg, g2, nil, nil, nil, nil)
 	w2 := do(r2, "GET", "/api/events?start=2026-03-01&end=2026-03-31", nil, nil)
 	if w2.Code != 200 {
 		t.Fatalf("date-only range: code = %d: %s", w2.Code, w2.Body.String())
@@ -996,7 +1286,7 @@ func TestListEventsSingleCalendar(t *testing.T) {
 			},
 		},
 	}
-	r := newServer(t, cfgFor(t), g, nil, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/events?calendar=work%40example.com&start=2026-03-01T00:00:00Z&end=2026-03-31T23:59:59Z", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1014,7 +1304,7 @@ func TestListEventsSingleCalendar(t *testing.T) {
 }
 
 func TestListEventsNotConfigured(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/events", nil, nil)
 	if w.Code != 503 {
 		t.Fatalf("code = %d", w.Code)
@@ -1023,7 +1313,7 @@ func TestListEventsNotConfigured(t *testing.T) {
 
 func TestListEventsBadRange(t *testing.T) {
 	g := &fakeGoogle{hasToken: true}
-	r := newServer(t, cfgFor(t), g, nil, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/events?start=garbage", nil, nil)
 	if w.Code != 400 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1032,7 +1322,7 @@ func TestListEventsBadRange(t *testing.T) {
 
 func TestListEventsAllFail(t *testing.T) {
 	g := &fakeGoogle{hasToken: true, err: context.DeadlineExceeded}
-	r := newServer(t, cfgFor(t), g, nil, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/events", nil, nil)
 	if w.Code != 502 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1048,7 +1338,7 @@ func TestHAEntitiesAll(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.Board.HAEntityIDs = nil // no filter
-	r := newServer(t, cfg, nil, &fakeHA{states: states}, nil, nil)
+	r := newServer(t, cfg, nil, &fakeHA{states: states}, nil, nil, nil)
 	w := do(r, "GET", "/api/ha/entities", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1088,7 +1378,7 @@ func TestHAEntitiesFiltered(t *testing.T) {
 	}
 	cfg := cfgFor(t)
 	cfg.Board.HAEntityIDs = []string{"binary_sensor.door", "climate.thermo", "sensor.missing"}
-	r := newServer(t, cfg, nil, &fakeHA{states: states}, nil, nil)
+	r := newServer(t, cfg, nil, &fakeHA{states: states}, nil, nil, nil)
 	w := do(r, "GET", "/api/ha/entities", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1112,7 +1402,7 @@ func TestHAEntitiesFiltered(t *testing.T) {
 }
 
 func TestHANotConfigured(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/ha/entities", nil, nil)
 	if w.Code != 503 {
 		t.Fatalf("code = %d", w.Code)
@@ -1129,6 +1419,10 @@ func TestHANotConfigured(t *testing.T) {
 			t.Errorf("%s: error = %q", path, resp["error"])
 		}
 	}
+	w = do(r, "POST", "/api/ha/service", map[string]any{"entity_id": "light.x", "action": "toggle"}, nil)
+	if w.Code != 503 {
+		t.Fatalf("POST /api/ha/service: code = %d, want 503", w.Code)
+	}
 }
 
 // --- Home Assistant embed URL --------------------------------------------------
@@ -1140,7 +1434,7 @@ func haCfg(t *testing.T) *config.Config {
 }
 
 func TestHAEmbedURLDefault(t *testing.T) {
-	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, nil)
+	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, nil, nil)
 	w := do(r, "GET", "/api/ha/embed-url", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1157,7 +1451,7 @@ func TestHAEmbedURLDefault(t *testing.T) {
 func TestHAEmbedURLPathAndToken(t *testing.T) {
 	cfg := haCfg(t)
 	cfg.Board.HAEmbed = &config.HAEmbed{URLPath: spStr("/energy/"), TokenURL: true}
-	r := newServer(t, cfg, nil, &fakeHA{}, nil, nil)
+	r := newServer(t, cfg, nil, &fakeHA{}, nil, nil, nil)
 	w := do(r, "GET", "/api/ha/embed-url", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1174,7 +1468,7 @@ func TestHAEmbedURLPathAndToken(t *testing.T) {
 func TestHAEmbedURLNoTokenByDefault(t *testing.T) {
 	cfg := haCfg(t)
 	cfg.Board.HAEmbed = &config.HAEmbed{URLPath: spStr("energy")} // token_url unset = false
-	r := newServer(t, cfg, nil, &fakeHA{}, nil, nil)
+	r := newServer(t, cfg, nil, &fakeHA{}, nil, nil, nil)
 	w := do(r, "GET", "/api/ha/embed-url", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1191,7 +1485,7 @@ func TestHAEmbedURLNoTokenByDefault(t *testing.T) {
 func TestHAEmbedURLNullPath(t *testing.T) {
 	cfg := haCfg(t)
 	cfg.Board.HAEmbed = &config.HAEmbed{URLPath: nil, TokenURL: true} // explicit null = default dashboard
-	r := newServer(t, cfg, nil, &fakeHA{}, nil, nil)
+	r := newServer(t, cfg, nil, &fakeHA{}, nil, nil, nil)
 	w := do(r, "GET", "/api/ha/embed-url", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1212,7 +1506,7 @@ func TestHADashboards(t *testing.T) {
 		{ID: "default", Title: "My Home", Mode: "storage"},
 		{ID: "energy", URLPath: spStr("energy"), Title: "Energy", RequireAdmin: true, Mode: "yaml"},
 	}}
-	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, d)
+	r := newServer(t, haCfg(t), nil, &fakeHA{}, &fakeHA{}, nil, d)
 	w := do(r, "GET", "/api/ha/dashboards", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1240,7 +1534,7 @@ func TestHADashboards(t *testing.T) {
 
 func TestHADashboardsUpstreamError(t *testing.T) {
 	d := &fakeDash{listErr: context.DeadlineExceeded}
-	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, d)
+	r := newServer(t, haCfg(t), nil, &fakeHA{}, &fakeHA{}, nil, d)
 	w := do(r, "GET", "/api/ha/dashboards", nil, nil)
 	if w.Code != 502 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1255,7 +1549,7 @@ func TestHADashboardsUpstreamError(t *testing.T) {
 func TestHADashboardConfigPassthrough(t *testing.T) {
 	raw := json.RawMessage(`{"views":[{"title":"Overview","cards":[{"type":"entities"}]}]}`)
 	d := &fakeDash{configRaw: raw}
-	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, d)
+	r := newServer(t, haCfg(t), nil, &fakeHA{}, &fakeHA{}, nil, d)
 
 	w := do(r, "GET", "/api/ha/dashboard/energy", nil, nil)
 	if w.Code != 200 {
@@ -1307,7 +1601,7 @@ func TestHADashboardConfigPassthrough(t *testing.T) {
 
 func TestHADashboardConfigUpstreamError(t *testing.T) {
 	d := &fakeDash{configErr: errors.New("home assistant lovelace/config failed: No dashboard found")}
-	r := newServer(t, haCfg(t), nil, &fakeHA{}, nil, d)
+	r := newServer(t, haCfg(t), nil, &fakeHA{}, &fakeHA{}, nil, d)
 	w := do(r, "GET", "/api/ha/dashboard/nope", nil, nil)
 	if w.Code != 502 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1325,7 +1619,7 @@ func TestHermesChat(t *testing.T) {
 	h := &fakeHermes{reply: "hi from hermes"}
 	cfg := cfgFor(t)
 	cfg.HermesBaseURL = "https://hermes.local"
-	r := newServer(t, cfg, nil, nil, h, nil)
+	r := newServer(t, cfg, nil, nil, nil, h, nil)
 	w := do(r, "POST", "/api/hermes/chat", map[string]any{
 		"message":      "hello",
 		"conversation": []map[string]string{{"role": "user", "content": "earlier"}},
@@ -1346,7 +1640,7 @@ func TestHermesChat(t *testing.T) {
 }
 
 func TestHermesChatNotConfigured(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "POST", "/api/hermes/chat", map[string]string{"message": "hi"}, nil)
 	if w.Code != 503 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1355,7 +1649,7 @@ func TestHermesChatNotConfigured(t *testing.T) {
 
 func TestHermesChatEmptyMessage(t *testing.T) {
 	h := &fakeHermes{reply: "x"}
-	r := newServer(t, cfgFor(t), nil, nil, h, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, h, nil)
 	w := do(r, "POST", "/api/hermes/chat", map[string]string{"message": "  "}, nil)
 	if w.Code != 400 {
 		t.Fatalf("code = %d", w.Code)
@@ -1366,7 +1660,7 @@ func TestHermesChatUpstreamError(t *testing.T) {
 	h := &fakeHermes{err: context.DeadlineExceeded}
 	cfg := cfgFor(t)
 	cfg.HermesBaseURL = "https://hermes.local"
-	r := newServer(t, cfg, nil, nil, h, nil)
+	r := newServer(t, cfg, nil, nil, nil, h, nil)
 	w := do(r, "POST", "/api/hermes/chat", map[string]string{"message": "hi"}, nil)
 	if w.Code != 502 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1386,7 +1680,7 @@ func pushJSON(markdown, source string) map[string]string {
 func TestPushNotConfigured(t *testing.T) {
 	cfg := cfgFor(t)
 	cfg.PushToken = ""
-	r := newServer(t, cfg, nil, nil, nil, nil)
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
 	w := do(r, "POST", "/api/hermes/push", pushJSON("# hi", ""), map[string]string{"Authorization": "Bearer whatever"})
 	if w.Code != 503 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1394,7 +1688,7 @@ func TestPushNotConfigured(t *testing.T) {
 }
 
 func TestPushUnauthorized(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "POST", "/api/hermes/push", pushJSON("# hi", ""), map[string]string{"Authorization": "Bearer wrong"})
 	if w.Code != 401 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1408,7 +1702,7 @@ func TestPushAuthStyles(t *testing.T) {
 		{"X-Token-Query": ""}, // use ?token=
 	}
 	for i, hdr := range modes {
-		r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+		r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 		var w *httptest.ResponseRecorder
 		if i == 2 {
 			w = do(r, "POST", "/api/hermes/push?token=push-tok", pushJSON("# via query", ""), map[string]string{"Content-Type": "application/json"})
@@ -1422,7 +1716,7 @@ func TestPushAuthStyles(t *testing.T) {
 }
 
 func TestPushEmptyMarkdown(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "POST", "/api/hermes/push", pushJSON("", ""), map[string]string{"Authorization": "Bearer push-tok"})
 	if w.Code != 400 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1430,7 +1724,7 @@ func TestPushEmptyMarkdown(t *testing.T) {
 }
 
 func TestPushLifecycle(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	hdr := map[string]string{"Authorization": "Bearer push-tok"}
 
 	w1 := do(r, "POST", "/api/hermes/push", pushJSON("# one", "hermes"), hdr)
@@ -1515,7 +1809,7 @@ func TestPushLifecycle(t *testing.T) {
 }
 
 func TestPushLatestEmpty(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/hermes/pushes/latest", nil, nil)
 	if w.Code != 404 {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1523,7 +1817,7 @@ func TestPushLatestEmpty(t *testing.T) {
 }
 
 func TestPushListEmpty(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/hermes/pushes", nil, nil)
 	if w.Code != 200 {
 		t.Fatalf("code = %d", w.Code)
@@ -1558,7 +1852,7 @@ func TestGoogleCallbackFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newTestGoogleOAuth: %v", err)
 	}
-	r := newServer(t, cfgFor(t), g, nil, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil, nil)
 
 	// Missing code.
 	w := do(r, "GET", "/api/auth/google/callback", nil, nil)
@@ -1580,7 +1874,7 @@ func TestGoogleCallbackFlow(t *testing.T) {
 }
 
 func TestGoogleLoginEndpointUnconfigured(t *testing.T) {
-	r := newServer(t, cfgFor(t), nil, nil, nil, nil)
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/auth/google/login", nil, nil)
 	if w.Code != 404 {
 		t.Fatalf("code = %d (route should not exist without google): %s", w.Code, w.Body.String())
@@ -1589,7 +1883,7 @@ func TestGoogleLoginEndpointUnconfigured(t *testing.T) {
 
 func TestGoogleLoginAlreadyAuthorized(t *testing.T) {
 	g := &fakeGoogle{hasToken: true}
-	r := newServer(t, cfgFor(t), g, nil, nil, nil)
+	r := newServer(t, cfgFor(t), g, nil, nil, nil, nil)
 	w := do(r, "GET", "/api/auth/google/login", nil, nil)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "already_authorized") {
 		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
@@ -1615,7 +1909,7 @@ func TestStaticServing(t *testing.T) {
 	}
 
 	cfg := cfgFor(t)
-	r := NewServer(cfg, nil, nil, nil, nil, mustStore(t)).Engine()
+	r := NewServer(cfg, nil, nil, nil, nil, nil, mustStore(t)).Engine()
 	ServeStatic(r, dist)
 
 	// API still works.
@@ -1651,7 +1945,7 @@ func TestStaticServing(t *testing.T) {
 }
 
 func TestStaticMissing(t *testing.T) {
-	r := NewServer(cfgFor(t), nil, nil, nil, nil, mustStore(t)).Engine()
+	r := NewServer(cfgFor(t), nil, nil, nil, nil, nil, mustStore(t)).Engine()
 	ServeStatic(r, filepath.Join(t.TempDir(), "nope"))
 	w := do(r, "GET", "/", nil, nil)
 	if w.Code != 404 {

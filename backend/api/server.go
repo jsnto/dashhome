@@ -36,14 +36,15 @@ type Server struct {
 	cfg    *config.Config
 	google GoogleAPI           // nil = not configured
 	ha     ha.StatesClient     // nil = not configured
+	haSvc  ha.ServiceCaller    // nil = not configured (button-tile action path)
 	haDash ha.DashboardsClient // nil = not configured
 	hermes hermes.Chatter      // nil = not configured
 	pushes store.PushStore
 }
 
 // NewServer builds a Server. All dependencies may be nil (unconfigured).
-func NewServer(cfg *config.Config, google GoogleAPI, haClient ha.StatesClient, haDash ha.DashboardsClient, hermesClient hermes.Chatter, pushes store.PushStore) *Server {
-	return &Server{cfg: cfg, google: google, ha: haClient, haDash: haDash, hermes: hermesClient, pushes: pushes}
+func NewServer(cfg *config.Config, google GoogleAPI, haClient ha.StatesClient, haSvc ha.ServiceCaller, haDash ha.DashboardsClient, hermesClient hermes.Chatter, pushes store.PushStore) *Server {
+	return &Server{cfg: cfg, google: google, ha: haClient, haSvc: haSvc, haDash: haDash, hermes: hermesClient, pushes: pushes}
 }
 
 // Engine builds the gin engine with all routes.
@@ -60,6 +61,7 @@ func (s *Server) Engine() *gin.Engine {
 	api.GET("/calendars", s.listCalendars)
 	api.GET("/events", s.listEvents)
 	api.GET("/ha/entities", s.haEntities)
+	api.POST("/ha/service", s.haServiceCall)
 	api.GET("/ha/embed-url", s.haEmbedURL)
 	api.GET("/ha/dashboards", s.haDashboards)
 	// Exact-match route for the default dashboard without a trailing slash
@@ -169,26 +171,30 @@ func (s *Server) putConfigRefresh(c *gin.Context) {
 }
 
 // putConfigViews persists part of the tile layout (board.views) to the
-// board file: the order of the four tiles, which are hidden, how the
-// Calendar tile renders, and per-tile size steps. Fields omitted from the
-// request keep their current effective value; each provided field is
-// validated. The sizes argument is a per-tile map (view ID to size step)
-// of the entries to change; entries it omits keep their current size.
+// board file: the board order of the tiles, which are hidden, how the
+// Calendar tile renders, per-tile size steps, per-tile grid geometry
+// (explicit positions; a null entry clears a tile's geometry), and the
+// Home Assistant tile list. Fields omitted from the request keep their
+// current effective value; each provided field is validated. The sizes
+// and geometry arguments are per-tile maps of the entries to change;
+// entries they omit keep the tile's current size step / placement.
 // Same exposure as GET /api/config: the dashboard itself has no login; the
 // board file is deliberately a non-secret config surface.
 func (s *Server) putConfigViews(c *gin.Context) {
 	var req struct {
-		Order        *[]string          `json:"order"`
-		Hidden       *[]string          `json:"hidden"`
-		CalendarMode *string            `json:"calendar_mode"`
-		Sizes        *map[string]string `json:"sizes"`
+		Order        *[]string                        `json:"order"`
+		Hidden       *[]string                        `json:"hidden"`
+		CalendarMode *string                          `json:"calendar_mode"`
+		Sizes        *map[string]string               `json:"sizes"`
+		Geometry     *map[string]*config.TileGeometry `json:"geometry"`
+		HATiles      *[]config.HABoardTile            `json:"ha_tiles"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, http.StatusBadRequest, "bad_request",
-			`body must be JSON {"order": [...], "hidden": [...], "calendar_mode": "month"|"schedule", "sizes": {view: "s"|"m"|"l"|"xl"}}`)
+			`body must be JSON {"order": [...], "hidden": [...], "calendar_mode": "month"|"schedule", "sizes": {tile: "s"|"m"|"l"|"xl"}, "geometry": {tile: {"x":1,"y":1,"w":2,"h":1}|null}, "ha_tiles": [{"id":"ha-1","entity":"light.kitchen","label":"Kitchen","kind":"button"|"visual"}]}`)
 		return
 	}
-	if err := s.cfg.SetViews(req.Order, req.Hidden, req.CalendarMode, req.Sizes); err != nil {
+	if err := s.cfg.SetViews(req.Order, req.Hidden, req.CalendarMode, req.Sizes, req.Geometry, req.HATiles); err != nil {
 		status := http.StatusBadRequest
 		code := "bad_views"
 		if errors.Is(err, config.ErrNoBoardFile) {
@@ -416,6 +422,61 @@ func (s *Server) entityJSON(st ha.EntityState) apiEntity {
 		e.LastChanged = &t
 	}
 	return e
+}
+
+// haServiceAllowlist is the fixed set of standard actions a button tile
+// may perform on its entity (all in the homeassistant domain). The API
+// accepts the action names only — never a free-form service or data
+// payload — so a caller can at most run these three actions on the
+// entity it names (the entity_id is caller-supplied, not restricted to
+// the entities the board shows).
+var haServiceAllowlist = map[string]string{
+	"toggle":   "toggle",
+	"turn_on":  "turn_on",
+	"turn_off": "turn_off",
+}
+
+// haServiceCall performs one standard action on one entity: the button
+// tiles' action path. Guarded exactly like the other HA endpoints: 503
+// when HA is not configured, 502 when HA is unreachable (or fails the
+// call), a clean 404 when HA has no such entity. The only data sent to
+// HA is {"entity_id": ...} for an allowlisted action; no HA secret
+// appears in the request or the response.
+func (s *Server) haServiceCall(c *gin.Context) {
+	if s.haSvc == nil {
+		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
+			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN")
+		return
+	}
+	var req struct {
+		EntityID string `json:"entity_id"`
+		Action   string `json:"action"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "bad_request",
+			`body must be JSON {"entity_id": "light.kitchen", "action": "toggle"|"turn_on"|"turn_off"}`)
+		return
+	}
+	if strings.TrimSpace(req.EntityID) == "" {
+		fail(c, http.StatusBadRequest, "bad_request", "entity_id is required")
+		return
+	}
+	service, ok := haServiceAllowlist[req.Action]
+	if !ok {
+		fail(c, http.StatusBadRequest, "bad_action", "action must be one of toggle, turn_on, turn_off")
+		return
+	}
+	result, err := s.haSvc.CallService(c.Request.Context(), service, map[string]any{"entity_id": req.EntityID})
+	if err != nil {
+		if errors.Is(err, ha.ErrEntityNotFound) {
+			fail(c, http.StatusNotFound, "ha_entity_not_found",
+				"no such entity in Home Assistant: "+req.EntityID)
+			return
+		}
+		fail(c, http.StatusBadGateway, "homeassistant_unavailable", err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "entity_id": req.EntityID, "action": req.Action, "result": result})
 }
 
 // haEmbedURL returns the fully-formed URL for the Home card's iframe, so

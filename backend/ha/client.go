@@ -2,12 +2,15 @@
 package ha
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -15,6 +18,19 @@ import (
 type StatesClient interface {
 	GetStates(ctx context.Context) ([]EntityState, error)
 }
+
+// ServiceCaller calls Home Assistant services (the button-tile action
+// path). The service name and data are constrained by the caller: the API
+// layer offers a fixed allowlist of standard actions, never free-form
+// service or data payloads.
+type ServiceCaller interface {
+	CallService(ctx context.Context, service string, data map[string]any) (map[string]any, error)
+}
+
+// ErrEntityNotFound is reported when Home Assistant has no such entity
+// (a service call for an unknown entity_id fails on the HA side with a
+// "unable to find entity" error or a 404).
+var ErrEntityNotFound = errors.New("home assistant: entity not found")
 
 // EntityState is a normalized Home Assistant entity.
 type EntityState struct {
@@ -107,4 +123,67 @@ func (c *Client) GetStates(ctx context.Context) ([]EntityState, error) {
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// CallService invokes a Home Assistant service in the homeassistant
+// domain (POST /api/services/homeassistant/<service>) with the given data
+// (the API layer always sends {"entity_id": ...} for an allowlisted
+// action). It returns HA's result object (empty when HA returns no
+// body), or an error: an auth failure, ErrEntityNotFound when HA has no
+// such entity, or a generic upstream error (status + short body) for
+// everything else, so the API layer can map it to a 502.
+func (c *Client) CallService(ctx context.Context, service string, data map[string]any) (map[string]any, error) {
+	u, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid HOMEASSISTANT_URL %q: %w", c.BaseURL, err)
+	}
+	u.Path = "/api/services/homeassistant/" + service
+
+	body, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("encode service data: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("home assistant request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return nil, fmt.Errorf("read home assistant service response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("home assistant auth failed (status %d): check HOMEASSISTANT_TOKEN", resp.StatusCode)
+	}
+	// HA reports an unknown entity two ways: a 404, or a 400 whose message
+	// names the missing entity ("Unable to find entity light.kitchen").
+	if resp.StatusCode == http.StatusNotFound ||
+		(resp.StatusCode == http.StatusBadRequest &&
+			strings.Contains(strings.ToLower(string(raw)), "unable to find entity")) {
+		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, strings.TrimSpace(string(raw)))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("home assistant returned status %d: %s", resp.StatusCode, string(raw))
+	}
+
+	result := map[string]any{}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if err := json.Unmarshal(raw, &result); err != nil {
+			result = map[string]any{"result": string(raw)}
+		}
+		if result == nil {
+			result = map[string]any{}
+		}
+	}
+	return result, nil
 }

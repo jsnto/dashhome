@@ -2,6 +2,8 @@ package ha
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -103,6 +105,120 @@ func TestGetStatesServerError(t *testing.T) {
 
 	c := NewClient(srv.URL, "tok")
 	if _, err := c.GetStates(context.Background()); err == nil {
+		t.Fatal("expected server error")
+	}
+}
+
+// --- CallService ----------------------------------------------------------
+
+func fakeHAServices(t *testing.T, status int, body string, wantPath, wantAuth, wantData string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != wantPath {
+			t.Errorf("path = %q, want %q", r.URL.Path, wantPath)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Errorf("Authorization = %q, want %q", got, wantAuth)
+		}
+		if wantData != "" {
+			b, _ := io.ReadAll(r.Body)
+			if string(b) != wantData {
+				t.Errorf("data = %s, want %s", b, wantData)
+			}
+		}
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+		}
+		w.Write([]byte(body))
+	}))
+}
+
+func TestCallService(t *testing.T) {
+	srv := fakeHAServices(t, http.StatusOK, `{"success":true}`, "/api/services/homeassistant/toggle", "Bearer ha-tok", `{"entity_id":"light.kitchen"}`)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ha-tok")
+	result, err := c.CallService(context.Background(), "toggle", map[string]any{"entity_id": "light.kitchen"})
+	if err != nil {
+		t.Fatalf("CallService: %v", err)
+	}
+	if result["success"] != true {
+		t.Errorf("result = %v", result)
+	}
+}
+
+func TestCallServiceEmptyBody(t *testing.T) {
+	srv := fakeHAServices(t, http.StatusOK, "", "/api/services/homeassistant/turn_on", "Bearer ha-tok", `{"entity_id":"light.kitchen"}`)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ha-tok")
+	result, err := c.CallService(context.Background(), "turn_on", map[string]any{"entity_id": "light.kitchen"})
+	if err != nil {
+		t.Fatalf("CallService: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("result = %v, want empty", result)
+	}
+}
+
+func TestCallServiceUnknownEntity(t *testing.T) {
+	// HA reports an unknown entity two ways: a 404, or a 400 whose
+	// message names the missing entity.
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+	}{
+		"not-found":   {status: http.StatusNotFound, body: `{"message":"not found"}`},
+		"bad-request": {status: http.StatusBadRequest, body: `{"message":"Unable to find entity light.nope."}`},
+	} {
+		srv := fakeHAServices(t, tc.status, tc.body, "/api/services/homeassistant/turn_off", "Bearer ha-tok", `{"entity_id":"light.nope"}`)
+		c := NewClient(srv.URL, "ha-tok")
+		_, err := c.CallService(context.Background(), "turn_off", map[string]any{"entity_id": "light.nope"})
+		if !errors.Is(err, ErrEntityNotFound) {
+			t.Errorf("%s: err = %v, want ErrEntityNotFound", name, err)
+		}
+		srv.Close()
+	}
+}
+
+func TestCallServiceOtherClientErrorIsNotEntityNotFound(t *testing.T) {
+	srv := fakeHAServices(t, http.StatusBadRequest, `{"message":"invalid service data"}`, "/api/services/homeassistant/toggle", "Bearer ha-tok", `{"entity_id":"light.kitchen"}`)
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "ha-tok")
+	_, err := c.CallService(context.Background(), "toggle", map[string]any{"entity_id": "light.kitchen"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if errors.Is(err, ErrEntityNotFound) {
+		t.Errorf("err = %v, must not be ErrEntityNotFound", err)
+	}
+}
+
+func TestCallServiceAuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "wrong")
+	if _, err := c.CallService(context.Background(), "toggle", map[string]any{"entity_id": "light.kitchen"}); err == nil {
+		t.Fatal("expected auth error")
+	}
+}
+
+func TestCallServiceServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("boom"))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "tok")
+	if _, err := c.CallService(context.Background(), "toggle", map[string]any{"entity_id": "light.kitchen"}); err == nil {
 		t.Fatal("expected server error")
 	}
 }
