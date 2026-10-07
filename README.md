@@ -374,10 +374,13 @@ dashboard, no token in the URL):
     `w` ≤ 6, the cell must stay inside the board and must not overlap
     another placed tile). Tiles with no entry are placed automatically
     in board order (row by row); a fixed tile renders at its stored
-    cell, width included. Invalid entries (out of bounds, non-integer,
-    or overlapping) are dropped on load and on save — the server never
-    serves a colliding layout — so hand edits are repaired, not
-    rejected.
+    cell, width included. On load, invalid entries (out of bounds,
+    non-integer, non-object, or overlapping) are dropped and the tile
+    falls back to auto placement; on save, out-of-bounds placements are
+    refused with 400 `bad_views`, malformed values (non-integer or
+    non-object) refuse the request with 400 `bad_request`, and
+    overlapping entries are dropped with the tile falling back to auto
+    placement — the server never serves a colliding layout.
   - `ha_tiles` — the Home Assistant board tiles, in board order: an `id`
     (`ha-<name>`, 1–16 lowercase alphanumerics), the bound `entity`
     (entity ID), a `kind` (`"button"` or `"visual"`), and an optional

@@ -18,8 +18,8 @@ export interface HAEntity {
   friendly: string
   state: string
   attributes: Record<string, unknown>
-  last_updated: string
-  last_changed: string
+  last_updated?: string
+  last_changed?: string
 }
 
 export interface HAEntitiesResponse {

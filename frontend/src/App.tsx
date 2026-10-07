@@ -321,6 +321,16 @@ export default function App() {
         setPreview(null) // snap back to the stored placement
         return
       }
+      const cur = layout[d.id]
+      if (
+        pv.cell.x === cur.x &&
+        pv.cell.y === cur.y &&
+        pv.cell.w === cur.w &&
+        pv.cell.h === cur.h
+      ) {
+        setPreview(null)
+        return
+      }
       setPreview(null)
       setSavingSize(true)
       api
@@ -334,7 +344,7 @@ export default function App() {
         )
         .finally(() => setSavingSize(false))
     },
-    [],
+    [layout],
   )
 
   // Attach the window pointer listeners while edit mode is on.

@@ -24,6 +24,14 @@ export default function HATile({ tile, entity, haOff, onService }: Props) {
   const [err, setErr] = useState<ApiError | null>(null)
   const label = haTileLabel(tile, entity)
 
+  const stamp = (ts?: string) => {
+    const d = ts ? new Date(ts) : null
+    return d && !Number.isNaN(d.getTime())
+      ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+      : null
+  }
+  const updated = entity ? stamp(entity.last_changed) ?? stamp(entity.last_updated) : null
+
   const run = async (action: HAServiceAction) => {
     if (busy || !entity) return
     setBusy(true)
@@ -67,14 +75,7 @@ export default function HATile({ tile, entity, haOff, onService }: Props) {
         ) : (
           <div className="ha-visual">
             <span className="ha-state">{entity ? haTileState(entity.state) : haOff ? 'Not connected' : '—'}</span>
-            {entity ? (
-              <span className="ha-updated">
-                {new Date(entity.last_changed).toLocaleTimeString(undefined, {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })}
-              </span>
-            ) : null}
+            {updated ? <span className="ha-updated">{updated}</span> : null}
           </div>
         )}
         {haOff ? (

@@ -957,6 +957,37 @@ describe('app: tile placement (edit mode)', () => {
     await waitFor(() => expect(geometryOf(board).push).toEqual({ x: 4, y: 3, w: 3, h: 1 }))
   })
 
+  it('leaves the board file untouched when a tile is dropped on its own cell', async () => {
+    const { board, calls } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    const restoreBox = stubBoardBox()
+
+    const push = document.querySelector('[data-win="push"]') as HTMLElement
+    const grip = push.querySelector('.tile-grip') as HTMLElement
+    // push auto-places at (4,2): a sub-pitch jitter past the 4px grab
+    // threshold rounds back to its own cell, which changes nothing.
+    await act(async () => {
+      firePointer(grip, 'pointerdown', 10, 200)
+    })
+    await act(async () => {
+      firePointer(window, 'pointermove', 10, 200 + 8)
+    })
+    await act(async () => {
+      firePointer(window, 'pointerup', 10, 200 + 8)
+    })
+    restoreBox()
+
+    expect(calls.filter((c) => c === 'PUT /api/config/views')).toHaveLength(0)
+    expect(geometryOf(board).push).toBeUndefined()
+  })
+
   it('steps the height of an auto-placed tile from its effective cell', async () => {
     const { board } = stubBoardServer({
       order: ['calendar', 'chat', 'home', 'push'],
