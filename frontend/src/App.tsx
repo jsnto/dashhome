@@ -66,6 +66,18 @@ function useNarrow(): boolean {
 const isViewId = (id: string): id is ViewId =>
   (VIEW_IDS as readonly string[]).includes(id)
 
+/** The rows the board actually renders: the auto flow is open on rows, so
+ *  a layout that overflows the grid's rows stretches the board with 1fr
+ *  auto rows, and the drag/resize row pitch follows that rendered count. */
+function renderedRows(layout: Record<string, TileGeometry>, gridRows: number): number {
+  let last = 1
+  for (const id in layout) {
+    const c = layout[id]
+    if (c) last = Math.max(last, c.y + c.h - 1)
+  }
+  return Math.max(gridRows, last)
+}
+
 export default function App() {
   const [cfg, setCfg] = useState<ApiConfig | null>(null)
   const [theme, setTheme] = useTheme()
@@ -261,7 +273,7 @@ export default function App() {
   const beginDrag = (id: string, mode: 'move' | 'resize', e: React.PointerEvent) => {
     if (!editMode || narrow) return
     if (!boardElRef.current) return
-    const metrics = measureGrid(boardElRef.current, grid.rows, grid.cols)
+    const metrics = measureGrid(boardElRef.current, renderedRows(layout, grid.rows), grid.cols)
     if (!metrics) return
     const origin = layout[id]
     dragRef.current = {

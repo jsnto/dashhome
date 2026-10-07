@@ -113,10 +113,13 @@ export interface GridMetrics {
 /**
  * Measure the board grid in client pixels from the board element's box:
  * the content width splits into `cols` columns and the content height
- * into `rows` rows, each with `gap` between the units. Degenerate
- * (zero-size) boxes yield a null metrics object — callers must treat
- * that as "cannot measure" (the jsdom tests stub getBoundingClientRect
- * to exercise the real math).
+ * into `rows` rows, each with `gap` between the units. `rows` is the
+ * number of rows the board actually renders — a layout that overflows
+ * the grid's rows stretches the board with 1fr auto rows, so callers
+ * pass that rendered count, not the configured grid's row count.
+ * Degenerate (zero-size) boxes yield a null metrics object — callers
+ * must treat that as "cannot measure" (the jsdom tests stub
+ * getBoundingClientRect to exercise the real math).
  */
 export function measureGrid(board: HTMLElement, rows: number, cols = GRID_DEFAULTS.cols): GridMetrics | null {
   const r = board.getBoundingClientRect()

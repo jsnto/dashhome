@@ -1275,6 +1275,56 @@ describe('app: board grid dimensions', () => {
     restoreBox()
     await waitFor(() => expect(geometryOf(board).calendar).toEqual({ x: 1, y: 12, w: 6, h: 1 }))
   })
+
+  it('snaps a drag by the stretched board\'s row pitch when the layout overflows the grid rows', async () => {
+    // The grid is 2 rows tall, but three full-width tiles flow into three
+    // rendered rows (the grid stretches with auto rows): the drag pitch
+    // must follow the rendered rows, not the configured grid's rows.
+    const { calls } = stubBoardServer(
+      {
+        order: ['calendar', 'chat', 'home', 'push'],
+        hidden: ['push'],
+        calendar_mode: 'month',
+        sizes: { calendar: 'xl', chat: 'xl', home: 'xl', push: 'xl' },
+      },
+      undefined,
+      [],
+      { cols: 12, rows: 2 },
+    )
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(3))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    const restoreBox = stubBoardBox()
+
+    const cal = document.querySelector('[data-win="calendar"]') as HTMLElement
+    const grip = cal.querySelector('.tile-grip') as HTMLElement
+    // Stubbed box: the three rendered rows are (1976 - 2 * 16) / 3 = 648px
+    // each, so one row's pitch is 664px. A 450px drag (0.7 of a rendered
+    // row) must snap one row down; measured against the configured two
+    // rows (996px pitch) it rounds to zero and the tile does not move.
+    await act(async () => {
+      firePointer(grip, 'pointerdown', 10, 200)
+    })
+    await act(async () => {
+      firePointer(window, 'pointermove', 10, 200 + 450)
+    })
+
+    // The preview snaps to row 2 — occupied by chat, so it is flagged as
+    // refused (placements stay bounded by the configured grid's rows).
+    expect(cal.className).toContain('dragging')
+    expect(cal.style.gridRow).toBe('2 / span 1')
+    expect(cal.className).toContain('preview-invalid')
+
+    await act(async () => {
+      firePointer(window, 'pointerup', 10, 200 + 450)
+    })
+    restoreBox()
+
+    // The refused drop snaps back without a layout write.
+    await waitFor(() => expect(cal.style.gridRow).toBe('1 / span 1'))
+    expect(calls).not.toContain('PUT /api/config/views')
+  })
 })
 
 describe('app: Home Assistant board tiles', () => {
