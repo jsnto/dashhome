@@ -31,12 +31,13 @@ A header button toggles the browser's full-screen mode.
 
 The dashboard has a **settings screen** (header → *Settings*): light/dark
 theme (persisted per browser, defaults to the OS preference), a Tiles
-section (add or remove the four dashboard tiles to/from the main screen,
-reorder them, and switch the Calendar tile between the month grid and a
-schedule summary of upcoming events; persisted to `dashhome.json`), a
-Home Assistant section (add or remove the HA board tiles — a button or
-visual tile bound to one entity each, picked from `GET /api/ha/entities`;
-persisted to `dashhome.json` as `views.ha_tiles`), a read-only summary of
+section (add or remove the four dashboard tiles — and any Home Assistant
+tiles — to/from the main screen, reorder them, and switch the Calendar
+tile between the month grid and a schedule summary of upcoming events;
+persisted to `dashhome.json`), a Home Assistant section (add or remove the
+HA board tiles — a button or visual tile bound to one entity each, picked
+from `GET /api/ha/entities`; persisted to `dashhome.json` as
+`views.ha_tiles`), a read-only summary of
 which integrations are actually configured (including the full-dashboard
 embed settings), and the live-update interval (how often the Hermes push
 panel polls the backend, persisted to `dashhome.json`). The header's
