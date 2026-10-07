@@ -197,6 +197,7 @@ export default function App() {
     ha_tiles?: HABoardTile[]
   }) => {
     if (!cfg) return
+    setSavingSize(true)
     api
       .setViews(patch)
       .then((board: ApiBoard) => {
@@ -264,7 +265,6 @@ export default function App() {
     const cell = clampCell({ x: cur.x, y: cur.y, w, h }, grid.cols, grid.rows)
     if (cell.x === cur.x && cell.y === cur.y && cell.w === cur.w && cell.h === cur.h) return
     if (dropRefused(draft.id, cell, visible, views.sizes, views.geometry, grid.cols, grid.rows)) return
-    setSavingSize(true)
     setLayoutErr(null)
     commitViews({ geometry: { [draft.id]: cell } })
   }
