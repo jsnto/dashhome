@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -147,6 +148,44 @@ func (m *GeometryMap) UnmarshalJSON(data []byte) error {
 type BoardGrid struct {
 	Cols int `json:"cols"`
 	Rows int `json:"rows"`
+}
+
+// UnmarshalJSON decodes the grid dimensions tolerantly, per axis: a value
+// that is not a whole number of units within the valid range (a fractional
+// number, an out-of-range number, a string, a missing field) falls back to
+// the per-axis default, and a grid that is not a JSON object falls back to
+// the default 12x12 — the board file is a freehand-editable surface, so a
+// mistyped dimension repairs to a valid grid instead of failing the board
+// file load (and with it the whole backend startup).
+func (g *BoardGrid) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Cols json.RawMessage `json:"cols"`
+		Rows json.RawMessage `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		*g = BoardGrid{Cols: BoardGridDefaultCols, Rows: BoardGridDefaultRows}
+		return nil
+	}
+	*g = BoardGrid{
+		Cols: gridAxis(raw.Cols, BoardGridDefaultCols),
+		Rows: gridAxis(raw.Rows, BoardGridDefaultRows),
+	}
+	return nil
+}
+
+// gridAxis repairs one grid axis to a valid number of units: a whole
+// number within [BoardGridMin, BoardGridMax] is kept, anything else (a
+// fractional or out-of-range number, a string, a missing value) falls
+// back to the per-axis default.
+func gridAxis(raw json.RawMessage, def int) int {
+	var n float64
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return def
+	}
+	if n < BoardGridMin || n > BoardGridMax || n != math.Trunc(n) {
+		return def
+	}
+	return int(n)
 }
 
 // effective returns the grid dimensions with stored values repaired to the

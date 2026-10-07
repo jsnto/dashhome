@@ -1285,6 +1285,67 @@ func TestGridDimsDefaultsAndRepair(t *testing.T) {
 	}
 }
 
+// A mistyped board.grid value must repair per axis on load instead of
+// failing the board file load (which would take the whole backend down
+// with it): a fractional or non-numeric dimension falls back to the
+// per-axis default, a whole number is kept, and a grid that is not a JSON
+// object falls back to the default 12x12.
+func TestBoardGridTolerantDecode(t *testing.T) {
+	cases := []struct {
+		name string
+		grid string
+		cols int
+		rows int
+	}{
+		{"float-whole-cols-string-rows", `{"grid": {"cols": 12.0, "rows": "12"}}`, 12, 12},
+		{"fractional-cols", `{"grid": {"cols": 6.5, "rows": 4}}`, 12, 4},
+		{"string-cols", `{"grid": {"cols": "6", "rows": 4}}`, 12, 4},
+		{"out-of-range", `{"grid": {"cols": 99, "rows": -1}}`, 12, 12},
+		{"missing-rows", `{"grid": {"cols": 6}}`, 6, 12},
+		{"empty-object", `{"grid": {}}`, 12, 12},
+		{"null", `{"grid": null}`, 12, 12},
+		{"non-object-number", `{"grid": 5}`, 12, 12},
+		{"non-object-string", `{"grid": "wobbly"}`, 12, 12},
+		{"non-object-array", `{"grid": [6, 4]}`, 12, 12},
+		{"valid", `{"grid": {"cols": 6, "rows": 4}}`, 6, 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _ := viewsCfg(t, tc.grid)
+			if cols, rows := cfg.GridDims(); cols != tc.cols || rows != tc.rows {
+				t.Errorf("grid = %dx%d, want %dx%d", cols, rows, tc.cols, tc.rows)
+			}
+		})
+	}
+
+	// A repaired non-object grid is stored as the valid default, not as an
+	// invalid value: a later board write persists a grid the reload agrees
+	// with (the in-memory board must never carry a mistyped dimension).
+	cfg, file := viewsCfg(t, `{"refresh_seconds": 30, "grid": 5}`)
+	if err := cfg.SetRefreshSeconds(45); err != nil {
+		t.Fatalf("SetRefreshSeconds: %v", err)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk Board
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("board file not valid JSON: %v: %s", err, data)
+	}
+	if onDisk.Grid == nil || onDisk.Grid.Cols != 12 || onDisk.Grid.Rows != 12 {
+		t.Errorf("persisted grid = %+v, want the repaired 12x12", onDisk.Grid)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatalf("reloaded Load: %v", err)
+	}
+	if cols, rows := reloaded.GridDims(); cols != 12 || rows != 12 {
+		t.Errorf("reloaded grid = %dx%d, want 12x12", cols, rows)
+	}
+}
+
 func TestSetGridPersistsAndRepairs(t *testing.T) {
 	// chat's stored placement fits the default 12-column grid…
 	cfg, file := viewsCfg(t, `{"refresh_seconds": 45, "views": {"geometry": {"chat": {"x": 7, "y": 1, "w": 6, "h": 1}}}}`)
