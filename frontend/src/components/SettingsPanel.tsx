@@ -191,7 +191,7 @@ function TilesSection({
         <div>
           <div className="settings-row-label">Calendar view</div>
           <div className="settings-row-desc">
-            How the Calendar window renders: the month grid, or a schedule summary — a
+            How the Calendar tile renders: the month grid, or a schedule summary — a
             chronological list of upcoming events.
           </div>
         </div>
