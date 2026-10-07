@@ -71,6 +71,18 @@ describe('autoLayout', () => {
     expect(layout.push).toEqual({ x: 1, y: 3, w: 3, h: 1 })
   })
 
+  it('flows auto tiles around fixed entries that sit later in board order', () => {
+    // CSS places every explicitly positioned tile before the auto flow
+    // starts, so home's stored cell at (4,1) must not stay open for chat
+    // even though home comes after chat in board order.
+    const layout = autoLayout(ORDER, {}, { home: { x: 4, y: 1, w: 3, h: 1 } })
+    expect(layout.home).toEqual({ x: 4, y: 1, w: 3, h: 1 })
+    expect(layout.calendar).toEqual({ x: 1, y: 1, w: 3, h: 1 })
+    expect(layout.chat).toEqual({ x: 1, y: 2, w: 3, h: 1 })
+    expect(layout.push).toEqual({ x: 4, y: 2, w: 3, h: 1 })
+    expect(boardRows(layout)).toBe(2)
+  })
+
   it('never overlaps, regardless of order or sizes', () => {
     const layout = autoLayout(ORDER, { calendar: 'xl', chat: 'xl', home: 's', push: 's' })
     const cells = Object.values(layout)

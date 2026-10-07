@@ -32,6 +32,10 @@ export function autoLayout(
   cols = GRID_COLS,
 ): Record<string, TileGeometry> {
   const placed: TileGeometry[] = []
+  for (const id of order) {
+    const f = fixed[id]
+    if (f) placed.push(f)
+  }
   const out: Record<string, TileGeometry> = {}
   const free = (y: number, x: number, w: number) =>
     !placed.some((p) => p.x < x + w && x < p.x + p.w && p.y < y + 1 && y < p.y + p.h)
@@ -40,7 +44,6 @@ export function autoLayout(
   for (const id of order) {
     const f = fixed[id]
     if (f) {
-      placed.push(f)
       out[id] = f
       continue
     }
