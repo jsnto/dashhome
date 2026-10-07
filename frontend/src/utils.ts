@@ -33,11 +33,6 @@ export const TILE_SIZE_LABELS: Record<TileSize, string> = {
 export const GRID_COLS = 6
 export const STEP_WIDTH: Record<TileSize, number> = { s: 2, m: 3, l: 4, xl: 6 }
 
-/** A valid size step. */
-export function isTileSize(s: unknown): s is TileSize {
-  return s === 's' || s === 'm' || s === 'l' || s === 'xl'
-}
-
 /**
  * A valid grid placement on the 6-column grid: 1-based integers, the span
  * fits the columns (1 <= w <= 6, 1 <= x <= 7-w), the row and height are
@@ -200,12 +195,7 @@ export function normalizeViews(views: BoardViews | null): NormalizedViews {
   return { order, hidden, calendar_mode, sizes, geometry, ha_tiles: haTiles }
 }
 
-export function defaultViews(): NormalizedViews {
-  return normalizeViews(null)
-}
-
-/**
- * The effective visible order: board order minus the hidden tiles.
+/** The effective visible order: board order minus the hidden tiles.
  * (The board file is freehand-editable, so the input is normalized first:
  * this helper is the single source of truth for what renders.)
  */
@@ -218,35 +208,4 @@ export function visibleOrder(views: BoardViews | null): string[] {
 export function dayKey(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
-}
-
-/**
- * The upcoming window: from the start of today to `days` days ahead,
- * matching the backend's events query (?days=).
- */
-export function upcomingWindow(now: Date, days = 30): { from: Date; to: Date } {
-  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const to = new Date(from)
-  to.setDate(to.getDate() + days)
-  return { from, to }
-}
-
-/**
- * Keep events that fall inside the upcoming window. An all-day event
- * occupies [start, end) with a local-calendar date end (the backend's
- * Google convention: the exclusive end day), so it is upcoming when its
- * LAST real day (end - 1 day) is still within the window; a timed event is
- * upcoming when its start is. Both comparisons are in date space so they
- * hold under any browser timezone.
- */
-export function isUpcoming(e: { start: string; end: string; all_day: boolean }, win: { from: Date; to: Date }): boolean {
-  const start = new Date(e.start)
-  if (!e.all_day) {
-    return start >= win.from && start < win.to
-  }
-  const endDay = new Date(e.end)
-  const lastDay = new Date(endDay.getFullYear(), endDay.getMonth(), endDay.getDate() - 1)
-  const fromDay = new Date(win.from.getFullYear(), win.from.getMonth(), win.from.getDate())
-  const toDay = new Date(win.to.getFullYear(), win.to.getMonth(), win.to.getDate())
-  return lastDay >= fromDay && lastDay < toDay
 }

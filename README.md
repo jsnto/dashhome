@@ -175,9 +175,9 @@ returned.
 **Board tiles.** Home Assistant-backed tiles can be added to the board from
 the settings screen's Home Assistant section (or by hand in `views.ha_tiles`
 below): each tile binds to exactly one entity and is either a **button**
-tile (fires the board's allowlisted `toggle` action, with `turn_on`/
-`turn_off` on button/switch domains) or a **visual** tile (shows the
-entity's current state). Entity states are polled by the browser while a
+tile (fires the board's allowlisted `toggle` action — the API also
+accepts `turn_on`/`turn_off`, on any entity domain) or a **visual**
+tile (shows the entity's current state). Entity states are polled by the browser while a
 HA tile is visible — never stored, and the token stays on the server;
 the only write path to HA is `POST /api/ha/service` with the allowlisted
 actions (see the API table).
@@ -371,11 +371,10 @@ dashboard, no token in the URL):
     fixed grid cell `{"x", "y", "w", "h"}` (1-based columns and rows,
     `w` ≤ 6, the cell must stay inside the board and must not overlap
     another placed tile). Tiles with no entry are placed automatically
-    in board order (row by row); a tile's stored `w` is ignored when it
-    disagrees with its `sizes` step. Invalid entries (out of bounds,
-    non-integer, overlapping, or a width that conflicts with the size
-    step) are repaired or dropped on load and on save — the server
-    never serves a colliding layout — so hand edits are repaired, not
+    in board order (row by row); a fixed tile renders at its stored
+    cell, width included. Invalid entries (out of bounds, non-integer,
+    or overlapping) are dropped on load and on save — the server never
+    serves a colliding layout — so hand edits are repaired, not
     rejected.
   - `ha_tiles` — the Home Assistant board tiles, in board order: an `id`
     (`ha-<name>`, 1–16 lowercase alphanumerics), the bound `entity`
@@ -388,10 +387,9 @@ dashboard, no token in the URL):
   (missing view IDs re-appear in the default order), an unknown
   `calendar_mode` falls back to `"month"`, `sizes` entries with an
   unknown view ID or an unknown step fall back to the default size,
-  `geometry` entries that are out of bounds, overlap a neighbour, or
-  conflict with a tile's size step are dropped (the tile falls back to
-  automatic placement), and `ha_tiles` entries with a bad id, entity, or
-  kind are dropped.
+  `geometry` entries that are out of bounds or overlap a neighbour are
+  dropped (the tile falls back to automatic placement), and `ha_tiles`
+  entries with a bad id, entity, or kind are dropped.
 
 Path: `CONFIG_FILE` (default `./dashhome.json`).
 
@@ -412,11 +410,11 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 | `GET /healthz` | Liveness probe |
 | `GET /api/config` | Dashboard config + integration status (no secrets) |
 | `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json` (the board file must be writable by the backend), `200 {board}` |
-| `PUT /api/config/views` | `{"order": [...], "hidden": [...], "calendar_mode": "month"\|"schedule", "sizes": {view: "s"\|"m"\|"l"\|"xl"}, "geometry": {tile: {"x": n, "y": n, "w": n, "h": n} \| null}, "ha_tiles": [...]}` (any subset of the fields; omitted fields keep their value, `sizes`/`geometry` change only the tiles they list, a `null` geometry entry clears that tile's placement, and `ha_tiles` replaces the list) → persist the dashboard's tile layout to `dashhome.json` (the board file must be writable by the backend); placements are clamped to the board and overlapping ones repaired (moved to a free cell), never rejected, `400 bad_views` on invalid field values, `503` when the board file is missing or not writable, `200 {board}` |
+| `PUT /api/config/views` | `{"order": [...], "hidden": [...], "calendar_mode": "month"\|"schedule", "sizes": {view: "s"\|"m"\|"l"\|"xl"}, "geometry": {tile: {"x": n, "y": n, "w": n, "h": n} \| null}, "ha_tiles": [...]}` (any subset of the fields; omitted fields keep their value, `sizes`/`geometry` change only the tiles they list, a `null` geometry entry clears that tile's placement, and `ha_tiles` replaces the list) → persist the dashboard's tile layout to `dashhome.json` (the board file must be writable by the backend); placements that fall outside the board are refused with `400 bad_views` (as are other invalid field values), and overlapping stored entries are dropped on load and on save — the tile falls back to automatic placement — `503` when the board file is missing or not writable, `200 {board}` |
 | `GET /api/calendars` | Calendar tabs: the configured `calendars` (shown even if the API's calendar list omits them), else every calendar visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
 | `GET /api/ha/entities` | Configured entities with current states |
-| `POST /api/ha/service` | `{"entity_id": "light.kitchen", "action": "toggle"\|"turn_on"\|"turn_off"}` → calls the HA service matching the action on that entity (only these three actions are accepted; `turn_on`/`turn_off` only on button/switch domains), `404 entity_not_found`, `502 homeassistant_unreachable` when HA cannot be reached, `503 homeassistant_not_configured`, `200 {ok: true}` |
+| `POST /api/ha/service` | `{"entity_id": "light.kitchen", "action": "toggle"\|"turn_on"\|"turn_off"}` → calls the HA service matching the action on that entity (only these three actions are accepted, on any entity domain, via `homeassistant.toggle`/`turn_on`/`turn_off`), `404 ha_entity_not_found`, `502 homeassistant_unavailable` when HA cannot be reached, `503 homeassistant_not_configured`, `200 {ok: true}` |
 | `GET /api/ha/embed-url` | Fully-formed iframe URL for the Home card's dashboard embed (token only when `ha_embed.token_url`) |
 | `GET /api/ha/dashboards?reload=1` | Dashboard inventory (metadata only; `reload` bypasses the TTL cache) |
 | `GET /api/ha/dashboard/:path?reload=1` | One dashboard's full config JSON (pass-through); `:path` empty (i.e. `/api/ha/dashboard[/]`) = default dashboard |
@@ -450,9 +448,10 @@ into friendly setup notes.
   `/api/ha/dashboard/:path`) is read-only and caches the results in
   memory with a TTL (`?reload=1` forces a re-fetch). The one write path to
   Home Assistant is `POST /api/ha/service`, which accepts a fixed
-  allowlist of actions (`toggle` always; `turn_on`/`turn_off` only on
-  button/switch entities) against a caller-supplied entity ID — no
-  free-form service or data payload — so the board can flip a light but
+  allowlist of actions (`toggle`, `turn_on`, `turn_off` — the three
+  standard actions, on any entity) against a caller-supplied entity ID
+  (not restricted to the entities the board shows) — no free-form
+  service or data payload — so the board can flip a light but
   cannot invoke arbitrary HA services.
 - Secrets live only in env vars / your secrets store; `.env`, `data/`, and
   `dashhome.json` are git-ignored.

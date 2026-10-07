@@ -427,8 +427,9 @@ func (s *Server) entityJSON(st ha.EntityState) apiEntity {
 // haServiceAllowlist is the fixed set of standard actions a button tile
 // may perform on its entity (all in the homeassistant domain). The API
 // accepts the action names only — never a free-form service or data
-// payload — so a compromised dashboard can at most toggle the entities
-// it shows.
+// payload — so a caller can at most run these three actions on the
+// entity it names (the entity_id is caller-supplied, not restricted to
+// the entities the board shows).
 var haServiceAllowlist = map[string]string{
 	"toggle":   "toggle",
 	"turn_on":  "turn_on",

@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-  defaultViews,
   GRID_COLS,
   haTileLabel,
   haTileState,
   isHATileId,
   isValidGeometry,
-  isTileSize,
   normalizeGeometry,
   normalizeHATiles,
   normalizeViews,
@@ -20,9 +18,6 @@ describe('grid constants', () => {
   it('the board is a 6-column grid with the documented size spans', () => {
     expect(GRID_COLS).toBe(6)
     expect(STEP_WIDTH).toEqual({ s: 2, m: 3, l: 4, xl: 6 })
-    expect(isTileSize('s')).toBe(true)
-    expect(isTileSize('xl')).toBe(true)
-    expect(isTileSize('xlxl')).toBe(false)
   })
 })
 
@@ -160,7 +155,6 @@ describe('normalizeViews', () => {
     expect(v.sizes).toEqual({ calendar: 'm', chat: 'm', home: 'm', push: 'm' })
     expect(v.geometry).toEqual({})
     expect(v.ha_tiles).toEqual([])
-    expect(defaultViews()).toEqual(v)
   })
 
   it('repairs a malformed section without crashing', () => {

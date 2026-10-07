@@ -11,7 +11,7 @@ import type {
 import { TILE_SIZES, VIEW_IDS } from './types'
 import { useTheme } from './useTheme'
 import { useHAEntities } from './useHAEntities'
-import { normalizeViews, TILE_SIZE_LABELS, VIEW_LABELS, visibleOrder } from './utils'
+import { GRID_COLS, normalizeViews, TILE_SIZE_LABELS, VIEW_LABELS, visibleOrder } from './utils'
 import CalendarSection from './components/CalendarSection'
 import ChatPanel, { type UiMsg } from './components/ChatPanel'
 import FullscreenButton from './components/FullscreenButton'
@@ -20,6 +20,7 @@ import HATile from './components/HATile'
 import PushPanel from './components/PushPanel'
 import SettingsPanel from './components/SettingsPanel'
 import {
+  autoLayout,
   boardRows,
   dragCell,
   dropRefused,
@@ -95,12 +96,16 @@ export default function App() {
   // rendered, so they need no data polling).
   const visible = useMemo(() => visibleOrder(views), [views])
 
-  // The board's total rows (the auto flow plus stored placements), used
-  // for the drag/resize pixel math.
-  const rows = useMemo(
-    () => boardRows(visible, views.sizes, views.geometry),
+  // The visible tiles' effective layout: the stored placements plus the
+  // auto flow of the rest — the board's rendered positions. The
+  // drag/resize pixel math and the placement controls all act on this.
+  const layout = useMemo(
+    () => autoLayout(visible, views.sizes, views.geometry),
     [visible, views],
   )
+  // The board's total rows (that layout), used for the drag/resize
+  // pixel math.
+  const rows = useMemo(() => boardRows(layout), [layout])
 
   // Home Assistant tiles shown on the board drive the entity-state polling;
   // hidden HA tiles are skipped.
@@ -200,19 +205,23 @@ export default function App() {
   // guarded write path as the settings saves.
   const changeSize = (id: string, size: TileSize) => {
     if (savingSize || size === views.sizes[id]) return
+    // A placed tile's width follows the size step (the stepper is its
+    // width control); a new cell that overlaps a neighbour is refused
+    // (the tile stays where it is) instead of committed.
+    let cell: TileGeometry | null = null
+    const g = views.geometry[id]
+    if (g) {
+      const w = Math.min(widthForSize(size), GRID_COLS)
+      cell = { ...g, w, x: Math.max(1, Math.min(GRID_COLS - w + 1, g.x)) }
+      if (dropRefused(id, cell, visible, views.sizes, views.geometry)) return
+    }
     setSavingSize(true)
     setLayoutErr(null)
-    const g = views.geometry[id]
     const patch: {
       sizes: Partial<Record<string, TileSize>>
       geometry?: Record<string, TileGeometry | null>
     } = { sizes: { [id]: size } }
-    if (g) {
-      const w = Math.min(widthForSize(size), 6)
-      patch.geometry = {
-        [id]: { ...g, w, x: Math.max(1, Math.min(6 - w + 1, g.x)) },
-      }
-    }
+    if (cell) patch.geometry = { [id]: cell }
     commitViews(patch)
   }
 
@@ -220,32 +229,26 @@ export default function App() {
   const nudge = (id: string, dx: number, dy: number) => {
     const g = views.geometry[id]
     if (!g || savingSize) return
+    const cell: TileGeometry = {
+      ...g,
+      x: Math.max(1, Math.min(GRID_COLS - g.w + 1, g.x + dx)),
+      y: Math.max(1, g.y + dy),
+    }
+    if (dropRefused(id, cell, visible, views.sizes, views.geometry)) return
     setSavingSize(true)
     setLayoutErr(null)
-    commitViews({
-      geometry: {
-        [id]: {
-          ...g,
-          x: Math.max(1, Math.min(6 - g.w + 1, g.x + dx)),
-          y: Math.max(1, g.y + dy),
-        },
-      },
-    })
+    commitViews({ geometry: { [id]: cell } })
   }
 
-  // Grow/shrink a tile's height (rows are unbounded). An unplaced tile
-  // starts from its size-step width at row 1.
+  // Grow/shrink a tile's height (rows are unbounded), pinning an
+  // unplaced tile at the cell it currently renders in.
   const stepHeight = (id: string, delta: number) => {
     if (savingSize) return
+    const cell: TileGeometry = { ...layout[id], h: Math.max(1, layout[id].h + delta) }
+    if (dropRefused(id, cell, visible, views.sizes, views.geometry)) return
     setSavingSize(true)
     setLayoutErr(null)
-    const g = views.geometry[id] ?? {
-      x: 1,
-      y: 1,
-      w: widthForSize(views.sizes[id]),
-      h: 1,
-    }
-    commitViews({ geometry: { [id]: { ...g, h: Math.max(1, g.h + delta) } } })
+    commitViews({ geometry: { [id]: cell } })
   }
 
   // --- Drag & drop (edit mode only). The live drag data lives in a ref;
@@ -276,12 +279,7 @@ export default function App() {
     if (!boardElRef.current) return
     const metrics = measureGrid(boardElRef.current, rows)
     if (!metrics) return
-    const origin = views.geometry[id] ?? {
-      x: 1,
-      y: 1,
-      w: widthForSize(views.sizes[id]),
-      h: 1,
-    }
+    const origin = layout[id]
     dragRef.current = {
       mode,
       id,

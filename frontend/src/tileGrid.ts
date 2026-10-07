@@ -15,12 +15,15 @@ export function stepWidth(size: TileSize | string | undefined): number {
 }
 
 /**
- * CSS-style automatic placement: tiles flow in board order, each taking
- * its size step's width (height 1) at the first free cell of the first
- * free row. `fixed` placements (the board file's geometry) act as
- * obstacles and are kept in place. Deterministic: the same inputs always
- * produce the same cells (the jsdom tests rely on that — the browser's
- * own auto flow produces the same result for 1-row items).
+ * CSS-style automatic placement: tiles flow in board order with the
+ * grid's default sparse auto flow — the placement cursor only moves
+ * forward (each tile scans from the cursor; when that row runs out, the
+ * wrap to the next row restarts at column 1, and gaps left behind the
+ * cursor are never backfilled). `fixed` placements (the board file's
+ * geometry) act as obstacles without advancing the cursor, exactly like
+ * the board's explicitly positioned tiles. Deterministic: the same
+ * inputs always produce the same cells (the jsdom tests rely on that —
+ * the browser's own auto flow produces the same result).
  */
 export function autoLayout(
   order: string[],
@@ -32,6 +35,8 @@ export function autoLayout(
   const out: Record<string, TileGeometry> = {}
   const free = (y: number, x: number, w: number) =>
     !placed.some((p) => p.x < x + w && x < p.x + p.w && p.y < y + 1 && y < p.y + p.h)
+  let cursorY = 1
+  let cursorX = 1
   for (const id of order) {
     const f = fixed[id]
     if (f) {
@@ -40,12 +45,13 @@ export function autoLayout(
       continue
     }
     const w = Math.min(stepWidth(sizes[id]), cols)
-    let y = 1
+    let y = cursorY
     let cell: TileGeometry | null = null
     while (!cell) {
       // A width-w tile starting at x occupies columns x..x+w-1, so x may
-      // reach cols-w+1 (an xl tile fills the row from column 1).
-      for (let x = 1; x <= cols - w + 1; x++) {
+      // reach cols-w+1 (an xl tile fills the row from column 1). Rows
+      // beyond the cursor restart the scan at column 1.
+      for (let x = y === cursorY ? cursorX : 1; x <= cols - w + 1; x++) {
         if (free(y, x, w)) {
           cell = { x, y, w, h: 1 }
           break
@@ -55,31 +61,19 @@ export function autoLayout(
     }
     placed.push(cell)
     out[id] = cell
+    cursorY = cell.y
+    cursorX = cell.x + cell.w
   }
   return out
 }
 
-/** The total grid rows the layout needs (1 when nothing is placed). */
-export function boardRows(
-  order: string[],
-  sizes: Record<string, TileSize | string | undefined>,
-  fixed: Record<string, TileGeometry> = {},
-  cols = GRID_COLS,
-): number {
-  const layout = autoLayout(order, sizes, fixed, cols)
+/** The total grid rows a computed layout needs (1 when nothing is placed). */
+export function boardRows(layout: Record<string, TileGeometry>): number {
   let rows = 1
   for (const cell of Object.values(layout)) {
     rows = Math.max(rows, cell.y + cell.h - 1)
   }
   return rows
-}
-
-/** A placement inside the 6-column grid (rows are unbounded downward). */
-export function inBounds(g: TileGeometry): boolean {
-  return (
-    Number.isInteger(g.x) && Number.isInteger(g.y) && Number.isInteger(g.w) && Number.isInteger(g.h) &&
-    g.w >= 1 && g.w <= GRID_COLS && g.x >= 1 && g.x <= GRID_COLS - g.w + 1 && g.y >= 1 && g.h >= 1
-  )
 }
 
 /**
@@ -128,17 +122,6 @@ export function measureGrid(board: HTMLElement, rows: number, cols = GRID_COLS):
   const rowH = (r.height - (rows - 1) * gap) / rows
   if (colW <= 0 || rowH <= 0) return null
   return { left: r.left, top: r.top, colW, rowH, gap }
-}
-
-/** The cell a client x/y point falls in (1-based), or null outside the grid. */
-export function pointToCell(px: number, py: number, m: GridMetrics, cols = GRID_COLS): { x: number; y: number } | null {
-  const colPitch = m.colW + m.gap
-  const rowPitch = m.rowH + m.gap
-  if (px < m.left - m.gap / 2 || px > m.left + cols * colPitch - m.gap / 2) return null
-  if (py < m.top - m.gap / 2) return null
-  const x = Math.min(cols, Math.max(1, Math.floor((px - m.left) / colPitch) + 1))
-  const y = Math.max(1, Math.floor((py - m.top) / rowPitch) + 1)
-  return { x, y }
 }
 
 /**

@@ -5,13 +5,10 @@ import {
   clampCell,
   dragCell,
   dropRefused,
-  inBounds,
   measureGrid,
-  pointToCell,
   stepWidth,
   type GridMetrics,
 } from './tileGrid'
-import type { TileGeometry, TileSize } from './types'
 
 const ORDER = ['calendar', 'chat', 'home', 'push']
 
@@ -41,8 +38,22 @@ describe('autoLayout', () => {
     const layout = autoLayout(ORDER, { chat: 'xl' })
     expect(layout.chat).toEqual({ x: 1, y: 2, w: 6, h: 1 })
     expect(layout.calendar).toEqual({ x: 1, y: 1, w: 3, h: 1 })
-    expect(layout.home).toEqual({ x: 4, y: 1, w: 3, h: 1 })
-    expect(layout.push).toEqual({ x: 1, y: 3, w: 3, h: 1 })
+    expect(layout.home).toEqual({ x: 1, y: 3, w: 3, h: 1 })
+    expect(layout.push).toEqual({ x: 4, y: 3, w: 3, h: 1 })
+  })
+
+  it('does not backfill gaps behind the CSS auto-flow cursor (sparse flow)', () => {
+    // The regression the mixed-size board exposed: the board's CSS grid
+    // uses the default sparse auto flow (the cursor never moves
+    // backwards), so the columns 5–6 that calendar (l) leaves in row 1
+    // are not revisited — push (s) lands at (1,3), a third row, not at
+    // (5,1).
+    const layout = autoLayout(ORDER, { calendar: 'l', push: 's' })
+    expect(layout.calendar).toEqual({ x: 1, y: 1, w: 4, h: 1 })
+    expect(layout.chat).toEqual({ x: 1, y: 2, w: 3, h: 1 })
+    expect(layout.home).toEqual({ x: 4, y: 2, w: 3, h: 1 })
+    expect(layout.push).toEqual({ x: 1, y: 3, w: 2, h: 1 })
+    expect(boardRows(layout)).toBe(3)
   })
 
   it('respects board order for the auto cells', () => {
@@ -82,25 +93,13 @@ describe('autoLayout', () => {
 
 describe('boardRows', () => {
   it('counts the rows the layout needs', () => {
-    expect(boardRows(ORDER, {})).toBe(2)
-    expect(boardRows(ORDER, { chat: 'xl' })).toBe(3)
-    expect(boardRows(ORDER, {}, { calendar: { x: 1, y: 4, w: 3, h: 2 } })).toBe(5)
+    expect(boardRows(autoLayout(ORDER, {}))).toBe(2)
+    expect(boardRows(autoLayout(ORDER, { chat: 'xl' }))).toBe(3)
+    expect(boardRows(autoLayout(ORDER, {}, { calendar: { x: 1, y: 4, w: 3, h: 2 } }))).toBe(5)
   })
 })
 
-describe('inBounds / clampCell', () => {
-  it('accepts in-bounds cells and rejects out-of-board ones', () => {
-    expect(inBounds({ x: 1, y: 1, w: 1, h: 1 })).toBe(true)
-    expect(inBounds({ x: 6, y: 1, w: 1, h: 1 })).toBe(true)
-    expect(inBounds({ x: 1, y: 1, w: 6, h: 1 })).toBe(true)
-    expect(inBounds({ x: 7, y: 1, w: 1, h: 1 })).toBe(false) // past the right edge
-    expect(inBounds({ x: 0, y: 1, w: 1, h: 1 })).toBe(false)
-    expect(inBounds({ x: 1, y: 0, w: 1, h: 1 })).toBe(false)
-    expect(inBounds({ x: 1, y: 1, w: 7, h: 1 })).toBe(false) // wider than the board
-    expect(inBounds({ x: 1, y: 1, w: 1, h: 0 })).toBe(false)
-    expect(inBounds({ x: 1.5, y: 1, w: 1, h: 1 })).toBe(false)
-  })
-
+describe('clampCell', () => {
   it('clamps a cell back into the grid (rows unbounded downward)', () => {
     expect(clampCell({ x: 0, y: 1, w: 3, h: 1 })).toEqual({ x: 1, y: 1, w: 3, h: 1 })
     expect(clampCell({ x: 9, y: 1, w: 3, h: 1 })).toEqual({ x: 4, y: 1, w: 3, h: 1 })
@@ -114,25 +113,6 @@ describe('inBounds / clampCell', () => {
 // The measured board box the pointer math runs against: 6 columns of 100px
 // with a 16px gap (716px wide), 4 rows of 150px.
 const M: GridMetrics = { left: 0, top: 0, colW: 100, rowH: 150, gap: 16 }
-
-describe('pointToCell', () => {
-  it('maps a client point to its 1-based cell', () => {
-    expect(pointToCell(5, 5, M)).toEqual({ x: 1, y: 1 })
-    expect(pointToCell(150, 5, M)).toEqual({ x: 2, y: 1 })
-    expect(pointToCell(5, 165, M)).toEqual({ x: 1, y: 1 }) // within the first row's pitch
-    expect(pointToCell(5, 200, M)).toEqual({ x: 1, y: 2 })
-    expect(pointToCell(500, 500, M)).toEqual({ x: 5, y: 4 })
-  })
-
-  it('is null above the board and null far to the left', () => {
-    expect(pointToCell(5, -10, M)).toBeNull()
-    expect(pointToCell(-20, 5, M)).toBeNull()
-  })
-
-  it('is null far outside the board box', () => {
-    expect(pointToCell(9999, 9999, M)).toBeNull()
-  })
-})
 
 describe('dragCell', () => {
   it('snaps a move to whole cells from the grab offset', () => {
@@ -210,14 +190,5 @@ describe('measureGrid', () => {
     } finally {
       window.getComputedStyle = orig
     }
-  })
-})
-
-describe('types plumbing', () => {
-  it('keeps the geometry/size types aligned with the grid bounds', () => {
-    const g: TileGeometry = { x: 1, y: 1, w: 6, h: 1 }
-    expect(inBounds(g)).toBe(true)
-    const s: TileSize = 'xl'
-    expect(stepWidth(s)).toBe(6)
   })
 })
