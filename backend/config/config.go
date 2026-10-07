@@ -651,16 +651,16 @@ func validGeometry(g *TileGeometry, cols, rows int) bool {
 	if g == nil {
 		return false
 	}
-	if g.W < 1 || g.W > cols {
+	if g.W <= 0 || g.H <= 0 || g.X < 1 || g.Y < 1 {
 		return false
 	}
-	if g.X < 1 || g.X+g.W-1 > cols {
+	if g.W > cols || g.H > rows {
 		return false
 	}
-	if g.Y < 1 || g.Y+g.H-1 > rows {
+	if g.X > cols-g.W+1 {
 		return false
 	}
-	if g.H < 1 {
+	if g.Y > rows-g.H+1 {
 		return false
 	}
 	return true

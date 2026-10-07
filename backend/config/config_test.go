@@ -1031,6 +1031,28 @@ func TestViewConfigRepairsGeometryAndHATiles(t *testing.T) {
 	}
 }
 
+// Extreme-but-representable coordinates are out-of-bounds placements: load
+// repair drops them back to auto placement exactly like any other
+// out-of-grid entry (the in-bounds one is kept).
+func TestViewConfigRepairsOverflowGeometry(t *testing.T) {
+	cfg, _ := viewsCfg(t, `{
+		"views": {
+			"geometry": {
+				"calendar": {"x": 9223372036854775807, "y": 1, "w": 2, "h": 1},
+				"chat": {"x": 1, "y": 9223372036854775807, "w": 1, "h": 2},
+				"home": {"x": 1, "y": 1, "w": 3, "h": 1}
+			}
+		}
+	}`)
+	v := cfg.ViewConfig()
+	if len(v.Geometry) != 1 {
+		t.Fatalf("repaired geometry = %+v, want only the in-bounds placement", v.Geometry)
+	}
+	if g := v.Geometry[ViewHome]; g == nil || g.X != 1 || g.Y != 1 || g.W != 3 || g.H != 1 {
+		t.Errorf("home geometry = %+v", g)
+	}
+}
+
 func TestSetViewsGeometryAndHATilesRoundTrip(t *testing.T) {
 	cfg, file := viewsCfg(t, `{"refresh_seconds": 45}`)
 	order := []string{ViewChat, ViewHome, "ha-1", ViewPush, ViewCalendar}
@@ -1169,6 +1191,8 @@ func TestSetViewsInvalidGeometryAndHATiles(t *testing.T) {
 		{"crosses-edge", map[string]*TileGeometry{ViewCalendar: geom(12, 1, 2, 1)}},
 		{"out-of-bounds-y", map[string]*TileGeometry{ViewCalendar: geom(1, 13, 2, 1)}},
 		{"crosses-bottom", map[string]*TileGeometry{ViewCalendar: geom(1, 12, 2, 2)}},
+		{"overflow-x", map[string]*TileGeometry{ViewCalendar: geom(9223372036854775807, 1, 2, 1)}},
+		{"overflow-y", map[string]*TileGeometry{ViewCalendar: geom(1, 9223372036854775807, 2, 1)}},
 		{"negative-height", map[string]*TileGeometry{ViewCalendar: geom(1, 1, 3, 0)}},
 		{"zero-width", map[string]*TileGeometry{ViewCalendar: geom(1, 1, 0, 1)}},
 		{"unknown-tile", map[string]*TileGeometry{"nope": geom(1, 1, 1, 1)}},
