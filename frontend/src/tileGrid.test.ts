@@ -1,15 +1,71 @@
 import { describe, expect, it } from 'vitest'
 import {
+  NEW_TILE_DEFAULT_SIZE,
   autoLayout,
   clampCell,
   dragCell,
   dropRefused,
+  firstFreeCell,
   measureGrid,
   stepWidth,
   type GridMetrics,
 } from './tileGrid'
 
 const ORDER = ['calendar', 'chat', 'home', 'push']
+
+describe('firstFreeCell (new tiles default to 2x2)', () => {
+  it('returns the default new-tile span (2x2)', () => {
+    expect(NEW_TILE_DEFAULT_SIZE).toEqual({ w: 2, h: 2 })
+  })
+
+  it('finds the first free 2x2 cell in reading order around the default board flow', () => {
+    // The default 2x2 flow of medium tiles fills rows 1-2 (calendar/chat
+    // row 1, home/push row 2), so the first free 2x2 cell is (1,3).
+    expect(firstFreeCell(ORDER, {}, {}, 2, 2)).toEqual({ x: 1, y: 3, w: 2, h: 2 })
+  })
+
+  it('returns the top-left cell on an empty board', () => {
+    expect(firstFreeCell([], {}, {}, 2, 2)).toEqual({ x: 1, y: 1, w: 2, h: 2 })
+  })
+
+  it('steers around stored placements and the auto flow alike', () => {
+    // home is pinned at (1,2,3,1); the auto flow around it is
+    // calendar (1,1,6,1), chat (7,1,6,1), push (4,2,6,1). Row 1 is full,
+    // and in row 2 the cells x<=9 clash with home or push — the first
+    // free 2x2 cell is (10,2).
+    const geometry = { home: { x: 1, y: 2, w: 3, h: 1 } }
+    expect(firstFreeCell(ORDER, {}, geometry, 2, 2)).toEqual({ x: 10, y: 2, w: 2, h: 2 })
+  })
+
+  it('steers around auto-flowed cells of every tile in the board order (hidden included)', () => {
+    // The caller passes the full board order (hidden tiles keep their
+    // effective cells), so a hidden tile's auto cell is an obstacle too.
+    // calendar (xl) fills row 1; chat (m) flows to (1,2): the first free
+    // 2x2 cell is (7,2), beside chat, not below calendar's row.
+    expect(firstFreeCell(['calendar', 'chat'], { calendar: 'xl' }, {}, 2, 2)).toEqual({
+      x: 7,
+      y: 2,
+      w: 2,
+      h: 2,
+    })
+  })
+
+  it('returns null when the grid is too small for the span', () => {
+    expect(firstFreeCell([], {}, {}, 2, 2, 1, 12)).toBeNull()
+    expect(firstFreeCell([], {}, {}, 2, 2, 12, 1)).toBeNull()
+    expect(firstFreeCell([], {}, {}, 2, 2, 1, 1)).toBeNull()
+  })
+
+  it('returns null when no cell is free', () => {
+    const full = {
+      calendar: { x: 1, y: 1, w: 12, h: 6 },
+      chat: { x: 1, y: 7, w: 12, h: 6 },
+    }
+    expect(firstFreeCell(ORDER, {}, full, 2, 2)).toBeNull()
+    // A 2x2 grid fully covered by the default flow of medium tiles.
+    expect(firstFreeCell(ORDER, {}, {}, 2, 2, 2, 2)).toBeNull()
+  })
+})
 
 describe('stepWidth', () => {
   it('maps the size steps to fractions of the grid width (12 columns by default)', () => {

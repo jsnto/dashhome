@@ -1,6 +1,7 @@
 import type { TileGeometry, TileSize } from './types'
 import { GRID_DEFAULTS, rectsOverlap } from './utils'
 
+
 /**
  * Pure board-grid logic (no DOM): automatic placement, bounds, and the
  * pointer → cell math that drives drag/resize snapping. The layout rules
@@ -20,6 +21,44 @@ export function stepWidth(size: TileSize | string | undefined, cols = GRID_DEFAU
   const frac =
     size === 's' || size === 'm' || size === 'l' || size === 'xl' ? STEP_FRAC[size] : STEP_FRAC.m
   return Math.max(1, Math.min(Math.round(frac * cols), cols))
+}
+
+/** The default span of a newly created tile: a 2x2 cell on the board's
+ *  unit grid. New tiles are placed (explicitly) at the first free 2x2
+ *  cell rather than flowing in at their size step's width. */
+export const NEW_TILE_DEFAULT_SIZE: { w: number; h: number } = { w: 2, h: 2 }
+
+/**
+ * The first cell in reading order (row by row, left to right) on the
+ * cols x rows grid that fits a w x h tile and does not overlap any cell
+ * of the board's effective layout — the stored placements plus the auto
+ * flow of the rest, computed over the full board order (hidden tiles
+ * included: they stay in the board's layout, so a new tile that claimed
+ * one of their cells would be demoted to auto placement when they are
+ * re-shown). Null when the grid is too small for the span or no cell is
+ * free (the caller then leaves the tile to auto placement).
+ */
+export function firstFreeCell(
+  order: string[],
+  sizes: Record<string, TileSize | string | undefined>,
+  geometry: Record<string, TileGeometry>,
+  w: number,
+  h: number,
+  cols = GRID_DEFAULTS.cols,
+  rows = GRID_DEFAULTS.rows,
+): TileGeometry | null {
+  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1) return null
+  if (w > cols || h > rows) return null
+  const layout = autoLayout(order, sizes, geometry, cols)
+  const taken = (c: TileGeometry | undefined, cell: TileGeometry) =>
+    c !== undefined && rectsOverlap(c, cell)
+  for (let y = 1; y <= rows - h + 1; y++) {
+    for (let x = 1; x <= cols - w + 1; x++) {
+      const cell: TileGeometry = { x, y, w, h }
+      if (!order.some((id) => taken(layout[id], cell))) return cell
+    }
+  }
+  return null
 }
 
 /**

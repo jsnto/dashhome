@@ -71,8 +71,12 @@ const (
 // the dashboard is read-only here, so a stale-for-TTL view is acceptable
 // and `force` (the reload query param) bypasses it.
 type DashClient struct {
-	BaseURL string
-	Token   string
+	// Settings resolves the effective (base URL, token) on every call,
+	// so a value changed in the settings UI takes effect without a
+	// restart (cached results and the remembered command style are
+	// invalidated when the settings change). NewDashClient wraps a
+	// fixed pair.
+	Settings func() (baseURL, token string)
 
 	// ListTTL / ConfigTTL are the cache lifetimes. Defaults: 15 min for
 	// the (coarser) list, 5 min for a single dashboard's config.
@@ -82,28 +86,45 @@ type DashClient struct {
 	// Default 15 s, matching the HTTP client.
 	CallTimeout time.Duration
 
-	mu      sync.Mutex
-	style   commandStyle
-	list    cached[[]Dashboard]
-	configs map[string]cached[json.RawMessage]
+	mu       sync.Mutex
+	style    commandStyle
+	styleKey string // settings pair style applies to ("" = not probed yet)
+	list     cached[[]Dashboard]
+	configs  map[string]cached[json.RawMessage]
 }
 
-// cached is one TTL cache entry.
+// cached is one TTL cache entry, keyed to the settings that produced it:
+// an entry is fresh only while the cache TTL holds AND the settings are
+// unchanged (a URL/token change invalidates the entry immediately).
 type cached[T any] struct {
 	at  time.Time
+	key string
 	val T
 	ok  bool
 }
 
-func (c *cached[T]) fresh(ttl time.Duration, now time.Time) bool {
-	return c.ok && now.Sub(c.at) < ttl
+func (c *cached[T]) fresh(ttl time.Duration, now time.Time, key string) bool {
+	return c.ok && c.key == key && now.Sub(c.at) < ttl
 }
 
-// NewDashClient builds a Home Assistant dashboard client.
+// NewDashClient builds a Home Assistant dashboard client with fixed
+// settings.
 func NewDashClient(baseURL, token string) *DashClient {
 	return &DashClient{
-		BaseURL:     baseURL,
-		Token:       token,
+		Settings:    func() (string, string) { return baseURL, token },
+		ListTTL:     15 * time.Minute,
+		ConfigTTL:   5 * time.Minute,
+		CallTimeout: 15 * time.Second,
+		configs:     map[string]cached[json.RawMessage]{},
+	}
+}
+
+// NewDashClientSettings builds a Home Assistant dashboard client whose
+// settings resolve on every call (the settings UI > environment
+// precedence is applied live, no restart needed).
+func NewDashClientSettings(settings func() (baseURL, token string)) *DashClient {
+	return &DashClient{
+		Settings:    settings,
 		ListTTL:     15 * time.Minute,
 		ConfigTTL:   5 * time.Minute,
 		CallTimeout: 15 * time.Second,
@@ -137,17 +158,25 @@ type wsEnv struct {
 	Version string `json:"ha_version"`
 }
 
+// settingsKey is the cache key of one settings pair: an entry fetched
+// under other settings must not be served (the data is per-instance).
+func settingsKey(baseURL, token string) string {
+	return baseURL + "\x00" + token
+}
+
 // ListDashboards implements DashboardsClient.
 func (d *DashClient) ListDashboards(ctx context.Context, force bool) ([]Dashboard, error) {
+	baseURL, token := d.Settings()
+	key := settingsKey(baseURL, token)
 	d.mu.Lock()
-	if !force && d.list.fresh(d.ListTTL, time.Now()) {
+	if !force && d.list.fresh(d.ListTTL, time.Now(), key) {
 		out := d.list.val
 		d.mu.Unlock()
 		return out, nil
 	}
 	d.mu.Unlock()
 
-	raw, err := d.call(ctx, cmdListNew, cmdListOld, nil, false, force)
+	raw, err := d.call(ctx, cmdListNew, cmdListOld, nil, false, force, baseURL, token)
 	if err != nil {
 		return nil, err
 	}
@@ -156,33 +185,35 @@ func (d *DashClient) ListDashboards(ctx context.Context, force bool) ([]Dashboar
 		return nil, fmt.Errorf("decode home assistant dashboards: %w", err)
 	}
 	d.mu.Lock()
-	d.list = cached[[]Dashboard]{at: time.Now(), val: list, ok: true}
+	d.list = cached[[]Dashboard]{at: time.Now(), key: key, val: list, ok: true}
 	d.mu.Unlock()
 	return list, nil
 }
 
 // GetDashboardConfig implements DashboardsClient.
 func (d *DashClient) GetDashboardConfig(ctx context.Context, urlPath string, force bool) (json.RawMessage, error) {
-	key := NormalizeURLPath(urlPath)
+	baseURL, token := d.Settings()
+	key := settingsKey(baseURL, token)
+	keyPath := NormalizeURLPath(urlPath)
 	d.mu.Lock()
 	if !force {
-		if c, ok := d.configs[key]; ok && c.fresh(d.ConfigTTL, time.Now()) {
+		if c, ok := d.configs[keyPath]; ok && c.fresh(d.ConfigTTL, time.Now(), key) {
 			d.mu.Unlock()
 			return c.val, nil
 		}
 	}
 	d.mu.Unlock()
 
-	args := map[string]any{"url_path": key}
-	if key == "" {
+	args := map[string]any{"url_path": keyPath}
+	if keyPath == "" {
 		args["url_path"] = nil // default dashboard
 	}
-	raw, err := d.call(ctx, cmdConfigNew, cmdConfigOld, args, true, force)
+	raw, err := d.call(ctx, cmdConfigNew, cmdConfigOld, args, true, force, baseURL, token)
 	if err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
-	d.configs[key] = cached[json.RawMessage]{at: time.Now(), val: raw, ok: true}
+	d.configs[keyPath] = cached[json.RawMessage]{at: time.Now(), key: key, val: raw, ok: true}
 	d.mu.Unlock()
 	return raw, nil
 }
@@ -190,31 +221,36 @@ func (d *DashClient) GetDashboardConfig(ctx context.Context, urlPath string, for
 // call authenticates on one WS connection and runs one command. When the
 // instance does not know the primary command name (older HA), it falls
 // back to the legacy name and remembers the result for later calls.
-func (d *DashClient) call(ctx context.Context, primary, legacy string, args map[string]any, supportsForce, force bool) (json.RawMessage, error) {
+func (d *DashClient) call(ctx context.Context, primary, legacy string, args map[string]any, supportsForce, force bool, baseURL, token string) (json.RawMessage, error) {
+	key := settingsKey(baseURL, token)
 	d.mu.Lock()
 	style := d.style
+	if key != d.styleKey {
+		style = styleUnknown // settings changed since the probe: re-probe
+	}
 	d.mu.Unlock()
 
 	if style == styleLegacy {
-		return d.oneCall(ctx, legacy, dropForce(args))
+		return d.oneCall(ctx, legacy, dropForce(args), baseURL, token)
 	}
-	raw, err := d.oneCall(ctx, primary, forceArgs(args, supportsForce, force))
+	raw, err := d.oneCall(ctx, primary, forceArgs(args, supportsForce, force), baseURL, token)
 	if err == nil {
 		if style == styleUnknown {
-			d.setStyle(styleLovelace)
+			d.setStyle(styleLovelace, key)
 		}
 		return raw, nil
 	}
 	if style == styleUnknown && errors.Is(err, errUnknownCommand) {
-		d.setStyle(styleLegacy)
-		return d.oneCall(ctx, legacy, dropForce(args))
+		d.setStyle(styleLegacy, key)
+		return d.oneCall(ctx, legacy, dropForce(args), baseURL, token)
 	}
 	return nil, err
 }
 
-func (d *DashClient) setStyle(s commandStyle) {
+func (d *DashClient) setStyle(s commandStyle, key string) {
 	d.mu.Lock()
 	d.style = s
+	d.styleKey = key
 	d.mu.Unlock()
 }
 
@@ -247,7 +283,7 @@ func dropForce(args map[string]any) map[string]any {
 }
 
 // oneCall runs one WS session: handshake, auth, one command, one result.
-func (d *DashClient) oneCall(ctx context.Context, cmdType string, args map[string]any) (json.RawMessage, error) {
+func (d *DashClient) oneCall(ctx context.Context, cmdType string, args map[string]any, baseURL, token string) (json.RawMessage, error) {
 	timeout := d.CallTimeout
 	if timeout <= 0 {
 		timeout = 15 * time.Second
@@ -255,7 +291,7 @@ func (d *DashClient) oneCall(ctx context.Context, cmdType string, args map[strin
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	conn, err := d.dial(ctx)
+	conn, err := d.dial(ctx, baseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +307,7 @@ func (d *DashClient) oneCall(ctx context.Context, cmdType string, args map[strin
 	}
 
 	// 2. Authenticate with the shared long-lived token.
-	auth, _ := json.Marshal(map[string]any{"type": "auth", "access_token": d.Token})
+	auth, _ := json.Marshal(map[string]any{"type": "auth", "access_token": token})
 	if err := conn.Write(ctx, websocket.MessageText, auth); err != nil {
 		return nil, fmt.Errorf("home assistant websocket: %w", err)
 	}
@@ -335,10 +371,10 @@ func (d *DashClient) oneCall(ctx context.Context, cmdType string, args map[strin
 }
 
 // dial opens the /api/websocket endpoint derived from the base URL.
-func (d *DashClient) dial(ctx context.Context) (*websocket.Conn, error) {
-	base, err := url.Parse(d.BaseURL)
+func (d *DashClient) dial(ctx context.Context, baseURL string) (*websocket.Conn, error) {
+	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") {
-		return nil, fmt.Errorf("invalid HOMEASSISTANT_URL %q: %v", d.BaseURL, err)
+		return nil, fmt.Errorf("invalid HOMEASSISTANT_URL %q: %v", baseURL, err)
 	}
 	wsScheme := "ws"
 	if base.Scheme == "https" {
@@ -349,7 +385,7 @@ func (d *DashClient) dial(ctx context.Context) (*websocket.Conn, error) {
 	base.RawQuery = ""
 
 	conn, resp, err := websocket.Dial(ctx, base.String(), &websocket.DialOptions{
-		HTTPHeader: http.Header{"Origin": []string{d.BaseURL}},
+		HTTPHeader: http.Header{"Origin": []string{baseURL}},
 	})
 	if err != nil {
 		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {

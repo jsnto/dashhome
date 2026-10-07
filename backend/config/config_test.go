@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -1468,5 +1469,434 @@ func TestSetGridDirectoryPathIsNotWritable(t *testing.T) {
 	}
 	if cols, rows := cfg.GridDims(); cols != 12 || rows != 12 {
 		t.Errorf("in-memory grid = %dx%d, want unchanged defaults", cols, rows)
+	}
+}
+
+// --- service settings (board.services): UI > env > default ----------------
+//
+// The settings screen persists the service configuration to the board file
+// (board.services). Every field resolves on use: the UI value wins, the
+// environment value is the fallback, and the documented default applies
+// last. The tests below pin that chain per service group.
+
+func servicesCfg(t *testing.T, content string) (*Config, string) {
+	t.Helper()
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if content != "" {
+		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CONFIG_FILE", file)
+	t.Setenv("DATA_DIR", t.TempDir())
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg, file
+}
+
+func svcStrPtr(s string) *string { return &s }
+
+func TestServicesPrecedenceHomeAssistant(t *testing.T) {
+	cases := []struct {
+		name, envURL, envTok, board string
+		wantURL, wantTok            string
+	}{
+		{"neither set", "", "", "", "", ""},
+		{"env only", "https://env.local", "env-tok", "", "https://env.local", "env-tok"},
+		{"ui only", "", "", `{"services":{"homeassistant":{"url":"https://ui.local","token":"ui-tok"}}}`, "https://ui.local", "ui-tok"},
+		{"ui wins over env", "https://env.local", "env-tok", `{"services":{"homeassistant":{"url":"https://ui.local","token":"ui-tok"}}}`, "https://ui.local", "ui-tok"},
+		{"per field: ui url, env token", "https://env.local", "env-tok", `{"services":{"homeassistant":{"url":"https://ui.local"}}}`, "https://ui.local", "env-tok"},
+		{"empty ui fields fall back to env", "https://env.local", "env-tok", `{"services":{"homeassistant":{"url":"","token":""}}}`, "https://env.local", "env-tok"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOMEASSISTANT_URL", tc.envURL)
+			t.Setenv("HOMEASSISTANT_TOKEN", tc.envTok)
+			cfg, _ := servicesCfg(t, tc.board)
+			gotURL, gotTok := cfg.HASettings()
+			if gotURL != tc.wantURL || gotTok != tc.wantTok {
+				t.Errorf("HASettings = (%q, %q), want (%q, %q)", gotURL, gotTok, tc.wantURL, tc.wantTok)
+			}
+			if want := tc.wantURL != "" && tc.wantTok != ""; cfg.HAConfigured() != want {
+				t.Errorf("HAConfigured = %v, want %v", cfg.HAConfigured(), want)
+			}
+		})
+	}
+}
+
+func TestServicesPrecedenceHermesChat(t *testing.T) {
+	const board = `{"services":{"hermes_chat":{"base_url":"https://ui.local","chat_path":"/v1/chat","auth_header":"X-Ui-Key","auth_value":"ui-key"}}}`
+	cases := []struct {
+		name                                      string
+		envBase, envPath, envHeader, envValue     string
+		board                                     string
+		wantBase, wantPath, wantHeader, wantValue string
+	}{
+		{
+			name:       "documented defaults when nothing set",
+			wantPath:   "/chat/completions",
+			wantHeader: "Authorization",
+		},
+		{
+			name:       "env overrides defaults",
+			envBase:    "https://env.local",
+			envPath:    "/chat",
+			envHeader:  "X-Api-Key",
+			envValue:   "env-key",
+			wantBase:   "https://env.local",
+			wantPath:   "/chat",
+			wantHeader: "X-Api-Key",
+			wantValue:  "env-key",
+		},
+		{
+			name:       "ui wins over env",
+			envBase:    "https://env.local",
+			envPath:    "/chat",
+			envHeader:  "X-Api-Key",
+			envValue:   "env-key",
+			board:      board,
+			wantBase:   "https://ui.local",
+			wantPath:   "/v1/chat",
+			wantHeader: "X-Ui-Key",
+			wantValue:  "ui-key",
+		},
+		{
+			name:       "per field: ui auth value, env url, default path/header",
+			envBase:    "https://env.local",
+			board:      `{"services":{"hermes_chat":{"auth_value":"ui-key"}}}`,
+			wantBase:   "https://env.local",
+			wantPath:   "/chat/completions",
+			wantHeader: "Authorization",
+			wantValue:  "ui-key",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HERMES_BASE_URL", tc.envBase)
+			t.Setenv("HERMES_CHAT_PATH", tc.envPath)
+			t.Setenv("HERMES_AUTH_HEADER", tc.envHeader)
+			t.Setenv("HERMES_AUTH_VALUE", tc.envValue)
+			cfg, _ := servicesCfg(t, tc.board)
+			gotBase, gotPath, gotHeader, gotValue := cfg.HermesChatSettings()
+			if gotBase != tc.wantBase || gotPath != tc.wantPath || gotHeader != tc.wantHeader || gotValue != tc.wantValue {
+				t.Errorf("HermesChatSettings = (%q, %q, %q, %q), want (%q, %q, %q, %q)",
+					gotBase, gotPath, gotHeader, gotValue, tc.wantBase, tc.wantPath, tc.wantHeader, tc.wantValue)
+			}
+			if want := tc.wantBase != ""; cfg.HermesConfigured() != want {
+				t.Errorf("HermesConfigured = %v, want %v", cfg.HermesConfigured(), want)
+			}
+		})
+	}
+}
+
+func TestServicesPrecedenceGoogle(t *testing.T) {
+	const board = `{"services":{"google":{
+		"service_account_file":"./ui-sa.json","domain":"ui@workspace.com",
+		"client_id":"ui-client","client_secret":"ui-secret","redirect_uri":"https://ui/cb",
+		"token_cache":"./ui-token.json","access_token":"ui-ya29","endpoint":"https://ui.api"
+	}}}`
+	setEnv := func(t *testing.T, prefix string) {
+		t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", prefix+"sa.json")
+		t.Setenv("GOOGLE_DOMAIN", prefix+"@workspace.com")
+		t.Setenv("GOOGLE_CLIENT_ID", prefix+"client")
+		t.Setenv("GOOGLE_CLIENT_SECRET", prefix+"secret")
+		t.Setenv("GOOGLE_REDIRECT_URI", "https://"+prefix+"/cb")
+		t.Setenv("GOOGLE_TOKEN_CACHE", prefix+"token.json")
+		t.Setenv("GOOGLE_ACCESS_TOKEN", prefix+"ya29")
+		t.Setenv("GOOGLE_API_ENDPOINT", "https://"+prefix+".api")
+	}
+	envSettings := func() GoogleConfig {
+		return GoogleConfig{
+			ServiceAccountFile: "envsa.json",
+			Domain:             "env@workspace.com",
+			ClientID:           "envclient",
+			ClientSecret:       "envsecret",
+			RedirectURI:        "https://env/cb",
+			TokenCache:         "envtoken.json",
+			AccessToken:        "envya29",
+			Endpoint:           "https://env.api",
+		}
+	}
+	uiSettings := func() GoogleConfig {
+		return GoogleConfig{
+			ServiceAccountFile: "./ui-sa.json",
+			Domain:             "ui@workspace.com",
+			ClientID:           "ui-client",
+			ClientSecret:       "ui-secret",
+			RedirectURI:        "https://ui/cb",
+			TokenCache:         "./ui-token.json",
+			AccessToken:        "ui-ya29",
+			Endpoint:           "https://ui.api",
+		}
+	}
+
+	t.Run("defaults when nothing set", func(t *testing.T) {
+		for _, k := range []string{"GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_DOMAIN", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI", "GOOGLE_TOKEN_CACHE", "GOOGLE_ACCESS_TOKEN", "GOOGLE_API_ENDPOINT"} {
+			t.Setenv(k, "")
+		}
+		cfg, _ := servicesCfg(t, "")
+		g := cfg.GoogleSettings()
+		if g != (GoogleConfig{TokenCache: filepath.Join(cfg.DataDir, "google-token.json")}) {
+			t.Errorf("GoogleSettings = %+v, want only the default token cache", g)
+		}
+	})
+
+	t.Run("env only", func(t *testing.T) {
+		setEnv(t, "env")
+		cfg, _ := servicesCfg(t, "")
+		want := envSettings()
+		if got := cfg.GoogleSettings(); got != want {
+			t.Errorf("GoogleSettings = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("ui wins over env per field", func(t *testing.T) {
+		setEnv(t, "env")
+		cfg, _ := servicesCfg(t, board)
+		want := uiSettings()
+		if got := cfg.GoogleSettings(); got != want {
+			t.Errorf("GoogleSettings = %+v, want %+v", got, want)
+		}
+	})
+}
+
+func TestServicesPrecedencePush(t *testing.T) {
+	cases := []struct {
+		name, envTok, board, want string
+	}{
+		{"neither set", "", "", ""},
+		{"env only", "env-push", "", "env-push"},
+		{"ui only", "", `{"services":{"hermes_push":{"token":"ui-push"}}}`, "ui-push"},
+		{"ui wins over env", "env-push", `{"services":{"hermes_push":{"token":"ui-push"}}}`, "ui-push"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HERMES_PUSH_TOKEN", tc.envTok)
+			cfg, _ := servicesCfg(t, tc.board)
+			if got := cfg.PushTokenEffective(); got != tc.want {
+				t.Errorf("PushTokenEffective = %q, want %q", got, tc.want)
+			}
+			if want := tc.want != ""; cfg.PushConfigured() != want {
+				t.Errorf("PushConfigured = %v, want %v", cfg.PushConfigured(), want)
+			}
+		})
+	}
+}
+
+func TestSetServicesRoundTrip(t *testing.T) {
+	t.Setenv("HOMEASSISTANT_URL", "https://env.local")
+	t.Setenv("HOMEASSISTANT_TOKEN", "env-tok")
+	cfg, file := servicesCfg(t, `{"refresh_seconds": 30}`)
+
+	// Set two groups partially; the other groups stay absent.
+	if err := cfg.SetServices(&ServicesUpdate{
+		HomeAssistant: &ServiceHomeAssistantUpdate{URL: svcStrPtr("https://ui.local"), Token: svcStrPtr("ui-tok")},
+		HermesPush:    &ServiceHermesPushUpdate{Token: svcStrPtr("push-ui")},
+	}); err != nil {
+		t.Fatalf("SetServices: %v", err)
+	}
+	if url, tok := cfg.HASettings(); url != "https://ui.local" || tok != "ui-tok" {
+		t.Errorf("HASettings = (%q, %q), want the UI values", url, tok)
+	}
+	if tok := cfg.PushTokenEffective(); tok != "push-ui" {
+		t.Errorf("PushTokenEffective = %q, want push-ui", tok)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b Board
+	if err := json.Unmarshal(data, &b); err != nil {
+		t.Fatalf("parse board file: %v (%s)", err, data)
+	}
+	if b.RefreshSeconds != 30 {
+		t.Errorf("other board fields not preserved: %+v", b)
+	}
+	if b.Services == nil || b.Services.HomeAssistant == nil ||
+		b.Services.HomeAssistant.URL != "https://ui.local" || b.Services.HomeAssistant.Token != "ui-tok" ||
+		b.Services.HermesPush == nil || b.Services.HermesPush.Token != "push-ui" ||
+		b.Services.Google != nil || b.Services.HermesChat != nil {
+		t.Errorf("board file services = %+v (%s)", b.Services, data)
+	}
+
+	// A partial update keeps the untouched fields and groups.
+	if err := cfg.SetServices(&ServicesUpdate{HomeAssistant: &ServiceHomeAssistantUpdate{Token: svcStrPtr("ui-tok-2")}}); err != nil {
+		t.Fatalf("SetServices: %v", err)
+	}
+	if url, tok := cfg.HASettings(); url != "https://ui.local" || tok != "ui-tok-2" {
+		t.Errorf("HASettings = (%q, %q), want url kept and token updated", url, tok)
+	}
+	if tok := cfg.PushTokenEffective(); tok != "push-ui" {
+		t.Errorf("push token = %q, want unchanged", tok)
+	}
+
+	// An empty string clears the UI value: the environment fallback comes
+	// back.
+	if err := cfg.SetServices(&ServicesUpdate{HomeAssistant: &ServiceHomeAssistantUpdate{URL: svcStrPtr("")}}); err != nil {
+		t.Fatalf("SetServices: %v", err)
+	}
+	if url, tok := cfg.HASettings(); url != "https://env.local" || tok != "ui-tok-2" {
+		t.Errorf("HASettings = (%q, %q), want env url and UI token", url, tok)
+	}
+
+	// A reload agrees with the in-memory state.
+	cfg2, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if url, tok := cfg2.HASettings(); url != "https://env.local" || tok != "ui-tok-2" {
+		t.Errorf("reloaded HASettings = (%q, %q)", url, tok)
+	}
+	if tok := cfg2.PushTokenEffective(); tok != "push-ui" {
+		t.Errorf("reloaded push token = %q", tok)
+	}
+}
+
+func TestSetServicesUnchangedValueIsANoop(t *testing.T) {
+	cfg, file := servicesCfg(t, "")
+	if err := cfg.SetServices(&ServicesUpdate{HermesPush: &ServiceHermesPushUpdate{Token: svcStrPtr("push-ui")}}); err != nil {
+		t.Fatalf("SetServices: %v", err)
+	}
+	before, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Re-setting the same value must not change the stored content.
+	if err := cfg.SetServices(&ServicesUpdate{HermesPush: &ServiceHermesPushUpdate{Token: svcStrPtr("push-ui")}}); err != nil {
+		t.Fatalf("SetServices: %v", err)
+	}
+	after, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("unchanged update altered the board file: %s -> %s", before, after)
+	}
+	// Pin that the unchanged update wrote nothing at all: make the board
+	// file impossible to replace, and the same-value update must still
+	// succeed (a write would fail with ErrBoardFileNotWritable).
+	if err := os.Rename(file, file+".orig"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetServices(&ServicesUpdate{HermesPush: &ServiceHermesPushUpdate{Token: svcStrPtr("push-ui")}}); err != nil {
+		t.Errorf("unchanged update with an unwritable board file = %v, want a no-op success", err)
+	}
+}
+
+func TestSetServicesNoBoardFile(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.SetServices(&ServicesUpdate{}); !errors.Is(err, ErrNoBoardFile) {
+		t.Errorf("err = %v, want ErrNoBoardFile", err)
+	}
+}
+
+func TestSetServicesDirectoryPathIsNotWritable(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{BoardFile: file}
+	if err := cfg.SetServices(&ServicesUpdate{HermesPush: &ServiceHermesPushUpdate{Token: svcStrPtr("x")}}); !errors.Is(err, ErrBoardFileNotWritable) {
+		t.Fatalf("err = %v, want ErrBoardFileNotWritable", err)
+	}
+	if tok := cfg.PushTokenEffective(); tok != "" {
+		t.Errorf("in-memory push token = %q, want unchanged", tok)
+	}
+}
+
+// A failed write (the board file becomes unreadable-to-replace mid-update)
+// must leave the in-memory board and the effective settings untouched.
+func TestSetServicesFailedWriteLeavesStateUntouched(t *testing.T) {
+	cfg, file := servicesCfg(t, "")
+	if err := cfg.SetServices(&ServicesUpdate{HomeAssistant: &ServiceHomeAssistantUpdate{URL: svcStrPtr("https://ui.local")}}); err != nil {
+		t.Fatalf("SetServices: %v", err)
+	}
+	// Make the next write fail: the board file's directory is read-only.
+	// (Rename would succeed, so replace the file with a directory instead.)
+	if err := os.Rename(file, file+".orig"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetServices(&ServicesUpdate{HomeAssistant: &ServiceHomeAssistantUpdate{URL: svcStrPtr("https://other.local")}}); !errors.Is(err, ErrBoardFileNotWritable) {
+		t.Fatalf("err = %v, want ErrBoardFileNotWritable", err)
+	}
+	if url, _ := cfg.HASettings(); url != "https://ui.local" {
+		t.Errorf("in-memory HA url = %q, want the previous value", url)
+	}
+}
+
+// TestServicesViewMasksSecrets pins the exposure contract: non-secret
+// fields carry the UI value and the environment fallback; secret fields
+// carry only the set booleans — never a value, from either layer.
+func TestServicesViewMasksSecrets(t *testing.T) {
+	t.Setenv("HOMEASSISTANT_URL", "https://env.local")
+	t.Setenv("HOMEASSISTANT_TOKEN", "env-ha-secret")
+	t.Setenv("HERMES_BASE_URL", "https://env.hermes")
+	t.Setenv("HERMES_AUTH_VALUE", "env-hermes-secret")
+	t.Setenv("HERMES_PUSH_TOKEN", "env-push-secret")
+	t.Setenv("GOOGLE_CLIENT_ID", "env-client")
+	t.Setenv("GOOGLE_CLIENT_SECRET", "env-google-secret")
+	cfg, _ := servicesCfg(t, `{"services":{
+		"homeassistant":{"url":"https://ui.local","token":"ui-ha-secret"},
+		"hermes_chat":{"auth_value":"ui-hermes-secret"},
+		"hermes_push":{"token":"ui-push-secret"},
+		"google":{"client_secret":"ui-google-secret"}
+	}}`)
+
+	v := cfg.ServicesView()
+
+	// Non-secret: UI value + env fallback exposed.
+	if v.HomeAssistant.URL.Value != "https://ui.local" || v.HomeAssistant.URL.Fallback != "https://env.local" {
+		t.Errorf("HA url = %+v", v.HomeAssistant.URL)
+	}
+	if !v.HomeAssistant.URL.Set || !v.HomeAssistant.URL.FallbackSet {
+		t.Errorf("HA url set flags = %+v", v.HomeAssistant.URL)
+	}
+	if v.HermesChat.BaseURL.Value != "" || v.HermesChat.BaseURL.Fallback != "https://env.hermes" {
+		t.Errorf("hermes base url = %+v", v.HermesChat.BaseURL)
+	}
+	if v.Google.ClientID.Value != "" || v.Google.ClientID.Fallback != "env-client" {
+		t.Errorf("google client id = %+v", v.Google.ClientID)
+	}
+
+	// Secrets: no value in either layer, only the set booleans.
+	secrets := []struct {
+		name             string
+		field            ServiceField
+		set, fallbackSet bool
+	}{
+		{"ha token", v.HomeAssistant.Token, true, true},
+		{"hermes auth value", v.HermesChat.AuthValue, true, true},
+		{"push token", v.HermesPush.Token, true, true},
+		{"google client secret", v.Google.ClientSecret, true, true},
+		{"google access token (env only)", v.Google.AccessToken, false, false},
+	}
+	for _, tc := range secrets {
+		if tc.field.Value != "" || tc.field.Fallback != "" {
+			t.Errorf("%s: secret value exposed: %+v", tc.name, tc.field)
+		}
+		if tc.field.Set != tc.set || tc.field.FallbackSet != tc.fallbackSet {
+			t.Errorf("%s: set booleans = %+v, want set=%v fallbackSet=%v", tc.name, tc.field, tc.set, tc.fallbackSet)
+		}
+	}
+
+	// The whole view must not contain any of the secret strings.
+	out, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"env-ha-secret", "ui-ha-secret", "env-hermes-secret", "ui-hermes-secret", "env-push-secret", "ui-push-secret", "env-google-secret", "ui-google-secret"} {
+		if strings.Contains(string(out), s) {
+			t.Errorf("view leaked secret %q: %s", s, out)
+		}
 	}
 }

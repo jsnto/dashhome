@@ -10,6 +10,12 @@
   --warn: #ffb84c;
   --err: #ff6b81;
   --radius: 14px;
+  /* the HA toggle button's state colors (dark theme): the switch ON reads
+     as a dark button, the switch OFF as a bright one */
+  --ha-toggle-on-bg: #0a0f1a;
+  --ha-toggle-on-fg: #e6ebf5;
+  --ha-toggle-off-bg: #f2f6fd;
+  --ha-toggle-off-fg: #101623;
 }
 
 /* light theme: every color in the app flows through these variables */
@@ -25,6 +31,11 @@
   --good: #2e9e44;
   --warn: #a8620a;
   --err: #d63b56;
+  /* the HA toggle button's state colors (light theme) */
+  --ha-toggle-on-bg: #101623;
+  --ha-toggle-on-fg: #f2f6fd;
+  --ha-toggle-off-bg: #ffffff;
+  --ha-toggle-off-fg: #101623;
 }
 
 :root[data-theme='dark'] {
@@ -290,6 +301,52 @@ body {
   color: var(--accent);
 }
 
+/* the edit-mode settings affordance: opens the tile's settings modal
+   (the type-specific options for that tile, saved through the same
+   board-views path as the settings screen). */
+.tile-edit-open {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tile-edit-open:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* the edit-mode remove affordance: one press drops the tile from the
+   board (a Home Assistant tile leaves views.ha_tiles, a built-in view is
+   hidden — the tile's entity/data are never touched). No confirm: the
+   tile can be added back from the settings screen. */
+.tile-remove {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tile-remove:hover:not(:disabled) {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.tile-remove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .board[data-edit] .tile-grip:active {
   cursor: grabbing;
 }
@@ -348,6 +405,9 @@ body {
 }
 
 .ha-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   padding: 10px 14px;
   font-size: 14px;
   font-weight: 600;
@@ -359,9 +419,31 @@ body {
   align-self: flex-start;
 }
 
+/* the switch's state icon (the power glyph, slashed while off) */
+.ha-action svg {
+  flex: none;
+  display: block;
+}
+
 .ha-action:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* the button tile's toggle wears the switch's current state: ON (dark,
+   offering the turn-off) and OFF (bright, offering the turn-on); the
+   accent fill stays for a state that is neither. The per-theme tokens
+   keep both readings legible in either theme. */
+.ha-action.ha-action-on {
+  background: var(--ha-toggle-on-bg);
+  border-color: var(--ha-toggle-on-bg);
+  color: var(--ha-toggle-on-fg);
+}
+
+.ha-action.ha-action-off {
+  background: var(--ha-toggle-off-bg);
+  border-color: var(--ha-toggle-off-bg);
+  color: var(--ha-toggle-off-fg);
 }
 
 .ha-visual {
@@ -554,6 +636,40 @@ body {
 .settings {
   width: 100%;
   max-width: 760px;
+}
+
+/* the per-tile settings modal: a small dialog over the live board (above
+   the settings overlay's z-index, so it can sit over a tile). A click on
+   the backdrop (outside the card) closes it. */
+.tile-modal-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.tile-modal {
+  width: 100%;
+  max-width: 460px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+
+.tile-modal-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.tile-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 /* the settings page: a left sidebar menu and one active section. The card
@@ -759,6 +875,30 @@ body {
   gap: 7px;
 }
 
+/* the service-settings field rows (settings UI > .env > default): the
+   status pill (secret fields), the input, and the clear affordance */
+.service-field-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.service-input {
+  width: 280px;
+  max-width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--text);
+}
+
+.service-input:focus {
+  border-color: var(--accent);
+}
+
 .settings-interval-unit {
   color: var(--text-dim);
   font-size: 13px;
@@ -895,8 +1035,16 @@ body {
   color: var(--text-dim);
 }
 
+/* Today's cell: a green tint so it reads as "now" and stays clearly
+   apart from the accent-colored selection ring, the event chips, and
+   the ordinary-day cells in both themes. */
+.cell.today {
+  background: color-mix(in srgb, var(--good) 16%, var(--bg-card-2));
+  border-color: color-mix(in srgb, var(--good) 55%, var(--border));
+}
+
 .cell.today .cell-day {
-  color: var(--accent);
+  color: var(--good);
   font-weight: 700;
 }
 

@@ -52,17 +52,28 @@ func (e EntityState) FriendlyName() string {
 
 // Client is the HTTP implementation of StatesClient.
 type Client struct {
-	BaseURL string // e.g. https://ha.example.com
-	Token   string
-	HTTP    *http.Client
+	// Settings resolves the effective (base URL, token) on every request,
+	// so a value changed in the settings UI takes effect without a
+	// restart. NewClient wraps a fixed pair.
+	Settings func() (baseURL, token string)
+	HTTP     *http.Client
 }
 
-// NewClient builds a Home Assistant client.
+// NewClient builds a Home Assistant client with fixed settings.
 func NewClient(baseURL, token string) *Client {
 	return &Client{
-		BaseURL: baseURL,
-		Token:   token,
-		HTTP:    &http.Client{Timeout: 15 * time.Second},
+		Settings: func() (string, string) { return baseURL, token },
+		HTTP:     &http.Client{Timeout: 15 * time.Second},
+	}
+}
+
+// NewClientSettings builds a Home Assistant client whose settings resolve
+// on every request (the settings UI > environment precedence is applied
+// live, no restart needed).
+func NewClientSettings(settings func() (baseURL, token string)) *Client {
+	return &Client{
+		Settings: settings,
+		HTTP:     &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -76,9 +87,10 @@ type haState struct {
 
 // GetStates fetches the state of every entity.
 func (c *Client) GetStates(ctx context.Context) ([]EntityState, error) {
-	u, err := url.Parse(c.BaseURL)
+	baseURL, token := c.Settings()
+	u, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid HOMEASSISTANT_URL %q: %w", c.BaseURL, err)
+		return nil, fmt.Errorf("invalid HOMEASSISTANT_URL %q: %w", baseURL, err)
 	}
 	u.Path = "/api/states"
 
@@ -86,7 +98,7 @@ func (c *Client) GetStates(ctx context.Context) ([]EntityState, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.HTTP.Do(req)
@@ -133,9 +145,10 @@ func (c *Client) GetStates(ctx context.Context) ([]EntityState, error) {
 // such entity, or a generic upstream error (status + short body) for
 // everything else, so the API layer can map it to a 502.
 func (c *Client) CallService(ctx context.Context, service string, data map[string]any) (map[string]any, error) {
-	u, err := url.Parse(c.BaseURL)
+	baseURL, token := c.Settings()
+	u, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid HOMEASSISTANT_URL %q: %w", c.BaseURL, err)
+		return nil, fmt.Errorf("invalid HOMEASSISTANT_URL %q: %w", baseURL, err)
 	}
 	u.Path = "/api/services/homeassistant/" + service
 
@@ -147,7 +160,7 @@ func (c *Client) CallService(ctx context.Context, service string, data map[strin
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 

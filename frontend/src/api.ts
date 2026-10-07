@@ -8,6 +8,8 @@ import type {
   GridDims,
   HABoardTile,
   Push,
+  ServiceSettings,
+  ServiceSettingsUpdate,
   TileGeometry,
   TileSize,
 } from './types'
@@ -79,6 +81,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getConfig: () => request<ApiConfig>('/config'),
+
+  /**
+   * The masked service-settings view (GET /api/config/services): the
+   * settings-UI value and the .env fallback per field; secret fields
+   * (HA token, Google client secret / static access token, Hermes auth
+   * value, push token) carry only the set booleans — no secret value
+   * ever reaches the browser.
+   */
+  getServices: () =>
+    request<{ services: ServiceSettings }>('/config/services').then((b) => b.services),
+
+  /**
+   * Persist the service settings (PUT /api/config/services). Omitted
+   * (null) fields keep their current value; an empty string clears a
+   * field back to its .env fallback. Changes take effect on the next
+   * request — no restart. The answer carries the saved board (adopt it),
+   * the updated masked view (re-seed the forms) and the integration
+   * status (the effective configuration).
+   */
+  setServices: (update: ServiceSettingsUpdate) =>
+    request<{
+      board: ApiBoard
+      services: ServiceSettings
+      integrations: ApiConfig['integrations']
+    }>('/config/services', {
+      method: 'PUT',
+      body: JSON.stringify(update),
+    }),
 
   /** Persist the UI polling interval (board.refresh_seconds) server-side. */
   setRefreshSeconds: (seconds: number) =>

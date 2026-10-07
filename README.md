@@ -40,19 +40,28 @@ tiles — to/from the main screen, reorder them, and switch the Calendar
 tile between the month grid and a schedule summary of upcoming events;
 persisted to `dashhome.json`), a Home Assistant section (add or remove the
 HA board tiles — a button or visual tile bound to one entity each, picked
-from `GET /api/ha/entities`; persisted to `dashhome.json` as
-`views.ha_tiles`), a read-only summary of
-which integrations are actually configured (including the full-dashboard
-embed settings), the board grid dimensions (how many units wide and tall the
-tile grid is — `board.grid` in `dashhome.json`, default 12 × 12), and the
-live-update interval (how often the Hermes push panel polls the backend,
-persisted to `dashhome.json`). The header's *Edit tiles* toggle switches the
+from `GET /api/ha/entities`; a new tile is placed by default at the first
+free 2 × 2 cell of the board's unit grid; persisted to `dashhome.json` as
+`views.ha_tiles`), a Services section (the integrations in use and their
+status — including the full-dashboard embed settings — and each
+integration's service settings, editable and persisted to `dashhome.json`
+as `board.services`; see Configuration below), the board grid dimensions
+(how many units wide and tall the tile grid is — `board.grid` in
+`dashhome.json`, default 12 × 12), and the live-update interval (how often
+the Hermes push panel polls the backend, persisted to `dashhome.json`). The header's *Edit tiles* toggle switches the
 board into an edit mode: each tile's width and height (in grid units) are
 set from numeric fields on the tile, tiles can be dragged by their grip to
 another cell (or resized by dragging the corner handle — every move snaps to
 the grid, and overlaps and drops off the board are refused and the tile
 snaps back); move and resize are pointer drags, and the width and height
-fields are keyboard-operable; placements are persisted to
+fields are keyboard-operable; each tile's edit row also carries a remove
+control (one press, no confirm — a Home Assistant tile leaves
+`views.ha_tiles`, a built-in view is hidden; the tile's entity and data are
+never touched, and the tile can be added back from the settings screen);
+the row's edit button opens a modal with that tile's settings — the size
+step, the Calendar tile's view mode, a Home Assistant tile's entity, label,
+and kind — saved through the same path; placements, removals, and the
+modal's saves are persisted to
 `dashhome.json` the same way (the tile set and order are managed from the
 settings screen).
 
@@ -164,8 +173,13 @@ SDK on the host) and tests.
 
 ## Configuration
 
-Everything comes from environment variables (see `.env.example`) plus an
-optional dashboard config file. Never commit real credentials.
+Service settings (Home Assistant, Google Calendar, Hermes) can also be set
+in the settings UI: a value saved there (`board.services` in
+`dashhome.json`) wins over the matching environment variable, which wins
+over the documented default, and takes effect without a restart. Server and
+deploy variables stay in the environment. Everything else comes from
+environment variables (see `.env.example`) plus an optional dashboard
+config file. Never commit real credentials.
 
 ### Home Assistant
 
@@ -184,7 +198,10 @@ returned.
 the settings screen's Home Assistant section (or by hand in `views.ha_tiles`
 below): each tile binds to exactly one entity and is either a **button**
 tile (fires the board's allowlisted `toggle` action — the API also
-accepts `turn_on`/`turn_off`, on any entity domain) or a **visual**
+accepts `turn_on`/`turn_off`, on any entity domain; the toggle button
+wears the switch's current state — a dark button offering *Turn off*
+while the entity is on, a bright button offering *Turn on* while it is
+off, kept in sync with the tile's state polling) or a **visual**
 tile (shows the entity's current state). Entity states are polled by the browser while a
 HA tile is visible — never stored, and the token stays on the server;
 the only write path to HA is `POST /api/ha/service` with the allowlisted
@@ -368,7 +385,9 @@ dashboard, no token in the URL):
     only). Default `false`. See the notes above.
 - `views` — the dashboard's tile layout (optional; missing = the default
   board). Also persisted by the settings screen's Tiles section (tile set,
-  order, Home Assistant tiles) and the board's Edit tiles mode (positions):
+  order, Home Assistant tiles) and the board's Edit tiles mode (positions,
+  plus the per-tile settings modal's size step, Calendar view mode, and HA
+  tile entity/label/kind):
   - `order` — the board tile IDs (the four view IDs `calendar`, `chat`,
     `home`, `push` plus every `views.ha_tiles` id) in the tile grid's
     reading order (row by row, left to right); the API always returns it
@@ -414,6 +433,17 @@ dashboard, no token in the URL):
   neighbour are dropped (the tile falls back to automatic placement), and
   `ha_tiles` entries with a bad id, entity, or kind are dropped.
 
+- `services` — the service settings saved from the settings screen's
+  Services section (optional; missing = environment variables only):
+  `homeassistant` (`url`, `token`), `google` (`service_account_file`,
+  `domain`, `client_id`, `client_secret`, `redirect_uri`, `token_cache`,
+  `access_token`, `endpoint`), `hermes_chat` (`base_url`, `chat_path`,
+  `auth_header`, `auth_value`), `hermes_push` (`token`). A value saved here
+  wins over the matching environment variable, which wins over the
+  documented default, and takes effect without a restart. Secret fields are
+  only ever written, never read back: `GET /api/config/services` reports
+  only whether they are set.
+
 Path: `CONFIG_FILE` (default `./dashhome.json`).
 
 ### Other
@@ -435,6 +465,8 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 | `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json` (the board file must be writable by the backend), `200 {board}` |
 | `PUT /api/config/grid` | `{"cols": n, "rows": m}` (1–24 per axis; both required) → set the tile grid's dimensions (each unit an even slice of the board's width/height; the board spans its full height) and persist to `dashhome.json` (the board file must be writable by the backend); stored placements that fall outside the new grid are repaired back to automatic placement, `400 bad_grid` for out-of-range values, `400 bad_request` for missing fields, `503` when the board file is missing or not writable, `200 {board}` |
 | `PUT /api/config/views` | `{"order": [...], "hidden": [...], "calendar_mode": "month"\|"schedule", "sizes": {tile: "s"\|"m"\|"l"\|"xl"}, "geometry": {tile: {"x": n, "y": n, "w": n, "h": n} \| null}, "ha_tiles": [...]}` (any subset of the fields; omitted fields keep their value, `sizes`/`geometry` change only the tiles they list, a `null` geometry entry clears that tile's placement, and `ha_tiles` replaces the list) → persist the dashboard's tile layout to `dashhome.json` (the board file must be writable by the backend); placements that fall outside the board are refused with `400 bad_views` (as are other invalid field values), and overlapping stored entries are dropped on load and on save — the tile falls back to automatic placement — `503` when the board file is missing or not writable, `200 {board}` |
+| `GET /api/config/services` | Masked service settings for the settings screen: per field the UI-set value, the environment fallback, and whether each layer is set; secret fields (tokens and credentials) carry only the set booleans, never a value |
+| `PUT /api/config/services` | `{"homeassistant": {...}, "google": {...}, "hermes_chat": {...}, "hermes_push": {...}}` (any subset; a field omitted or null keeps its value, an empty string clears the UI value back to the environment fallback, a non-empty string sets it; an update that changes nothing is a no-op) → persist the service settings to `dashhome.json` (`board.services`; the board file must be writable by the backend), `400 bad_request` for a malformed body, `503 no_board_file` when the board file is missing, `503 board_file_not_writable` when it is not writable, `200 {board, services, integrations}` |
 | `GET /api/calendars` | Calendar tabs: the configured `calendars` (shown even if the API's calendar list omits them), else every calendar visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
 | `GET /api/ha/entities` | Configured entities with current states |
@@ -463,8 +495,10 @@ into friendly setup notes.
 - Markdown from Hermes is rendered with `react-markdown` **without**
   raw-HTML support, so pushed content cannot inject HTML.
 - `GET /api/config` exposes only non-secret board settings and per-integration
-  booleans; tokens and credentials (env vars only) are never included in API
-  responses. One deliberate exception: `GET /api/ha/embed-url` returns the
+  booleans; tokens and credentials (in `.env` or `dashhome.json`) are never
+  included in API responses — `GET /api/config/services` reports only
+  whether a secret field is set in the UI or in the environment, never its
+  value. One deliberate exception: `GET /api/ha/embed-url` returns the
   embed URL with `?auth_long_lived=<token>` **only when `ha_embed.token_url`
   is set** — the token is assembled server-side for the iframe and never
   written to `dashhome.json` or browser storage.
@@ -477,7 +511,8 @@ into friendly setup notes.
   (not restricted to the entities the board shows) — no free-form
   service or data payload — so the board can flip a light but
   cannot invoke arbitrary HA services.
-- Secrets live only in env vars / your secrets store; `.env`, `data/`, and
+- Secrets live in env vars, your secrets store, or `dashhome.json`
+  (`board.services`, written by the settings UI); `.env`, `data/`, and
   `dashhome.json` are git-ignored.
 
 ## Development

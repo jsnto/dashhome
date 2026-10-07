@@ -113,6 +113,72 @@ export interface ApiConfig {
   }
 }
 
+/** One field of the masked service-settings view (GET/PUT
+ *  /api/config/services). Non-secret fields expose the value set in the
+ *  settings UI and the .env fallback; secret fields expose only the set
+ *  booleans — a secret value never reaches the browser. */
+export interface ServiceField {
+  /** The value set in the UI ("" = not set in the UI). Secrets: always "". */
+  value: string
+  /** The .env fallback value ("" = not set there). Secrets: always "". */
+  fallback: string
+  /** A value is set in the UI settings. */
+  set: boolean
+  /** A value is set in the .env fallback. */
+  fallback_set: boolean
+}
+
+/** The masked service settings, grouped per integration. */
+export interface ServiceSettings {
+  homeassistant: {
+    url: ServiceField
+    token: ServiceField
+  }
+  google: {
+    service_account_file: ServiceField
+    domain: ServiceField
+    client_id: ServiceField
+    client_secret: ServiceField
+    redirect_uri: ServiceField
+    token_cache: ServiceField
+    access_token: ServiceField
+    endpoint: ServiceField
+  }
+  hermes_chat: {
+    base_url: ServiceField
+    chat_path: ServiceField
+    auth_header: ServiceField
+    auth_value: ServiceField
+  }
+  hermes_push: {
+    token: ServiceField
+  }
+}
+
+/** A partial service-settings update (PUT /api/config/services). Omitted
+ *  (null) fields keep their current UI value; an empty string clears the
+ *  UI value back to the .env fallback. */
+export type ServiceSettingsUpdate = {
+  homeassistant?: { url?: string | null; token?: string | null }
+  google?: {
+    service_account_file?: string | null
+    domain?: string | null
+    client_id?: string | null
+    client_secret?: string | null
+    redirect_uri?: string | null
+    token_cache?: string | null
+    access_token?: string | null
+    endpoint?: string | null
+  }
+  hermes_chat?: {
+    base_url?: string | null
+    chat_path?: string | null
+    auth_header?: string | null
+    auth_value?: string | null
+  }
+  hermes_push?: { token?: string | null }
+}
+
 export interface CalendarInfo {
   id: string
   summary: string

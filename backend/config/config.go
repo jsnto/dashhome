@@ -44,6 +44,99 @@ type Board struct {
 	// original order, month-grid calendar, every tile at the default
 	// size).
 	Views *Views `json:"views,omitempty"`
+	// Services holds the service-integration settings the settings screen
+	// persists: Home Assistant, Google Calendar, Hermes chat, Hermes push.
+	// Every field is an optional override of the environment value of the
+	// same name (the UI value wins when set, the environment value is the
+	// fallback, and an empty stored value falls back to it). Secrets live
+	// here with the same local trust boundary as .env: the file is
+	// git-ignored and never leaves the host.
+	Services *Services `json:"services,omitempty"`
+}
+
+// Services is the settings screen's service configuration (board
+// .services): one optional section per integrated service. A missing
+// section, a missing field, or an empty field means "use the environment
+// fallback (or the documented default)".
+type Services struct {
+	HomeAssistant *ServiceHomeAssistant `json:"homeassistant,omitempty"`
+	Google        *ServiceGoogle        `json:"google,omitempty"`
+	HermesChat    *ServiceHermesChat    `json:"hermes_chat,omitempty"`
+	HermesPush    *ServiceHermesPush    `json:"hermes_push,omitempty"`
+}
+
+// ServiceHomeAssistant is the UI override of HOMEASSISTANT_URL /
+// HOMEASSISTANT_TOKEN.
+type ServiceHomeAssistant struct {
+	URL   string `json:"url,omitempty"`
+	Token string `json:"token,omitempty"` // secret
+}
+
+// ServiceGoogle is the UI override of the GOOGLE_* credential settings.
+// Credential-mode precedence when several are set (mirroring NewGoogle):
+// static access token, then service account, then OAuth client.
+type ServiceGoogle struct {
+	ServiceAccountFile string `json:"service_account_file,omitempty"`
+	Domain             string `json:"domain,omitempty"`
+	ClientID           string `json:"client_id,omitempty"`
+	ClientSecret       string `json:"client_secret,omitempty"` // secret
+	RedirectURI        string `json:"redirect_uri,omitempty"`
+	TokenCache         string `json:"token_cache,omitempty"`
+	AccessToken        string `json:"access_token,omitempty"` // secret
+	Endpoint           string `json:"endpoint,omitempty"`
+}
+
+// ServiceHermesChat is the UI override of HERMES_BASE_URL /
+// HERMES_CHAT_PATH / HERMES_AUTH_HEADER / HERMES_AUTH_VALUE.
+type ServiceHermesChat struct {
+	BaseURL    string `json:"base_url,omitempty"`
+	ChatPath   string `json:"chat_path,omitempty"`
+	AuthHeader string `json:"auth_header,omitempty"`
+	AuthValue  string `json:"auth_value,omitempty"` // secret
+}
+
+// ServiceHermesPush is the UI override of HERMES_PUSH_TOKEN.
+type ServiceHermesPush struct {
+	Token string `json:"token,omitempty"` // secret
+}
+
+// ServicesUpdate is a partial service-settings update (PUT
+// /api/config/services). Each group is nil = leave the group alone; within
+// a group each field is nil = leave the field alone (a JSON null or an
+// omitted key), "" clears the UI value (back to the environment fallback
+// / documented default), and a non-empty string sets it.
+type ServicesUpdate struct {
+	HomeAssistant *ServiceHomeAssistantUpdate `json:"homeassistant"`
+	Google        *ServiceGoogleUpdate        `json:"google"`
+	HermesChat    *ServiceHermesChatUpdate    `json:"hermes_chat"`
+	HermesPush    *ServiceHermesPushUpdate    `json:"hermes_push"`
+}
+
+type ServiceHomeAssistantUpdate struct {
+	URL   *string `json:"url"`
+	Token *string `json:"token"`
+}
+
+type ServiceGoogleUpdate struct {
+	ServiceAccountFile *string `json:"service_account_file"`
+	Domain             *string `json:"domain"`
+	ClientID           *string `json:"client_id"`
+	ClientSecret       *string `json:"client_secret"`
+	RedirectURI        *string `json:"redirect_uri"`
+	TokenCache         *string `json:"token_cache"`
+	AccessToken        *string `json:"access_token"`
+	Endpoint           *string `json:"endpoint"`
+}
+
+type ServiceHermesChatUpdate struct {
+	BaseURL    *string `json:"base_url"`
+	ChatPath   *string `json:"chat_path"`
+	AuthHeader *string `json:"auth_header"`
+	AuthValue  *string `json:"auth_value"`
+}
+
+type ServiceHermesPushUpdate struct {
+	Token *string `json:"token"`
 }
 
 // CalendarRef names one Google calendar by ID with an optional label.
@@ -278,24 +371,32 @@ const haTileIDSuffixBound = 16
 // calendar client share one type instead of a field-for-field copy.
 type GoogleConfig = calendar.GoogleSettings
 
-// Config is the full runtime configuration.
+// Config is the full runtime configuration. The service fields (HAURL,
+// HAToken, Hermes*, PushToken, Google) hold the environment values — the
+// fallback layer of the UI > env > default precedence; the effective
+// service settings on use come from the *Effective accessors (HASettings,
+// HermesChatSettings, PushTokenEffective, GoogleSettings), which also read
+// the board's services section, so a value changed in the settings UI
+// takes effect without a restart.
 type Config struct {
 	// Port is the HTTP listen port. Default 3000.
 	Port string
 
-	// Home Assistant.
+	// Home Assistant (environment fallback values).
 	HAURL   string
 	HAToken string
 
-	// Hermes chat.
+	// Hermes chat (environment fallback values).
 	HermesBaseURL    string
 	HermesChatPath   string
 	HermesAuthHeader string // request header name to send ("" = none)
 	HermesAuthValue  string // full header value, e.g. "Bearer sk-..."
 
-	// Hermes push auth: shared token Hermes must present when pushing.
+	// Hermes push auth (environment fallback value): shared token Hermes
+	// must present when pushing.
 	PushToken string
 
+	// Google (environment fallback values).
 	Google GoogleConfig
 
 	// DataDir holds durable local state (push records, token cache...).
@@ -324,14 +425,114 @@ var ErrNoBoardFile = errors.New("no board file configured (set CONFIG_FILE)")
 // for an absent bind-mounted file — or the file/mount is not writable).
 var ErrBoardFileNotWritable = errors.New("board file not writable")
 
-// HAConfigured reports whether Home Assistant is configured.
-func (c *Config) HAConfigured() bool { return c.HAURL != "" && c.HAToken != "" }
+// HAConfigured reports whether Home Assistant is configured using the
+// effective settings (UI value, then environment).
+func (c *Config) HAConfigured() bool {
+	url, token := c.HASettings()
+	return url != "" && token != ""
+}
 
-// HermesConfigured reports whether the Hermes chat integration is configured.
-func (c *Config) HermesConfigured() bool { return c.HermesBaseURL != "" }
+// HermesConfigured reports whether the Hermes chat integration is
+// configured using the effective settings (UI value, then environment).
+func (c *Config) HermesConfigured() bool {
+	baseURL, _, _, _ := c.HermesChatSettings()
+	return baseURL != ""
+}
 
-// PushConfigured reports whether authenticated Hermes pushes are enabled.
-func (c *Config) PushConfigured() bool { return c.PushToken != "" }
+// PushConfigured reports whether authenticated Hermes pushes are enabled
+// using the effective settings (UI value, then environment).
+func (c *Config) PushConfigured() bool { return c.PushTokenEffective() != "" }
+
+// firstNonEmpty returns the first non-empty of vals (or "").
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// uiServices returns a copy of the board's services section (a zero value
+// when absent). Safe to read while the board mutates. The returned copy
+// shares the section subtrees, which are immutable once published (every
+// SetServices write installs a fresh tree), so the fields may be read
+// after the unlock.
+func (c *Config) uiServices() Services {
+	c.boardMu.RLock()
+	defer c.boardMu.RUnlock()
+	if c.Board.Services == nil {
+		return Services{}
+	}
+	return *c.Board.Services
+}
+
+// HASettings returns the effective Home Assistant settings: the UI value
+// (board.services.homeassistant), then the environment value, then the
+// documented default (empty for both fields). Resolved on use, so a value
+// changed in the settings UI takes effect without a restart.
+func (c *Config) HASettings() (baseURL, token string) {
+	s := c.uiServices()
+	var ui ServiceHomeAssistant
+	if s.HomeAssistant != nil {
+		ui = *s.HomeAssistant
+	}
+	return firstNonEmpty(ui.URL, c.HAURL), firstNonEmpty(ui.Token, c.HAToken)
+}
+
+// HermesChatSettings returns the effective Hermes chat settings: the UI
+// value (board.services.hermes_chat), then the environment value, then the
+// documented defaults (chat path /chat/completions, auth header
+// Authorization — applied by Load to the environment values). Resolved on
+// use, so a value changed in the settings UI takes effect without a
+// restart.
+func (c *Config) HermesChatSettings() (baseURL, chatPath, authHeader, authValue string) {
+	s := c.uiServices()
+	var ui ServiceHermesChat
+	if s.HermesChat != nil {
+		ui = *s.HermesChat
+	}
+	return firstNonEmpty(ui.BaseURL, c.HermesBaseURL),
+		firstNonEmpty(ui.ChatPath, c.HermesChatPath),
+		firstNonEmpty(ui.AuthHeader, c.HermesAuthHeader),
+		firstNonEmpty(ui.AuthValue, c.HermesAuthValue)
+}
+
+// PushTokenEffective returns the effective Hermes push token: the UI value
+// (board.services.hermes_push.token), then the environment value, then the
+// documented default (empty = push ingestion disabled). Resolved on use,
+// so a value changed in the settings UI takes effect without a restart.
+func (c *Config) PushTokenEffective() string {
+	s := c.uiServices()
+	var ui ServiceHermesPush
+	if s.HermesPush != nil {
+		ui = *s.HermesPush
+	}
+	return firstNonEmpty(ui.Token, c.PushToken)
+}
+
+// GoogleSettings returns the effective Google Calendar settings: each
+// field the UI value (board.services.google), then the environment value,
+// then the documented default (empty, except the token cache, which
+// defaults under DATA_DIR and is applied by Load to the environment
+// value). Resolved on use, so a value changed in the settings UI takes
+// effect without a restart.
+func (c *Config) GoogleSettings() GoogleConfig {
+	s := c.uiServices()
+	g := c.Google
+	if s.Google != nil {
+		ui := *s.Google
+		g.ServiceAccountFile = firstNonEmpty(ui.ServiceAccountFile, g.ServiceAccountFile)
+		g.Domain = firstNonEmpty(ui.Domain, g.Domain)
+		g.ClientID = firstNonEmpty(ui.ClientID, g.ClientID)
+		g.ClientSecret = firstNonEmpty(ui.ClientSecret, g.ClientSecret)
+		g.RedirectURI = firstNonEmpty(ui.RedirectURI, g.RedirectURI)
+		g.TokenCache = firstNonEmpty(ui.TokenCache, g.TokenCache)
+		g.AccessToken = firstNonEmpty(ui.AccessToken, g.AccessToken)
+		g.Endpoint = firstNonEmpty(ui.Endpoint, g.Endpoint)
+	}
+	return g
+}
 
 // BoardSnapshot returns a copy of the board that is safe to read while
 // SetRefreshSeconds may be updating it from another goroutine.
@@ -554,6 +755,226 @@ func (c *Config) SetRefreshSeconds(n int) error {
 		return fmt.Errorf("%w: %w", ErrBoardFileNotWritable, err)
 	}
 	return nil
+}
+
+// SetServices persists a partial service-settings update (board.services)
+// to the board file. Each group is nil = leave the group alone; within a
+// group, each field is nil = leave it alone, "" clears the UI value (back
+// to the environment fallback / documented default), and a non-empty
+// string sets it. An update with no effective field change is a no-op
+// (nothing is written). Mirrors SetViews: the in-memory board is updated
+// only after the write succeeds, so a failed write leaves the running
+// config (and the file) unchanged, and a persistence failure is wrapped
+// in ErrBoardFileNotWritable (an absent board file path is
+// ErrNoBoardFile).
+func (c *Config) SetServices(u *ServicesUpdate) error {
+	if c.BoardFile == "" {
+		return ErrNoBoardFile
+	}
+	c.boardMu.Lock()
+	// Deep-copy the current services tree before mutating: the board
+	// struct copy shares the subtree pointers, and a failed write must not
+	// have mutated the live board.
+	cur := cloneServices(c.Board.Services)
+	changed := false
+	// apply sets one field only when the provided value differs from the
+	// current one, so an update with no effective field change is a no-op
+	// (nothing is written, even on an unwritable board file).
+	apply := func(dst *string, src *string) {
+		if src != nil && *dst != *src {
+			*dst = *src
+			changed = true
+		}
+	}
+	if u.HomeAssistant != nil {
+		if cur.HomeAssistant == nil {
+			cur.HomeAssistant = &ServiceHomeAssistant{}
+		}
+		apply(&cur.HomeAssistant.URL, u.HomeAssistant.URL)
+		apply(&cur.HomeAssistant.Token, u.HomeAssistant.Token)
+	}
+	if u.Google != nil {
+		if cur.Google == nil {
+			cur.Google = &ServiceGoogle{}
+		}
+		apply(&cur.Google.ServiceAccountFile, u.Google.ServiceAccountFile)
+		apply(&cur.Google.Domain, u.Google.Domain)
+		apply(&cur.Google.ClientID, u.Google.ClientID)
+		apply(&cur.Google.ClientSecret, u.Google.ClientSecret)
+		apply(&cur.Google.RedirectURI, u.Google.RedirectURI)
+		apply(&cur.Google.TokenCache, u.Google.TokenCache)
+		apply(&cur.Google.AccessToken, u.Google.AccessToken)
+		apply(&cur.Google.Endpoint, u.Google.Endpoint)
+	}
+	if u.HermesChat != nil {
+		if cur.HermesChat == nil {
+			cur.HermesChat = &ServiceHermesChat{}
+		}
+		apply(&cur.HermesChat.BaseURL, u.HermesChat.BaseURL)
+		apply(&cur.HermesChat.ChatPath, u.HermesChat.ChatPath)
+		apply(&cur.HermesChat.AuthHeader, u.HermesChat.AuthHeader)
+		apply(&cur.HermesChat.AuthValue, u.HermesChat.AuthValue)
+	}
+	if u.HermesPush != nil {
+		if cur.HermesPush == nil {
+			cur.HermesPush = &ServiceHermesPush{}
+		}
+		apply(&cur.HermesPush.Token, u.HermesPush.Token)
+	}
+	if !changed {
+		c.boardMu.Unlock()
+		return nil
+	}
+	updated := c.Board
+	updated.Services = &cur
+	err := WriteBoardFile(c.BoardFile, updated)
+	if err == nil {
+		c.Board = updated
+	}
+	c.boardMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrBoardFileNotWritable, err)
+	}
+	return nil
+}
+
+// cloneServices deep-copies the services tree (a nil source yields a zero
+// value) so callers can mutate the copy without touching the live board.
+func cloneServices(s *Services) Services {
+	var out Services
+	if s == nil {
+		return out
+	}
+	out = *s
+	if s.HomeAssistant != nil {
+		p := *s.HomeAssistant
+		out.HomeAssistant = &p
+	}
+	if s.Google != nil {
+		p := *s.Google
+		out.Google = &p
+	}
+	if s.HermesChat != nil {
+		p := *s.HermesChat
+		out.HermesChat = &p
+	}
+	if s.HermesPush != nil {
+		p := *s.HermesPush
+		out.HermesPush = &p
+	}
+	return out
+}
+
+// ServiceField is one service setting as exposed to the settings UI (GET
+// /api/config/services): the UI-set value (empty = not set in the UI, so
+// the fallback is active), the environment fallback value (for the UI's
+// placeholder), and whether each layer is set. Secret fields never carry
+// a value in either layer — only the set booleans — so a secret set in
+// the UI or in .env is never displayed, only acknowledged.
+type ServiceField struct {
+	Value       string `json:"value"`
+	Fallback    string `json:"fallback"`
+	Set         bool   `json:"set"`
+	FallbackSet bool   `json:"fallback_set"`
+}
+
+// ServicesView is the masked view of the service settings: non-secret
+// fields expose the UI value and the environment fallback; secret fields
+// expose only the set booleans.
+type ServicesView struct {
+	HomeAssistant ServiceHomeAssistantView `json:"homeassistant"`
+	Google        ServiceGoogleView        `json:"google"`
+	HermesChat    ServiceHermesChatView    `json:"hermes_chat"`
+	HermesPush    ServiceHermesPushView    `json:"hermes_push"`
+}
+
+type ServiceHomeAssistantView struct {
+	URL   ServiceField `json:"url"`
+	Token ServiceField `json:"token"`
+}
+
+type ServiceGoogleView struct {
+	ServiceAccountFile ServiceField `json:"service_account_file"`
+	Domain             ServiceField `json:"domain"`
+	ClientID           ServiceField `json:"client_id"`
+	ClientSecret       ServiceField `json:"client_secret"`
+	RedirectURI        ServiceField `json:"redirect_uri"`
+	TokenCache         ServiceField `json:"token_cache"`
+	AccessToken        ServiceField `json:"access_token"`
+	Endpoint           ServiceField `json:"endpoint"`
+}
+
+type ServiceHermesChatView struct {
+	BaseURL    ServiceField `json:"base_url"`
+	ChatPath   ServiceField `json:"chat_path"`
+	AuthHeader ServiceField `json:"auth_header"`
+	AuthValue  ServiceField `json:"auth_value"`
+}
+
+type ServiceHermesPushView struct {
+	Token ServiceField `json:"token"`
+}
+
+// ServicesView returns the masked view of the service settings (the UI
+// values plus the environment fallbacks, secrets reduced to set booleans).
+// Safe to read while the board mutates.
+func (c *Config) ServicesView() ServicesView {
+	s := c.uiServices()
+	var uiHA ServiceHomeAssistant
+	if s.HomeAssistant != nil {
+		uiHA = *s.HomeAssistant
+	}
+	var uiG ServiceGoogle
+	if s.Google != nil {
+		uiG = *s.Google
+	}
+	var uiC ServiceHermesChat
+	if s.HermesChat != nil {
+		uiC = *s.HermesChat
+	}
+	var uiP ServiceHermesPush
+	if s.HermesPush != nil {
+		uiP = *s.HermesPush
+	}
+	return ServicesView{
+		HomeAssistant: ServiceHomeAssistantView{
+			URL:   field(uiHA.URL, c.HAURL, false),
+			Token: field(uiHA.Token, c.HAToken, true),
+		},
+		Google: ServiceGoogleView{
+			ServiceAccountFile: field(uiG.ServiceAccountFile, c.Google.ServiceAccountFile, false),
+			Domain:             field(uiG.Domain, c.Google.Domain, false),
+			ClientID:           field(uiG.ClientID, c.Google.ClientID, false),
+			ClientSecret:       field(uiG.ClientSecret, c.Google.ClientSecret, true),
+			RedirectURI:        field(uiG.RedirectURI, c.Google.RedirectURI, false),
+			TokenCache:         field(uiG.TokenCache, c.Google.TokenCache, false),
+			AccessToken:        field(uiG.AccessToken, c.Google.AccessToken, true),
+			Endpoint:           field(uiG.Endpoint, c.Google.Endpoint, false),
+		},
+		HermesChat: ServiceHermesChatView{
+			BaseURL:    field(uiC.BaseURL, c.HermesBaseURL, false),
+			ChatPath:   field(uiC.ChatPath, c.HermesChatPath, false),
+			AuthHeader: field(uiC.AuthHeader, c.HermesAuthHeader, false),
+			AuthValue:  field(uiC.AuthValue, c.HermesAuthValue, true),
+		},
+		HermesPush: ServiceHermesPushView{
+			Token: field(uiP.Token, c.PushToken, true),
+		},
+	}
+}
+
+// field builds one masked service-setting field: for non-secret fields
+// Value/Fallback carry the UI and environment values; for secret fields
+// both stay empty and only the set booleans are exposed.
+func field(ui, env string, secret bool) ServiceField {
+	f := ServiceField{
+		Set:         ui != "",
+		FallbackSet: env != "",
+	}
+	if !secret {
+		f.Value, f.Fallback = ui, env
+	}
+	return f
 }
 
 // defaultViewSizes returns the default per-tile sizes: every view at the

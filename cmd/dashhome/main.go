@@ -33,41 +33,30 @@ func main() {
 	ctx, stop := shutdownContext()
 	defer stop()
 
-	var cal *calendar.GoogleClient
-	if cal, err = calendar.NewGoogle(ctx, cfg.Google); err != nil {
-		log.Fatalf("google calendar: %v", err)
-	}
-	if cal == nil {
+	// All service integrations resolve their settings on use (the settings
+	// UI value, then the environment value, then the documented default),
+	// so a value changed in the settings UI takes effect without a restart.
+	// Startup notes below reflect the settings as loaded.
+	googleDep := calendar.NewProvider(cfg.GoogleSettings)
+	if !googleDep.Configured() {
 		log.Print("google calendar: not configured")
 	}
 
-	var haClient ha.StatesClient
-	var haSvc ha.ServiceCaller
-	var haDash ha.DashboardsClient
-	if cfg.HAConfigured() {
-		client := ha.NewClient(cfg.HAURL, cfg.HAToken)
-		haClient = client
-		haSvc = client
-		haDash = ha.NewDashClient(cfg.HAURL, cfg.HAToken)
-	} else {
+	haClient := ha.NewClientSettings(cfg.HASettings)
+	haSvc := haClient
+	haDash := ha.NewDashClientSettings(cfg.HASettings)
+	if !cfg.HAConfigured() {
 		log.Print("home assistant: not configured")
 	}
 
-	var hClient hermes.Chatter
-	if cfg.HermesConfigured() {
-		hClient = hermes.NewClient(cfg.HermesBaseURL, cfg.HermesChatPath, cfg.HermesAuthHeader, cfg.HermesAuthValue)
-	} else {
+	hClient := hermes.NewClientSettings(cfg.HermesChatSettings)
+	if !cfg.HermesConfigured() {
 		log.Print("hermes chat: not configured")
 	}
 
 	pushes, err := store.NewFileStore(filepath.Join(cfg.DataDir, "hermes_pushes"))
 	if err != nil {
 		log.Fatalf("push store: %v", err)
-	}
-
-	var googleDep api.GoogleAPI
-	if cal != nil {
-		googleDep = cal
 	}
 
 	srv := api.NewServer(cfg, googleDep, haClient, haSvc, haDash, hClient, pushes)

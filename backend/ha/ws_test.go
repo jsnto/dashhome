@@ -332,6 +332,34 @@ func TestDashGetDashboardConfigLegacy(t *testing.T) {
 	}
 }
 
+// A live settings switch (the settings UI flow) must invalidate the
+// remembered command style: the new instance is re-probed from unknown,
+// and no stale legacy command is sent to it.
+func TestDashStyleReprobedOnSettingsChange(t *testing.T) {
+	legacy, callsLegacy := fakeHAWS(t, styleLegacy, "old-tok", "", "", "")
+	modern, callsModern := fakeHAWS(t, styleLovelace, "new-tok", "", "", "")
+	base, tok := legacy, "old-tok"
+	c := NewDashClientSettings(func() (string, string) { return base, tok })
+
+	if _, err := c.ListDashboards(context.Background(), false); err != nil {
+		t.Fatalf("legacy ListDashboards: %v", err)
+	}
+	if n := callsLegacy.commandCount(cmdListNew); n != 1 {
+		t.Fatalf("legacy probes = %d, want 1 (%v)", n, callsLegacy.Commands)
+	}
+
+	base, tok = modern, "new-tok" // live settings switch, no restart
+	if _, err := c.ListDashboards(context.Background(), false); err != nil {
+		t.Fatalf("modern ListDashboards: %v", err)
+	}
+	if n := callsModern.commandCount(cmdListNew); n != 1 {
+		t.Errorf("modern probes = %d, want 1 (%v)", n, callsModern.Commands)
+	}
+	if n := callsModern.commandCount(cmdListOld); n != 0 {
+		t.Errorf("legacy commands on the modern instance = %d, want 0 (%v)", n, callsModern.Commands)
+	}
+}
+
 func TestDashAuthInvalid(t *testing.T) {
 	base, calls := fakeHAWS(t, styleLovelace, "ha-tok", "wrong-token", "", "")
 	c := NewDashClient(base, "wrong-token")

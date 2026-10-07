@@ -36,6 +36,8 @@ const scope = "https://www.googleapis.com/auth/calendar.readonly"
 type Mode string
 
 const (
+	// ModeNone is the mode when no credential mode is configured.
+	ModeNone Mode = ""
 	// ModeStatic uses a static access token (development only).
 	ModeStatic Mode = "static"
 	// ModeServiceAcc uses a service account key file, optionally with
@@ -44,6 +46,22 @@ const (
 	// ModeOAuth uses a 3-legged OAuth client with a cached token.
 	ModeOAuth Mode = "oauth"
 )
+
+// ModeFor reports the credential mode the settings select: the static
+// access token wins, then the service account, then the OAuth client
+// (mirroring NewGoogle's precedence). Empty settings select ModeNone.
+func ModeFor(s GoogleSettings) Mode {
+	switch {
+	case s.AccessToken != "":
+		return ModeStatic
+	case s.ServiceAccountFile != "":
+		return ModeServiceAcc
+	case s.ClientID != "" && s.ClientSecret != "":
+		return ModeOAuth
+	default:
+		return ModeNone
+	}
+}
 
 // GoogleSettings carries Google Calendar credential settings.
 type GoogleSettings struct {
@@ -81,12 +99,12 @@ type GoogleClient struct {
 // It returns (nil, nil) when no credential mode is configured, so callers
 // treat a nil client as "Google not configured".
 func NewGoogle(ctx context.Context, g GoogleSettings) (*GoogleClient, error) {
-	switch {
-	case g.AccessToken != "":
+	switch ModeFor(g) {
+	case ModeStatic:
 		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: g.AccessToken})
 		return newGoogleService(g, ts, &GoogleClient{mode: ModeStatic, hasTok: true})
 
-	case g.ServiceAccountFile != "":
+	case ModeServiceAcc:
 		data, err := os.ReadFile(g.ServiceAccountFile)
 		if err != nil {
 			return nil, fmt.Errorf("read service account key %s: %w", g.ServiceAccountFile, err)
@@ -100,7 +118,7 @@ func NewGoogle(ctx context.Context, g GoogleSettings) (*GoogleClient, error) {
 		}
 		return newGoogleService(g, cred.TokenSource, &GoogleClient{mode: ModeServiceAcc, hasTok: true})
 
-	case g.ClientID != "" && g.ClientSecret != "":
+	case ModeOAuth:
 		if g.RedirectURI == "" {
 			return nil, fmt.Errorf("RedirectURI is required when using Google OAuth client credentials")
 		}
@@ -142,6 +160,17 @@ func newGoogleService(g GoogleSettings, ts oauth2.TokenSource, c *GoogleClient) 
 
 // Mode reports the credential mode.
 func (c *GoogleClient) Mode() Mode { return c.mode }
+
+// Configured reports whether this client has credentials. A built
+// GoogleClient always does — NewGoogle returns (nil, nil) instead when no
+// credential mode is set — so this is a constant true; a Provider
+// answers it from the effective settings on use.
+func (c *GoogleClient) Configured() bool { return c.mode != ModeNone }
+
+// BuildErr reports the error that last prevented building this client. A
+// directly built client never has one (its construction already ran), so
+// this is always nil; a Provider surfaces its build errors here.
+func (c *GoogleClient) BuildErr() error { return nil }
 
 // HasToken reports whether API calls can be made right now.
 func (c *GoogleClient) HasToken() bool {

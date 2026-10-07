@@ -4,6 +4,7 @@ import type {
   ApiBoard,
   ApiConfig,
   GridDims,
+  HABoardTile,
   NormalizedViews,
   TileGeometry,
   ViewId,
@@ -19,6 +20,7 @@ import HAPanel from './components/HAPanel'
 import HATile from './components/HATile'
 import PushPanel from './components/PushPanel'
 import SettingsPanel from './components/SettingsPanel'
+import TileEditModal from './components/TileEditModal'
 import {
   autoLayout,
   clampCell,
@@ -96,6 +98,8 @@ export default function App() {
   // The width/height a user is typing into a tile's size fields, if any:
   // { id, w, h } as raw input strings, committed on Enter/blur.
   const [sizeDraft, setSizeDraft] = useState<{ id: string; w: string; h: string } | null>(null)
+  // The tile whose settings modal is open (the per-tile edit button), if any.
+  const [editingTile, setEditingTile] = useState<string | null>(null)
 
   // The board's effective tile grid (cols x rows units): the board file's
   // board.grid repaired to valid dimensions, defaulting to 12x12. Every
@@ -186,13 +190,17 @@ export default function App() {
       ]
     : []
 
-  // Persist a board-views geometry patch through the guarded write path;
-  // the server's answer (the saved, re-normalized layout) is adopted.
-  // One in-flight layout save at a time.
+  // Persist a board-views patch through the guarded write path (the same
+  // PUT /api/config/views save the geometry changes go through); the
+  // server's answer (the saved, re-normalized layout) is adopted. One
+  // in-flight layout save at a time.
   const commitViews = (patch: {
+    hidden?: string[]
     geometry?: Record<string, TileGeometry | null>
+    ha_tiles?: HABoardTile[]
   }) => {
     if (!cfg) return
+    setSavingSize(true)
     api
       .setViews(patch)
       .then((board: ApiBoard) => {
@@ -210,6 +218,24 @@ export default function App() {
   const toggleEditMode = () => {
     if (!editMode) setMaximized(null)
     setEditMode(!editMode)
+  }
+
+  // Edit mode's per-tile remove control: a single press drops the tile
+  // from the board (no confirm — a removed tile can be added back from
+  // Settings), persisted through the same board-views save path as the
+  // geometry changes. A Home Assistant tile is dropped from views.ha_tiles
+  // (only the board's reference goes — its entity and data are untouched);
+  // a built-in view is hidden (it keeps its stored placement, so re-showing
+  // it from Settings restores the tile). The server re-normalizes the
+  // order/hidden/geometry around the new set.
+  const removeTile = (id: string) => {
+    if (savingSize) return
+    if (!isViewId(id)) {
+      commitViews({ ha_tiles: views.ha_tiles.filter((t) => t.id !== id) })
+      return
+    }
+    if (views.hidden.includes(id)) return
+    commitViews({ hidden: [...views.hidden, id] })
   }
 
   // Type a width or height (in grid units) into a tile's size field; the
@@ -242,7 +268,6 @@ export default function App() {
     const cell = clampCell({ x: cur.x, y: cur.y, w, h }, grid.cols, grid.rows)
     if (cell.x === cur.x && cell.y === cur.y && cell.w === cur.w && cell.h === cur.h) return
     if (dropRefused(draft.id, cell, visible, views.sizes, views.geometry, grid.cols, grid.rows)) return
-    setSavingSize(true)
     setLayoutErr(null)
     commitViews({ geometry: { [draft.id]: cell } })
   }
@@ -535,6 +560,25 @@ export default function App() {
                       }}
                     />
                   </span>
+                  <button
+                    type="button"
+                    className="tile-edit-open"
+                    title={`Edit ${tileName(id)} settings`}
+                    aria-label={`Edit ${tileName(id)} tile settings`}
+                    onClick={() => setEditingTile(id)}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    className="tile-remove"
+                    title="Remove this tile from the board"
+                    aria-label={`Remove ${tileName(id)} tile`}
+                    disabled={savingSize}
+                    onClick={() => removeTile(id)}
+                  >
+                    ✕
+                  </button>
                 </div>
               )}
               {winNode(id)}
@@ -557,6 +601,17 @@ export default function App() {
         )}
       </main>
 
+      {editingTile && visible.includes(editingTile) && (
+        <TileEditModal
+          id={editingTile}
+          views={views}
+          entities={entities}
+          haOff={haOff}
+          onClose={() => setEditingTile(null)}
+          onBoard={(board: ApiBoard) => setCfg((c) => (c ? { ...c, board } : c))}
+        />
+      )}
+
       {showSettings && (
         <SettingsPanel
           cfg={cfg}
@@ -565,6 +620,7 @@ export default function App() {
           views={views}
           grid={grid}
           onBoard={(board: ApiBoard) => setCfg((c) => (c ? { ...c, board } : c))}
+          onIntegrations={(integrations) => setCfg((c) => (c ? { ...c, integrations } : c))}
           onClose={() => setShowSettings(false)}
         />
       )}
