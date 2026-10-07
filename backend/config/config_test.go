@@ -966,7 +966,7 @@ func TestViewConfigRepairsGeometryAndHATiles(t *testing.T) {
 				"calendar": {"x": 1, "y": 1, "w": 3, "h": 2},
 				"chat": {"x": 4, "y": 1, "w": 3, "h": 2},
 				"home": {"x": 3, "y": 1, "w": 4, "h": 1},
-				"push": {"x": 8, "y": 1, "w": 2, "h": 1},
+				"push": {"x": 13, "y": 1, "w": 2, "h": 1},
 				"ha-1": {"x": 1, "y": 2, "w": 1, "h": 0},
 				"ha-2": "wobbly",
 				"stale-ha": {"x": 1, "y": 1, "w": 1, "h": 1}
@@ -1028,6 +1028,28 @@ func TestViewConfigRepairsGeometryAndHATiles(t *testing.T) {
 	}
 	if g := v.Geometry[ViewChat]; g == nil || g.X != 4 || g.Y != 1 || g.W != 3 || g.H != 2 {
 		t.Errorf("chat geometry = %+v", g)
+	}
+}
+
+// Extreme-but-representable coordinates are out-of-bounds placements: load
+// repair drops them back to auto placement exactly like any other
+// out-of-grid entry (the in-bounds one is kept).
+func TestViewConfigRepairsOverflowGeometry(t *testing.T) {
+	cfg, _ := viewsCfg(t, `{
+		"views": {
+			"geometry": {
+				"calendar": {"x": 9223372036854775807, "y": 1, "w": 2, "h": 1},
+				"chat": {"x": 1, "y": 9223372036854775807, "w": 1, "h": 2},
+				"home": {"x": 1, "y": 1, "w": 3, "h": 1}
+			}
+		}
+	}`)
+	v := cfg.ViewConfig()
+	if len(v.Geometry) != 1 {
+		t.Fatalf("repaired geometry = %+v, want only the in-bounds placement", v.Geometry)
+	}
+	if g := v.Geometry[ViewHome]; g == nil || g.X != 1 || g.Y != 1 || g.W != 3 || g.H != 1 {
+		t.Errorf("home geometry = %+v", g)
 	}
 }
 
@@ -1164,9 +1186,13 @@ func TestSetViewsInvalidGeometryAndHATiles(t *testing.T) {
 		name     string
 		geometry map[string]*TileGeometry
 	}{
-		{"out-of-bounds-x", map[string]*TileGeometry{ViewCalendar: geom(7, 1, 2, 1)}},
-		{"too-wide", map[string]*TileGeometry{ViewCalendar: geom(1, 1, 7, 1)}},
-		{"crosses-edge", map[string]*TileGeometry{ViewCalendar: geom(6, 1, 2, 1)}},
+		{"out-of-bounds-x", map[string]*TileGeometry{ViewCalendar: geom(13, 1, 2, 1)}},
+		{"too-wide", map[string]*TileGeometry{ViewCalendar: geom(1, 1, 13, 1)}},
+		{"crosses-edge", map[string]*TileGeometry{ViewCalendar: geom(12, 1, 2, 1)}},
+		{"out-of-bounds-y", map[string]*TileGeometry{ViewCalendar: geom(1, 13, 2, 1)}},
+		{"crosses-bottom", map[string]*TileGeometry{ViewCalendar: geom(1, 12, 2, 2)}},
+		{"overflow-x", map[string]*TileGeometry{ViewCalendar: geom(9223372036854775807, 1, 2, 1)}},
+		{"overflow-y", map[string]*TileGeometry{ViewCalendar: geom(1, 9223372036854775807, 2, 1)}},
 		{"negative-height", map[string]*TileGeometry{ViewCalendar: geom(1, 1, 3, 0)}},
 		{"zero-width", map[string]*TileGeometry{ViewCalendar: geom(1, 1, 0, 1)}},
 		{"unknown-tile", map[string]*TileGeometry{"nope": geom(1, 1, 1, 1)}},
@@ -1253,5 +1279,194 @@ func TestSetViewsHATilesReplacesList(t *testing.T) {
 	}
 	if _, ok := v.Sizes["ha-1"]; ok {
 		t.Errorf("stale size entry not dropped: %+v", v.Sizes)
+	}
+}
+
+// --- grid dimensions -----------------------------------------------------
+
+func TestGridDimsDefaultsAndRepair(t *testing.T) {
+	// No grid key: the default 12x12.
+	cfg, _ := viewsCfg(t, `{"refresh_seconds": 30}`)
+	if cols, rows := cfg.GridDims(); cols != 12 || rows != 12 {
+		t.Errorf("default grid = %dx%d, want 12x12", cols, rows)
+	}
+
+	// A stored grid is honored.
+	cfg, _ = viewsCfg(t, `{"grid": {"cols": 6, "rows": 4}}`)
+	if cols, rows := cfg.GridDims(); cols != 6 || rows != 4 {
+		t.Errorf("stored grid = %dx%d, want 6x4", cols, rows)
+	}
+
+	// Invalid stored dimensions fall back to the per-axis default (the
+	// board file is a freehand-editable surface).
+	cfg, _ = viewsCfg(t, `{"grid": {"cols": 99, "rows": 4}}`)
+	if cols, rows := cfg.GridDims(); cols != 12 || rows != 4 {
+		t.Errorf("repaired cols = %dx%d, want 12x4", cols, rows)
+	}
+	cfg, _ = viewsCfg(t, `{"grid": {"cols": 6, "rows": 0}}`)
+	if cols, rows := cfg.GridDims(); cols != 6 || rows != 12 {
+		t.Errorf("repaired rows = %dx%d, want 6x12", cols, rows)
+	}
+}
+
+// A mistyped board.grid value must repair per axis on load instead of
+// failing the board file load (which would take the whole backend down
+// with it): a fractional or non-numeric dimension falls back to the
+// per-axis default, a whole number is kept, and a grid that is not a JSON
+// object falls back to the default 12x12.
+func TestBoardGridTolerantDecode(t *testing.T) {
+	cases := []struct {
+		name string
+		grid string
+		cols int
+		rows int
+	}{
+		{"float-whole-cols-string-rows", `{"grid": {"cols": 12.0, "rows": "12"}}`, 12, 12},
+		{"fractional-cols", `{"grid": {"cols": 6.5, "rows": 4}}`, 12, 4},
+		{"string-cols", `{"grid": {"cols": "6", "rows": 4}}`, 12, 4},
+		{"out-of-range", `{"grid": {"cols": 99, "rows": -1}}`, 12, 12},
+		{"missing-rows", `{"grid": {"cols": 6}}`, 6, 12},
+		{"empty-object", `{"grid": {}}`, 12, 12},
+		{"null", `{"grid": null}`, 12, 12},
+		{"non-object-number", `{"grid": 5}`, 12, 12},
+		{"non-object-string", `{"grid": "wobbly"}`, 12, 12},
+		{"non-object-array", `{"grid": [6, 4]}`, 12, 12},
+		{"valid", `{"grid": {"cols": 6, "rows": 4}}`, 6, 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _ := viewsCfg(t, tc.grid)
+			if cols, rows := cfg.GridDims(); cols != tc.cols || rows != tc.rows {
+				t.Errorf("grid = %dx%d, want %dx%d", cols, rows, tc.cols, tc.rows)
+			}
+		})
+	}
+
+	// A repaired non-object grid is stored as the valid default, not as an
+	// invalid value: a later board write persists a grid the reload agrees
+	// with (the in-memory board must never carry a mistyped dimension).
+	cfg, file := viewsCfg(t, `{"refresh_seconds": 30, "grid": 5}`)
+	if err := cfg.SetRefreshSeconds(45); err != nil {
+		t.Fatalf("SetRefreshSeconds: %v", err)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk Board
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("board file not valid JSON: %v: %s", err, data)
+	}
+	if onDisk.Grid == nil || onDisk.Grid.Cols != 12 || onDisk.Grid.Rows != 12 {
+		t.Errorf("persisted grid = %+v, want the repaired 12x12", onDisk.Grid)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatalf("reloaded Load: %v", err)
+	}
+	if cols, rows := reloaded.GridDims(); cols != 12 || rows != 12 {
+		t.Errorf("reloaded grid = %dx%d, want 12x12", cols, rows)
+	}
+}
+
+func TestSetGridPersistsAndRepairs(t *testing.T) {
+	// chat's stored placement fits the default 12-column grid…
+	cfg, file := viewsCfg(t, `{"refresh_seconds": 45, "views": {"geometry": {"chat": {"x": 7, "y": 1, "w": 6, "h": 1}}}}`)
+	if err := cfg.SetGrid(6, 6); err != nil {
+		t.Fatalf("SetGrid: %v", err)
+	}
+	if cols, rows := cfg.GridDims(); cols != 6 || rows != 6 {
+		t.Errorf("in-memory grid = %dx%d, want 6x6", cols, rows)
+	}
+	// …but no longer the 6-column grid: it is repaired back to auto
+	// placement (no geometry entry), the same repair as a views write.
+	v := cfg.ViewConfig()
+	if _, ok := v.Geometry[ViewChat]; ok {
+		t.Errorf("out-of-bounds geometry not repaired: %+v", v.Geometry)
+	}
+
+	// Persisted to the board file, other fields preserved.
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk Board
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("board file not valid JSON: %v: %s", err, data)
+	}
+	if onDisk.Grid == nil || onDisk.Grid.Cols != 6 || onDisk.Grid.Rows != 6 {
+		t.Errorf("grid not written to the board file: %s", data)
+	}
+	if !strings.Contains(string(data), `"refresh_seconds": 45`) {
+		t.Errorf("other board fields not preserved: %s", data)
+	}
+
+	// A fresh Load sees the persisted grid.
+	t.Setenv("CONFIG_FILE", file)
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols, rows := reloaded.GridDims(); cols != 6 || rows != 6 {
+		t.Errorf("reloaded grid = %dx%d, want 6x6", cols, rows)
+	}
+}
+
+func TestSetGridInvalidLeavesStateUntouched(t *testing.T) {
+	cfg, file := viewsCfg(t, `{"refresh_seconds": 45}`)
+	beforeCols, beforeRows := cfg.GridDims()
+	cases := []struct {
+		name string
+		cols int
+		rows int
+	}{
+		{"zero-cols", 0, 12},
+		{"zero-rows", 12, 0},
+		{"above-max-cols", 25, 12},
+		{"above-max-rows", 12, 25},
+		{"negative", -5, -5},
+	}
+	for _, tc := range cases {
+		err := cfg.SetGrid(tc.cols, tc.rows)
+		if err == nil {
+			t.Fatalf("%s: unexpected success", tc.name)
+		}
+		if errors.Is(err, ErrBoardFileNotWritable) || errors.Is(err, ErrNoBoardFile) {
+			t.Errorf("%s: err = %v looks like a storage error, want a validation error", tc.name, err)
+		}
+	}
+	afterCols, afterRows := cfg.GridDims()
+	if afterCols != beforeCols || afterRows != beforeRows {
+		t.Errorf("grid changed by invalid updates: %dx%d -> %dx%d", beforeCols, beforeRows, afterCols, afterRows)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"grid"`) {
+		t.Errorf("invalid updates wrote to the board file: %s", data)
+	}
+}
+
+func TestSetGridNoBoardFile(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.SetGrid(8, 8); !errors.Is(err, ErrNoBoardFile) {
+		t.Errorf("err = %v, want ErrNoBoardFile", err)
+	}
+}
+
+func TestSetGridDirectoryPathIsNotWritable(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{BoardFile: file}
+	if err := cfg.SetGrid(8, 8); !errors.Is(err, ErrBoardFileNotWritable) {
+		t.Fatalf("err = %v, want ErrBoardFileNotWritable", err)
+	}
+	if cols, rows := cfg.GridDims(); cols != 12 || rows != 12 {
+		t.Errorf("in-memory grid = %dx%d, want unchanged defaults", cols, rows)
 	}
 }

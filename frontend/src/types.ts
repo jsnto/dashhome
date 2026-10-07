@@ -15,7 +15,14 @@ export type ViewId = (typeof VIEW_IDS)[number]
 /** How the Calendar view renders. */
 export type CalendarMode = 'month' | 'schedule'
 
-/** The tile size steps (column spans on the board's 6-column grid), smallest to widest. */
+/** The board's tile grid dimensions: cols x rows units, each unit split
+ *  evenly (1/cols of the width, 1/rows of the height). */
+export interface GridDims {
+  cols: number
+  rows: number
+}
+
+/** The tile size steps (fractions of the grid's width), smallest to widest. */
 export const TILE_SIZES = ['s', 'm', 'l', 'xl'] as const
 
 export type TileSize = (typeof TILE_SIZES)[number]
@@ -40,12 +47,12 @@ export interface BoardViews {
   ha_tiles?: HABoardTile[]
 }
 
-/**
- * A tile's explicit placement on the board's 6-column grid. 1-based:
- * `x` is the starting column (1..6), `y` the starting row, `w` and `h`
- * the spans in columns and rows. A tile without a placement is placed
- * automatically (it flows in board order at its size step's width).
- */
+/** A tile's explicit placement on the board's tile grid (cols x rows
+ *  units). 1-based: `x` is the starting column, `y` the starting row, `w`
+ *  and `h` the spans in columns and rows. The cell must stay inside the
+ *  grid (1 <= w <= cols, 1 <= x <= cols-w+1, 1 <= h <= rows,
+ *  1 <= y <= rows-h+1). A tile without a placement is placed
+ *  automatically (it flows in board order at its size step's width). */
 export interface TileGeometry {
   x: number
   y: number
@@ -84,6 +91,9 @@ export interface ApiBoard {
   calendars: { id: string; label: string }[]
   refresh_seconds: number
   ha_embed?: HAEmbed | null
+  /** The tile grid's dimensions (default 12x12); absent when the board
+   *  file sets no grid. */
+  grid?: GridDims | null
   /** View layout; the backend always sends a complete effective layout. */
   views?: BoardViews | null
 }

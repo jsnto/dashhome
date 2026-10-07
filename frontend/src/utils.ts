@@ -1,6 +1,7 @@
 import type {
   BoardViews,
   CalendarMode,
+  GridDims,
   HABoardTile,
   NormalizedViews,
   TileGeometry,
@@ -26,19 +27,45 @@ export const TILE_SIZE_LABELS: Record<TileSize, string> = {
 }
 
 /**
- * The board's 6-column grid: the number of columns and the column span a
- * size step places an (auto-placed) tile at. Mirrors the backend's
- * config.normalizeViews + the CSS grid spans.
+ * The board's tile grid: cols x rows units, each unit split evenly (one of
+ * `cols` columns, one of `rows` rows). Defaults to 12 x 12. The dimensions
+ * are user-editable (settings → Tiles) and persisted to the board file
+ * (board.grid), so the grid the math runs on is a parameter, never a
+ * constant.
  */
-export const GRID_COLS = 6
-export const STEP_WIDTH: Record<TileSize, number> = { s: 2, m: 3, l: 4, xl: 6 }
+export const GRID_DEFAULTS: GridDims = { cols: 12, rows: 12 }
+
+/** The usable range of a grid dimension (settings validates to this). */
+export const GRID_MIN = 1
+export const GRID_MAX = 24
+
+const isGridDim = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= GRID_MIN && v <= GRID_MAX
 
 /**
- * A valid grid placement on the 6-column grid: 1-based integers, the span
- * fits the columns (1 <= w <= 6, 1 <= x <= 7-w), the row and height are
- * >= 1 (rows are unbounded — the board grows downward).
+ * Repair a raw stored grid (board.grid, a freehand-editable surface) to
+ * valid dimensions: an absent grid, or an out-of-range dimension, falls
+ * back to the per-axis default (12x12 when nothing is stored).
  */
-export function isValidGeometry(g: unknown): g is TileGeometry {
+export function normalizeGrid(
+  grid: { cols?: unknown; rows?: unknown } | null | undefined,
+): GridDims {
+  return {
+    cols: isGridDim(grid?.cols) ? grid.cols : GRID_DEFAULTS.cols,
+    rows: isGridDim(grid?.rows) ? grid.rows : GRID_DEFAULTS.rows,
+  }
+}
+
+/**
+ * A valid grid placement on the cols x rows grid: 1-based integers, the
+ * span fits the grid (1 <= w <= cols, 1 <= x <= cols-w+1, 1 <= h <= rows,
+ * 1 <= y <= rows-h+1).
+ */
+export function isValidGeometry(
+  g: unknown,
+  cols = GRID_DEFAULTS.cols,
+  rows = GRID_DEFAULTS.rows,
+): g is TileGeometry {
   if (typeof g !== 'object' || g === null) return false
   const { x, y, w, h } = g as Record<string, unknown>
   return (
@@ -46,7 +73,8 @@ export function isValidGeometry(g: unknown): g is TileGeometry {
     typeof y === 'number' && Number.isInteger(y) &&
     typeof w === 'number' && Number.isInteger(w) &&
     typeof h === 'number' && Number.isInteger(h) &&
-    w >= 1 && w <= GRID_COLS && x >= 1 && x <= GRID_COLS - w + 1 && y >= 1 && h >= 1
+    w >= 1 && w <= cols && x >= 1 && x <= cols - w + 1 &&
+    h >= 1 && h <= rows && y >= 1 && y <= rows - h + 1
   )
 }
 
@@ -56,16 +84,19 @@ export function rectsOverlap(a: TileGeometry, b: TileGeometry): boolean {
 }
 
 /**
- * Repair the raw geometry map to valid, in-bounds, overlap-free entries.
- * Entries are considered in board order (the first tile keeps its
- * placement; a later tile that overlaps an earlier one is dropped back to
- * auto placement). Unknown tile IDs, unknown units (anything that is not
- * a valid {x, y, w, h} object) and out-of-bounds values are dropped.
+ * Repair the raw geometry map to valid, in-bounds, overlap-free entries on
+ * the cols x rows grid. Entries are considered in board order (the first
+ * tile keeps its placement; a later tile that overlaps an earlier one is
+ * dropped back to auto placement). Unknown tile IDs, unknown units
+ * (anything that is not a valid {x, y, w, h} object) and out-of-bounds
+ * values are dropped.
  */
 export function normalizeGeometry(
   raw: unknown,
   order: string[],
   validIds: Set<string>,
+  cols = GRID_DEFAULTS.cols,
+  rows = GRID_DEFAULTS.rows,
 ): Record<string, TileGeometry> {
   const source: Record<string, unknown> =
     typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
@@ -74,7 +105,7 @@ export function normalizeGeometry(
   for (const id of order) {
     if (!validIds.has(id)) continue
     const g = source[id]
-    if (!isValidGeometry(g)) continue
+    if (!isValidGeometry(g, cols, rows)) continue
     const cell = g as TileGeometry
     if (kept.some((k) => rectsOverlap(k, cell))) continue
     kept.push(cell)
@@ -137,14 +168,14 @@ export function haTileState(state: string): string {
 
 /**
  * Repair a raw `views` section (a board file or the API answer) into a
- * valid layout: order is a permutation of the board tile IDs (the four
+ * valid layout on the cols x rows grid: order is a permutation of the board tile IDs (the four
  * view IDs plus every valid ha_tiles id), hidden is a subset of it, sizes
  * are valid steps for the tiles in order (missing = 'm'), calendar_mode
  * is one of the two modes, geometry is repaired to in-bounds and
  * overlap-free placements, and ha_tiles keeps only valid entries.
  * Anything else is repaired, not crashed on.
  */
-export function normalizeViews(views: BoardViews | null): NormalizedViews {
+export function normalizeViews(views: BoardViews | null, grid: GridDims = GRID_DEFAULTS): NormalizedViews {
   const haTiles = normalizeHATiles(views?.ha_tiles)
   const validIds = new Set<string>([...VIEW_IDS, ...haTiles.map((t) => t.id)])
 
@@ -190,7 +221,7 @@ export function normalizeViews(views: BoardViews | null): NormalizedViews {
     sizes[id] = s === 's' || s === 'l' || s === 'xl' ? s : 'm'
   }
 
-  const geometry = normalizeGeometry(views?.geometry, order, validIds)
+  const geometry = normalizeGeometry(views?.geometry, order, validIds, grid.cols, grid.rows)
 
   return { order, hidden, calendar_mode, sizes, geometry, ha_tiles: haTiles }
 }
@@ -199,8 +230,8 @@ export function normalizeViews(views: BoardViews | null): NormalizedViews {
  * (The board file is freehand-editable, so the input is normalized first:
  * this helper is the single source of truth for what renders.)
  */
-export function visibleOrder(views: BoardViews | null): string[] {
-  const v = normalizeViews(views)
+export function visibleOrder(views: BoardViews | null, grid: GridDims = GRID_DEFAULTS): string[] {
+  const v = normalizeViews(views, grid)
   return v.order.filter((id) => !v.hidden.includes(id))
 }
 

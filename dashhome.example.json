@@ -26,6 +26,10 @@
     }
   ],
   "refresh_seconds": 30,
+  "grid": {
+    "cols": 12,
+    "rows": 12
+  },
   "ha_embed": {
     "url_path": null,
     "token_url": false
