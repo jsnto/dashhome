@@ -3,6 +3,7 @@ package calendar
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -192,5 +193,118 @@ func TestGoogleAPIError(t *testing.T) {
 	c, _ := NewGoogle(context.Background(), GoogleSettings{AccessToken: "bad", Endpoint: srv.URL})
 	if _, err := c.ListCalendars(context.Background()); err == nil {
 		t.Error("expected API error")
+	}
+}
+
+// --- Provider (settings resolved on use) ----------------------------------------
+
+func TestModeForPrecedence(t *testing.T) {
+	cases := []struct {
+		s    GoogleSettings
+		want Mode
+	}{
+		{GoogleSettings{}, ModeNone},
+		{GoogleSettings{AccessToken: "x"}, ModeStatic},
+		{GoogleSettings{ServiceAccountFile: "sa.json"}, ModeServiceAcc},
+		{GoogleSettings{ClientID: "id"}, ModeNone}, // a client ID without a secret is nothing
+		{GoogleSettings{ClientID: "id", ClientSecret: "s"}, ModeOAuth},
+		// Several set: the static token wins, then the service account.
+		{GoogleSettings{AccessToken: "x", ServiceAccountFile: "sa.json"}, ModeStatic},
+		{GoogleSettings{AccessToken: "x", ClientID: "id", ClientSecret: "s"}, ModeStatic},
+		{GoogleSettings{ServiceAccountFile: "sa.json", ClientID: "id", ClientSecret: "s"}, ModeServiceAcc},
+	}
+	for _, tc := range cases {
+		if got := ModeFor(tc.s); got != tc.want {
+			t.Errorf("ModeFor(%+v) = %q, want %q", tc.s, got, tc.want)
+		}
+	}
+}
+
+func TestProviderUnconfigured(t *testing.T) {
+	p := NewProvider(func() GoogleSettings { return GoogleSettings{} })
+	if p.Configured() {
+		t.Error("empty settings should be unconfigured")
+	}
+	if p.Mode() != ModeNone {
+		t.Errorf("mode = %q, want none", p.Mode())
+	}
+	if p.HasToken() {
+		t.Error("unconfigured provider should not have a token")
+	}
+	if p.LoginURL() != "" {
+		t.Error("unconfigured provider should have no login URL")
+	}
+	if p.BuildErr() != nil {
+		t.Errorf("build error = %v, want nil", p.BuildErr())
+	}
+	if _, err := p.ListCalendars(context.Background()); !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("ListCalendars err = %v, want ErrNotConfigured", err)
+	}
+	if _, err := p.ListEvents(context.Background(), "c", time.Now(), time.Now()); !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("ListEvents err = %v, want ErrNotConfigured", err)
+	}
+	if err := p.Callback(context.Background(), "code"); !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("Callback err = %v, want ErrNotConfigured", err)
+	}
+}
+
+func TestProviderRebuildsOnSettingsChange(t *testing.T) {
+	var evQuery url.Values
+	srv := fakeGoogle(t, &evQuery)
+	defer srv.Close()
+
+	var s GoogleSettings
+	p := NewProvider(func() GoogleSettings { return s })
+
+	// Unconfigured at first.
+	if p.Configured() {
+		t.Fatal("should start unconfigured")
+	}
+
+	// A static token appears in the effective settings: it takes effect on
+	// the very next use, no rebuild call or restart involved.
+	s = GoogleSettings{AccessToken: "tok", Endpoint: srv.URL}
+	if !p.Configured() || p.Mode() != ModeStatic {
+		t.Fatalf("configured/mode = %v/%q, want true/static", p.Configured(), p.Mode())
+	}
+	if !p.HasToken() {
+		t.Error("static mode should have a token")
+	}
+	if p.BuildErr() != nil {
+		t.Errorf("build error = %v, want nil", p.BuildErr())
+	}
+	if cals, err := p.ListCalendars(context.Background()); err != nil || len(cals) != 2 {
+		t.Fatalf("ListCalendars = %v, %v", cals, err)
+	}
+
+	// A setting change that breaks the build (a missing key file) is
+	// reported at use time as a build error — not a process failure.
+	s = GoogleSettings{ServiceAccountFile: "/nonexistent/sa.json"}
+	if !p.Configured() {
+		t.Error("credentials present: still configured (albeit broken)")
+	}
+	if p.Mode() != ModeServiceAcc {
+		t.Errorf("mode = %q, want service_account", p.Mode())
+	}
+	if p.HasToken() {
+		t.Error("a broken build should not report a token")
+	}
+	if p.BuildErr() == nil {
+		t.Error("want the build error")
+	}
+	if p.LoginURL() != "" {
+		t.Error("a broken build should have no login URL")
+	}
+	if _, err := p.ListCalendars(context.Background()); p.BuildErr() == nil || err == nil {
+		t.Errorf("ListCalendars = %v, %v; want the build error", err, p.BuildErr())
+	}
+
+	// A working setting returns: the stale error is dropped.
+	s = GoogleSettings{AccessToken: "tok-2", Endpoint: srv.URL}
+	if p.BuildErr() != nil {
+		t.Errorf("build error = %v, want nil after restore", p.BuildErr())
+	}
+	if _, err := p.ListCalendars(context.Background()); err != nil {
+		t.Errorf("ListCalendars after restore: %v", err)
 	}
 }

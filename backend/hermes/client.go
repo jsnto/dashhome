@@ -40,27 +40,29 @@ type Chatter interface {
 
 // Client is the HTTP implementation of Chatter.
 type Client struct {
-	BaseURL   string // e.g. https://hermes.example.com
-	ChatPath  string // e.g. /chat/completions
-	AuthName  string // request header name to send ("" = none)
-	AuthValue string // full header value, e.g. "Bearer sk-..."
-	HTTP      *http.Client
+	// Settings resolves the effective (base URL, chat path, auth header
+	// name, auth header value) on every chat call, so a value changed in
+	// the settings UI takes effect without a restart. NewClient wraps a
+	// fixed quadruple.
+	Settings func() (baseURL, chatPath, authName, authValue string)
+	HTTP     *http.Client
 }
 
-// NewClient builds a Hermes chat client.
+// NewClient builds a Hermes chat client with fixed settings.
 func NewClient(baseURL, chatPath, authName, authValue string) *Client {
-	if chatPath == "" {
-		chatPath = "/chat/completions"
-	}
-	if !strings.HasPrefix(chatPath, "/") {
-		chatPath = "/" + chatPath
-	}
 	return &Client{
-		BaseURL:   strings.TrimRight(baseURL, "/"),
-		ChatPath:  chatPath,
-		AuthName:  authName,
-		AuthValue: authValue,
-		HTTP:      &http.Client{Timeout: 60 * time.Second},
+		Settings: func() (string, string, string, string) { return baseURL, chatPath, authName, authValue },
+		HTTP:     &http.Client{Timeout: 60 * time.Second},
+	}
+}
+
+// NewClientSettings builds a Hermes chat client whose settings resolve on
+// every chat call (the settings UI > environment precedence is applied
+// live, no restart needed).
+func NewClientSettings(settings func() (baseURL, chatPath, authName, authValue string)) *Client {
+	return &Client{
+		Settings: settings,
+		HTTP:     &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -84,9 +86,17 @@ type chatCompletionsChoice struct {
 
 // Chat POSTs the request to Hermes and returns the reply text.
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, error) {
-	u, err := url.Parse(c.BaseURL + c.ChatPath)
+	baseURL, chatPath, authName, authValue := c.Settings()
+	if chatPath == "" {
+		chatPath = "/chat/completions"
+	}
+	if !strings.HasPrefix(chatPath, "/") {
+		chatPath = "/" + chatPath
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	u, err := url.Parse(baseURL + chatPath)
 	if err != nil {
-		return "", fmt.Errorf("invalid hermes URL %q: %w", c.BaseURL, err)
+		return "", fmt.Errorf("invalid hermes URL %q: %w", baseURL, err)
 	}
 
 	// OpenAI chat-completions body: conversation history (oldest first)
@@ -103,8 +113,8 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, error) {
 		return "", err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if c.AuthName != "" && c.AuthValue != "" {
-		httpReq.Header.Set(c.AuthName, c.AuthValue)
+	if authName != "" && authValue != "" {
+		httpReq.Header.Set(authName, authValue)
 	}
 
 	resp, err := c.HTTP.Do(httpReq)

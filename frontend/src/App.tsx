@@ -20,6 +20,7 @@ import HAPanel from './components/HAPanel'
 import HATile from './components/HATile'
 import PushPanel from './components/PushPanel'
 import SettingsPanel from './components/SettingsPanel'
+import TileEditModal from './components/TileEditModal'
 import {
   autoLayout,
   clampCell,
@@ -97,6 +98,8 @@ export default function App() {
   // The width/height a user is typing into a tile's size fields, if any:
   // { id, w, h } as raw input strings, committed on Enter/blur.
   const [sizeDraft, setSizeDraft] = useState<{ id: string; w: string; h: string } | null>(null)
+  // The tile whose settings modal is open (the per-tile edit button), if any.
+  const [editingTile, setEditingTile] = useState<string | null>(null)
 
   // The board's effective tile grid (cols x rows units): the board file's
   // board.grid repaired to valid dimensions, defaulting to 12x12. Every
@@ -559,6 +562,15 @@ export default function App() {
                   </span>
                   <button
                     type="button"
+                    className="tile-edit-open"
+                    title={`Edit ${tileName(id)} settings`}
+                    aria-label={`Edit ${tileName(id)} tile settings`}
+                    onClick={() => setEditingTile(id)}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
                     className="tile-remove"
                     title="Remove this tile from the board"
                     aria-label={`Remove ${tileName(id)} tile`}
@@ -589,6 +601,17 @@ export default function App() {
         )}
       </main>
 
+      {editingTile && visible.includes(editingTile) && (
+        <TileEditModal
+          id={editingTile}
+          views={views}
+          entities={entities}
+          haOff={haOff}
+          onClose={() => setEditingTile(null)}
+          onBoard={(board: ApiBoard) => setCfg((c) => (c ? { ...c, board } : c))}
+        />
+      )}
+
       {showSettings && (
         <SettingsPanel
           cfg={cfg}
@@ -597,6 +620,7 @@ export default function App() {
           views={views}
           grid={grid}
           onBoard={(board: ApiBoard) => setCfg((c) => (c ? { ...c, board } : c))}
+          onIntegrations={(integrations) => setCfg((c) => (c ? { ...c, integrations } : c))}
           onClose={() => setShowSettings(false)}
         />
       )}

@@ -301,6 +301,26 @@ body {
   color: var(--accent);
 }
 
+/* the edit-mode settings affordance: opens the tile's settings modal
+   (the type-specific options for that tile, saved through the same
+   board-views path as the settings screen). */
+.tile-edit-open {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tile-edit-open:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* the edit-mode remove affordance: one press drops the tile from the
    board (a Home Assistant tile leaves views.ha_tiles, a built-in view is
    hidden — the tile's entity/data are never touched). No confirm: the
@@ -385,6 +405,9 @@ body {
 }
 
 .ha-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   padding: 10px 14px;
   font-size: 14px;
   font-weight: 600;
@@ -394,6 +417,12 @@ body {
   color: var(--bg);
   cursor: pointer;
   align-self: flex-start;
+}
+
+/* the switch's state icon (the power glyph, slashed while off) */
+.ha-action svg {
+  flex: none;
+  display: block;
 }
 
 .ha-action:disabled {
@@ -609,6 +638,40 @@ body {
   max-width: 760px;
 }
 
+/* the per-tile settings modal: a small dialog over the live board (above
+   the settings overlay's z-index, so it can sit over a tile). A click on
+   the backdrop (outside the card) closes it. */
+.tile-modal-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.tile-modal {
+  width: 100%;
+  max-width: 460px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+
+.tile-modal-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.tile-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 /* the settings page: a left sidebar menu and one active section. The card
    sits on the .settings-wrap backdrop; a click on the backdrop (outside the
    card) closes the page. */
@@ -810,6 +873,30 @@ body {
   display: flex;
   align-items: center;
   gap: 7px;
+}
+
+/* the service-settings field rows (settings UI > .env > default): the
+   status pill (secret fields), the input, and the clear affordance */
+.service-field-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.service-input {
+  width: 280px;
+  max-width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--text);
+}
+
+.service-input:focus {
+  border-color: var(--accent);
 }
 
 .settings-interval-unit {

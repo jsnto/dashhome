@@ -54,6 +54,8 @@ func (f *fakeGoogle) ListEvents(ctx context.Context, id string, start, end time.
 }
 
 func (f *fakeGoogle) Mode() calendar.Mode                             { return calendar.ModeOAuth }
+func (f *fakeGoogle) Configured() bool                                { return true }
+func (f *fakeGoogle) BuildErr() error                                 { return nil }
 func (f *fakeGoogle) HasToken() bool                                  { return f.hasToken }
 func (f *fakeGoogle) LoginURL() string                                { return f.loginURL }
 func (f *fakeGoogle) Callback(ctx context.Context, code string) error { return nil }
@@ -180,6 +182,14 @@ func cfgFor(t *testing.T) *config.Config {
 			},
 		},
 	}
+}
+
+// haCfgFor returns cfgFor with Home Assistant configured in the
+// environment (for handlers that require a configured HA client).
+func haCfgFor(t *testing.T) *config.Config {
+	cfg := cfgFor(t)
+	cfg.HAURL, cfg.HAToken = "https://ha.local", "tok"
+	return cfg
 }
 
 func testTime(s string) time.Time {
@@ -988,7 +998,7 @@ func TestPutConfigViewsGeometryHATilesInvalid(t *testing.T) {
 
 func TestHAServiceCall(t *testing.T) {
 	f := &fakeHA{states: []ha.EntityState{{EntityID: "light.kitchen", State: "on"}}}
-	r := newServer(t, cfgFor(t), nil, f, f, nil, nil)
+	r := newServer(t, haCfgFor(t), nil, f, f, nil, nil)
 
 	for _, tc := range []struct {
 		action string
@@ -1020,7 +1030,7 @@ func TestHAServiceCall(t *testing.T) {
 
 func TestHAServiceCallInvalidAction(t *testing.T) {
 	f := &fakeHA{}
-	r := newServer(t, cfgFor(t), nil, f, f, nil, nil)
+	r := newServer(t, haCfgFor(t), nil, f, f, nil, nil)
 
 	// A free-form service or data payload is refused: only the fixed
 	// allowlist of standard actions is offered.
@@ -1055,7 +1065,7 @@ func TestHAServiceCallNotConfigured(t *testing.T) {
 
 func TestHAServiceCallUnknownEntity(t *testing.T) {
 	f := &fakeHA{svcErr: fmt.Errorf("%w: no such entity", ha.ErrEntityNotFound)}
-	r := newServer(t, cfgFor(t), nil, f, f, nil, nil)
+	r := newServer(t, haCfgFor(t), nil, f, f, nil, nil)
 
 	w := do(r, "POST", "/api/ha/service", map[string]any{"entity_id": "light.nope", "action": "toggle"}, nil)
 	if w.Code != http.StatusNotFound {
@@ -1076,7 +1086,7 @@ func TestHAServiceCallUnknownEntity(t *testing.T) {
 
 func TestHAServiceCallUpstreamError(t *testing.T) {
 	f := &fakeHA{svcErr: errors.New("home assistant returned status 500: boom")}
-	r := newServer(t, cfgFor(t), nil, f, f, nil, nil)
+	r := newServer(t, haCfgFor(t), nil, f, f, nil, nil)
 
 	w := do(r, "POST", "/api/ha/service", map[string]any{"entity_id": "light.kitchen", "action": "toggle"}, nil)
 	if w.Code != http.StatusBadGateway {
@@ -1471,6 +1481,7 @@ func TestHAEntitiesAll(t *testing.T) {
 		{EntityID: "binary_sensor.door", State: "off", Attributes: map[string]any{"friendly_name": "Front door"}},
 	}
 	cfg := cfgFor(t)
+	cfg.HAURL, cfg.HAToken = "https://ha.local", "tok"
 	cfg.Board.HAEntityIDs = nil // no filter
 	r := newServer(t, cfg, nil, &fakeHA{states: states}, nil, nil, nil)
 	w := do(r, "GET", "/api/ha/entities", nil, nil)
@@ -1511,6 +1522,7 @@ func TestHAEntitiesFiltered(t *testing.T) {
 		{EntityID: "sensor.ignored", State: "x"},
 	}
 	cfg := cfgFor(t)
+	cfg.HAURL, cfg.HAToken = "https://ha.local", "tok"
 	cfg.Board.HAEntityIDs = []string{"binary_sensor.door", "climate.thermo", "sensor.missing"}
 	r := newServer(t, cfg, nil, &fakeHA{states: states}, nil, nil, nil)
 	w := do(r, "GET", "/api/ha/entities", nil, nil)
@@ -1783,7 +1795,9 @@ func TestHermesChatNotConfigured(t *testing.T) {
 
 func TestHermesChatEmptyMessage(t *testing.T) {
 	h := &fakeHermes{reply: "x"}
-	r := newServer(t, cfgFor(t), nil, nil, nil, h, nil)
+	cfg := cfgFor(t)
+	cfg.HermesBaseURL = "https://hermes.local"
+	r := newServer(t, cfg, nil, nil, nil, h, nil)
 	w := do(r, "POST", "/api/hermes/chat", map[string]string{"message": "  "}, nil)
 	if w.Code != 400 {
 		t.Fatalf("code = %d", w.Code)
@@ -2097,4 +2111,419 @@ func mustStore(t *testing.T) *store.FileStore {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// --- service settings (GET/PUT /api/config/services) ---------------------------
+
+func TestGetConfigServices(t *testing.T) {
+	t.Setenv("HOMEASSISTANT_URL", "https://env.local")
+	t.Setenv("HOMEASSISTANT_TOKEN", "env-ha-secret")
+	t.Setenv("HERMES_BASE_URL", "https://env.hermes")
+	t.Setenv("HERMES_AUTH_VALUE", "env-hermes-secret")
+	t.Setenv("HERMES_PUSH_TOKEN", "env-push-secret")
+	t.Setenv("GOOGLE_CLIENT_ID", "env-client")
+	t.Setenv("GOOGLE_CLIENT_SECRET", "env-google-secret")
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	board := `{"services":{
+		"homeassistant":{"url":"https://ui.local","token":"ui-ha-secret"},
+		"hermes_chat":{"auth_value":"ui-hermes-secret"},
+		"hermes_push":{"token":"ui-push-secret"},
+		"google":{"client_secret":"ui-google-secret"}
+	}}`
+	if err := os.WriteFile(file, []byte(board), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
+
+	w := do(r, "GET", "/api/config/services", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+
+	// The non-secret fields expose the UI value and the environment
+	// fallback.
+	var resp struct {
+		Services config.ServicesView `json:"services"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Services.HomeAssistant.URL.Value != "https://ui.local" ||
+		resp.Services.HomeAssistant.URL.Fallback != "https://env.local" {
+		t.Errorf("HA url = %+v", resp.Services.HomeAssistant.URL)
+	}
+	if resp.Services.HermesChat.BaseURL.Value != "" ||
+		resp.Services.HermesChat.BaseURL.Fallback != "https://env.hermes" {
+		t.Errorf("hermes base url = %+v", resp.Services.HermesChat.BaseURL)
+	}
+
+	// The secret fields expose only the set booleans.
+	if f := resp.Services.HomeAssistant.Token; f.Value != "" || f.Fallback != "" || !f.Set || !f.FallbackSet {
+		t.Errorf("HA token = %+v, want masked with set+fallbackSet", f)
+	}
+	if f := resp.Services.HermesChat.AuthValue; f.Value != "" || f.Fallback != "" || !f.Set || !f.FallbackSet {
+		t.Errorf("hermes auth value = %+v, want masked with set+fallbackSet", f)
+	}
+	if f := resp.Services.HermesPush.Token; !f.Set || !f.FallbackSet {
+		t.Errorf("push token = %+v, want set+fallbackSet", f)
+	}
+
+	// None of the secret strings ride the wire.
+	for _, s := range []string{"env-ha-secret", "ui-ha-secret", "env-hermes-secret", "ui-hermes-secret", "env-push-secret", "ui-push-secret", "env-google-secret", "ui-google-secret"} {
+		if strings.Contains(body, s) {
+			t.Errorf("body leaked secret %q", s)
+		}
+	}
+}
+
+func TestPutConfigServices(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"refresh_seconds": 30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	t.Setenv("DATA_DIR", t.TempDir())
+	t.Setenv("HOMEASSISTANT_URL", "https://env.local")
+	t.Setenv("HOMEASSISTANT_TOKEN", "")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
+
+	// Set the HA url + token and the push token; everything else is left
+	// untouched.
+	w := do(r, "PUT", "/api/config/services", map[string]any{
+		"homeassistant": map[string]any{"url": "https://ui.local", "token": "ui-ha-tok"},
+		"hermes_push":   map[string]any{"token": "ui-push"},
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	var resp struct {
+		Board        *config.Board       `json:"board"`
+		Services     config.ServicesView `json:"services"`
+		Integrations map[string]any      `json:"integrations"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Board == nil || resp.Board.RefreshSeconds != 30 {
+		t.Errorf("board not echoed: %+v", resp.Board)
+	}
+	if len(resp.Integrations) != 4 {
+		t.Errorf("integrations = %v, want 4 rows", resp.Integrations)
+	}
+	if resp.Services.HomeAssistant.URL.Value != "https://ui.local" || resp.Services.HomeAssistant.URL.Fallback != "https://env.local" {
+		t.Errorf("HA url after PUT = %+v", resp.Services.HomeAssistant.URL)
+	}
+	if f := resp.Services.HomeAssistant.Token; f.Value != "" || f.Fallback != "" || !f.Set || f.FallbackSet {
+		t.Errorf("HA token after PUT = %+v, want masked and UI-set only", f)
+	}
+	// The secret answer carries no value.
+	if f := resp.Services.HermesPush.Token; f.Value != "" || !f.Set {
+		t.Errorf("push token after PUT = %+v, want masked and set", f)
+	}
+	for _, s := range []string{"ui-push", "ui-ha-tok"} {
+		if strings.Contains(body, s) {
+			t.Errorf("PUT body leaked the stored secret %q", s)
+		}
+	}
+
+	// The value landed in the board file, alongside the other fields.
+	data, _ := os.ReadFile(file)
+	var b config.Board
+	if err := json.Unmarshal(data, &b); err != nil {
+		t.Fatal(err)
+	}
+	if b.RefreshSeconds != 30 {
+		t.Errorf("board file: other fields not preserved: %+v", b)
+	}
+	if b.Services == nil || b.Services.HomeAssistant == nil || b.Services.HomeAssistant.URL != "https://ui.local" || b.Services.HomeAssistant.Token != "ui-ha-tok" ||
+		b.Services.HermesPush == nil || b.Services.HermesPush.Token != "ui-push" {
+		t.Errorf("board file services = %+v (%s)", b.Services, data)
+	}
+
+	// The effective settings resolve the UI value: a reload-free,
+	// restart-free change is observable in the running server.
+	if url, tok := cfg.HASettings(); url != "https://ui.local" || tok != "ui-ha-tok" {
+		t.Errorf("effective HA = (%q, %q), want the UI values", url, tok)
+	}
+	if tok := cfg.PushTokenEffective(); tok != "ui-push" {
+		t.Errorf("effective push token = %q, want ui-push", tok)
+	}
+}
+
+func TestPutConfigServicesClearsToEnvFallback(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"services":{"homeassistant":{"url":"https://ui.local"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	t.Setenv("DATA_DIR", t.TempDir())
+	t.Setenv("HOMEASSISTANT_URL", "https://env.local")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if url, _ := cfg.HASettings(); url != "https://ui.local" {
+		t.Fatalf("setup: effective url = %q, want the UI value", url)
+	}
+
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
+	w := do(r, "PUT", "/api/config/services", map[string]any{
+		"homeassistant": map[string]any{"url": ""},
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	if url, _ := cfg.HASettings(); url != "https://env.local" {
+		t.Errorf("effective url = %q, want the env fallback after clearing", url)
+	}
+	var resp struct {
+		Services config.ServicesView `json:"services"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if f := resp.Services.HomeAssistant.URL; f.Set || f.Value != "" {
+		t.Errorf("cleared field = %+v, want unset (env fallback only)", f)
+	}
+}
+
+func TestPutConfigServicesNoBoardFile(t *testing.T) {
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
+	w := do(r, "PUT", "/api/config/services", map[string]any{
+		"hermes_push": map[string]any{"token": "x"},
+	}, nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code = %d, want 503: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "no_board_file" {
+		t.Errorf("error = %q, want no_board_file", resp["error"])
+	}
+}
+
+func TestPutConfigServicesBadBody(t *testing.T) {
+	r := newServer(t, cfgFor(t), nil, nil, nil, nil, nil)
+	// A non-string field value is refused (the board file is strictly
+	// parsed).
+	w := do(r, "PUT", "/api/config/services", map[string]any{
+		"homeassistant": map[string]any{"url": 42},
+	}, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	// An unknown group is ignored, like any unknown JSON field: the known
+	// groups are still applied.
+	w = do(r, "PUT", "/api/config/services", map[string]any{"carrier_pigeon": map[string]any{"token": "x"}}, nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unknown-only body on a boardless server: code = %d, want 503 no_board_file: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPutConfigServicesIgnoresUnknownGroups(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
+	w := do(r, "PUT", "/api/config/services", map[string]any{
+		"carrier_pigeon": map[string]any{"token": "x"},
+		"hermes_push":    map[string]any{"token": "ui-push"},
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	if tok := cfg.PushTokenEffective(); tok != "ui-push" {
+		t.Errorf("push token = %q, want the known group applied", tok)
+	}
+	data, _ := os.ReadFile(file)
+	if strings.Contains(string(data), "carrier_pigeon") {
+		t.Errorf("unknown group persisted: %s", data)
+	}
+}
+
+// A restart-free setting change takes effect on the next request: the
+// push token exists only in the UI settings, the environment is empty.
+func TestPushAuthorizedByUISettingsOnly(t *testing.T) {
+	t.Setenv("HERMES_PUSH_TOKEN", "")
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	if err := os.WriteFile(file, []byte(`{"services":{"hermes_push":{"token":"ui-push"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	t.Setenv("DATA_DIR", t.TempDir())
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok := cfg.PushTokenEffective(); tok != "ui-push" {
+		t.Fatalf("effective push token = %q, want ui-push", tok)
+	}
+	if cfg.PushToken != "" {
+		t.Fatal("setup: env push token must be empty (the UI value is the only source)")
+	}
+	r := newServer(t, cfg, nil, nil, nil, nil, nil)
+	w := do(r, "POST", "/api/hermes/push", pushJSON("hello", "watchdog"), map[string]string{"Authorization": "Bearer ui-push"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	// The wrong token is still refused.
+	w = do(r, "POST", "/api/hermes/push", pushJSON("hello", "watchdog"), map[string]string{"Authorization": "Bearer wrong"})
+	if w.Code != 401 {
+		t.Fatalf("code = %d, want 401", w.Code)
+	}
+}
+
+// Home Assistant configured purely through the UI settings (empty env)
+// serves data without a restart.
+func TestHAEntitiesWithUISettingsOnly(t *testing.T) {
+	t.Setenv("HOMEASSISTANT_URL", "")
+	t.Setenv("HOMEASSISTANT_TOKEN", "")
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	board := `{"services":{"homeassistant":{"url":"https://ui.local","token":"ui-tok"}}}`
+	if err := os.WriteFile(file, []byte(board), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	t.Setenv("DATA_DIR", t.TempDir())
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeHA{states: []ha.EntityState{{EntityID: "climate.thermo", State: "21"}}}
+	r := newServer(t, cfg, nil, f, f, nil, nil)
+
+	w := do(r, "GET", "/api/ha/entities", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Entities []map[string]any `json:"entities"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil || len(resp.Entities) != 1 {
+		t.Fatalf("resp = %+v (%v)", resp, err)
+	}
+
+	// Clearing the UI values switches the same running server back to
+	// 503 without a restart.
+	if w := do(r, "PUT", "/api/config/services", map[string]any{
+		"homeassistant": map[string]any{"url": "", "token": ""},
+	}, nil); w.Code != 200 {
+		t.Fatalf("PUT: %d: %s", w.Code, w.Body.String())
+	}
+	w = do(r, "GET", "/api/ha/entities", nil, nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("after clear: code = %d, want 503", w.Code)
+	}
+}
+
+// Hermes chat configured purely through the UI settings (empty env).
+func TestHermesChatWithUISettingsOnly(t *testing.T) {
+	t.Setenv("HERMES_BASE_URL", "")
+	t.Setenv("HERMES_AUTH_VALUE", "")
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	board := `{"services":{"hermes_chat":{"base_url":"https://ui.hermes","auth_value":"ui-key"}}}`
+	if err := os.WriteFile(file, []byte(board), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	t.Setenv("DATA_DIR", t.TempDir())
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &fakeHermes{reply: "hi"}
+	r := newServer(t, cfg, nil, nil, nil, h, nil)
+
+	w := do(r, "POST", "/api/hermes/chat", map[string]string{"message": "hello"}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Reply string `json:"reply"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Reply != "hi" {
+		t.Errorf("reply = %q", resp.Reply)
+	}
+}
+
+// Google Calendar served through the live provider: the credential mode
+// comes from the effective settings (UI value, empty env), and an
+// unconfigured provider answers 503 instead of 404.
+func TestGoogleCalendarViaProviderUISettingsOnly(t *testing.T) {
+	for _, k := range []string{"GOOGLE_ACCESS_TOKEN", "GOOGLE_API_ENDPOINT", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"} {
+		t.Setenv(k, "")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/users/me/calendarList":
+			json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{"id": "a@x.com", "summary": "A"}}})
+		case r.URL.Path == "/calendars/a@x.com/events":
+			json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	// Unconfigured provider: 503 (not 404) and no login URL.
+	empty := &config.Config{}
+	r := newServer(t, empty, calendar.NewProvider(func() config.GoogleConfig { return config.GoogleConfig{} }), nil, nil, nil, nil)
+	if w := do(r, "GET", "/api/calendars", nil, nil); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unconfigured: code = %d, want 503: %s", w.Code, w.Body.String())
+	}
+	if w := do(r, "GET", "/api/auth/google/login", nil, nil); w.Code != http.StatusBadRequest {
+		t.Fatalf("login unconfigured: code = %d, want 400: %s", w.Code, w.Body.String())
+	}
+
+	// Configured through the UI settings only: static token mode against
+	// the fake endpoint, no restart.
+	dir := t.TempDir()
+	file := filepath.Join(dir, "dashhome.json")
+	board := fmt.Sprintf(`{"services":{"google":{"access_token":"ui-ya29","endpoint":%q}}}`, srv.URL)
+	if err := os.WriteFile(file, []byte(board), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", file)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = newServer(t, cfg, calendar.NewProvider(cfg.GoogleSettings), nil, nil, nil, nil)
+	w := do(r, "GET", "/api/calendars", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Calendars []map[string]any `json:"calendars"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Calendars) != 1 {
+		t.Fatalf("calendars = %v", resp.Calendars)
+	}
 }

@@ -22,9 +22,17 @@ import (
 	"github.com/jsnto/dashhome/backend/store"
 )
 
-// GoogleAPI is the surface of the Google client the API needs.
+// GoogleAPI is the surface of the Google client the API needs. The
+// production implementation is *calendar.Provider (settings resolve on
+// use); a built *calendar.GoogleClient satisfies it too.
 type GoogleAPI interface {
 	calendar.Client
+	// Configured reports whether the effective settings select a
+	// credential mode (a nil *Provider or unconfigured settings: false).
+	Configured() bool
+	// BuildErr reports the last build failure of the effective settings
+	// (an unreadable service-account key, a missing OAuth redirect URI).
+	BuildErr() error
 	Mode() calendar.Mode
 	HasToken() bool
 	LoginURL() string
@@ -59,6 +67,8 @@ func (s *Server) Engine() *gin.Engine {
 	api.PUT("/config/refresh", s.putConfigRefresh)
 	api.PUT("/config/grid", s.putConfigGrid)
 	api.PUT("/config/views", s.putConfigViews)
+	api.GET("/config/services", s.getConfigServices)
+	api.PUT("/config/services", s.putConfigServices)
 	api.GET("/calendars", s.listCalendars)
 	api.GET("/events", s.listEvents)
 	api.GET("/ha/entities", s.haEntities)
@@ -92,14 +102,19 @@ func fail(c *gin.Context, status int, code, detail string) {
 }
 
 // requireGoogle fails the request (and reports false) when Google Calendar
-// is not configured or not authorized yet.
+// is not configured, its credentials fail to build, or it is not
+// authorized yet.
 func (s *Server) requireGoogle(c *gin.Context) bool {
-	if s.google == nil {
+	if s.google == nil || !s.google.Configured() {
 		fail(c, http.StatusServiceUnavailable, "google_not_configured",
-			"set GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET, or GOOGLE_ACCESS_TOKEN")
+			"set Google Calendar credentials (service account key, OAuth client credentials, or a static access token) in the settings UI or .env")
 		return false
 	}
 	if !s.google.HasToken() {
+		if err := s.google.BuildErr(); err != nil {
+			fail(c, http.StatusServiceUnavailable, "google_unavailable", err.Error())
+			return false
+		}
 		fail(c, http.StatusServiceUnavailable, "google_login_required",
 			"visit "+s.google.LoginURL()+" to authorize dashhome")
 		return false
@@ -112,17 +127,23 @@ func (s *Server) requireGoogle(c *gin.Context) bool {
 // boardJSON is the board as the config endpoints expose it: the stored
 // board with its views normalized (defaults filled in), so clients can rely
 // on board.views being a complete, valid layout even when the board file
-// sets no views at all.
+// sets no views at all. The services section is deliberately excluded:
+// it carries secrets and has its own masked surface (GET
+// /api/config/services), so it never rides along the board surface.
 func (s *Server) boardJSON() config.Board {
 	board := s.cfg.BoardSnapshot()
 	views := s.cfg.ViewConfig()
 	board.Views = &views
+	board.Services = nil
 	return board
 }
 
-func (s *Server) getConfig(c *gin.Context) {
+// integrationsJSON is the per-integration status of GET /api/config (and
+// the service-settings save answer): booleans and the Google login state
+// only — no secret values.
+func (s *Server) integrationsJSON() gin.H {
 	google := gin.H{"configured": false}
-	if s.google != nil {
+	if s.google != nil && s.google.Configured() {
 		loginURL := s.google.LoginURL()
 		google = gin.H{
 			"configured":     true,
@@ -131,14 +152,63 @@ func (s *Server) getConfig(c *gin.Context) {
 			"login_url":      loginURL,
 		}
 	}
+	return gin.H{
+		"homeassistant": s.cfg.HAConfigured(),
+		"google":        google,
+		"hermes_chat":   s.cfg.HermesConfigured(),
+		"hermes_push":   s.cfg.PushConfigured(),
+	}
+}
+
+func (s *Server) getConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"board": s.boardJSON(),
-		"integrations": gin.H{
-			"homeassistant": s.cfg.HAConfigured(),
-			"google":        google,
-			"hermes_chat":   s.cfg.HermesConfigured(),
-			"hermes_push":   s.cfg.PushConfigured(),
-		},
+		"board":        s.boardJSON(),
+		"integrations": s.integrationsJSON(),
+	})
+}
+
+// getConfigServices returns the service settings for the settings screen:
+// per field the UI-set value, the environment fallback (for the UI's
+// placeholder), and whether each layer is set. Secret fields (tokens and
+// credentials) never carry a value — only the set booleans — so a secret
+// set in the UI or in .env is acknowledged but never displayed.
+func (s *Server) getConfigServices(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"services": s.cfg.ServicesView()})
+}
+
+// putConfigServices persists a partial service-settings update to the
+// board file (board.services): each group omitted keeps its current
+// values; within a group, each field omitted (or null) keeps its value,
+// an empty string clears the UI value (back to the environment fallback /
+// documented default), and a non-empty string sets it. The effective
+// settings (UI > env > default) resolve on use, so a saved value takes
+// effect without a restart. The answer carries the updated board, the
+// masked service view (for the UI to re-seed), and the integration status.
+// Same exposure as the other config endpoints: the dashboard itself has
+// no login; the board file is the local settings store (the same trust
+// boundary as the .env values it overrides).
+func (s *Server) putConfigServices(c *gin.Context) {
+	var u config.ServicesUpdate
+	if err := c.ShouldBindJSON(&u); err != nil {
+		fail(c, http.StatusBadRequest, "bad_request",
+			`body must be JSON with optional homeassistant / google / hermes_chat / hermes_push objects of string fields; an empty string clears a field (back to the .env fallback)`)
+		return
+	}
+	if err := s.cfg.SetServices(&u); err != nil {
+		status := http.StatusBadRequest
+		code := "bad_services"
+		if errors.Is(err, config.ErrNoBoardFile) {
+			status, code = http.StatusServiceUnavailable, "no_board_file"
+		} else if errors.Is(err, config.ErrBoardFileNotWritable) {
+			status, code = http.StatusServiceUnavailable, "board_file_not_writable"
+		}
+		fail(c, status, code, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"board":        s.boardJSON(),
+		"services":     s.cfg.ServicesView(),
+		"integrations": s.integrationsJSON(),
 	})
 }
 
@@ -400,9 +470,9 @@ type apiEntity struct {
 }
 
 func (s *Server) haEntities(c *gin.Context) {
-	if s.ha == nil {
+	if s.ha == nil || !s.cfg.HAConfigured() {
 		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
-			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN")
+			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN in the settings UI or .env")
 		return
 	}
 	states, err := s.ha.GetStates(c.Request.Context())
@@ -475,9 +545,9 @@ var haServiceAllowlist = map[string]string{
 // HA is {"entity_id": ...} for an allowlisted action; no HA secret
 // appears in the request or the response.
 func (s *Server) haServiceCall(c *gin.Context) {
-	if s.haSvc == nil {
+	if s.haSvc == nil || !s.cfg.HAConfigured() {
 		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
-			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN")
+			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN in the settings UI or .env")
 		return
 	}
 	var req struct {
@@ -515,12 +585,13 @@ func (s *Server) haServiceCall(c *gin.Context) {
 // the frontend never has to assemble it (and never sees the token except in
 // this deliberately narrow response, when token_url is enabled).
 func (s *Server) haEmbedURL(c *gin.Context) {
-	if s.ha == nil {
+	if s.ha == nil || !s.cfg.HAConfigured() {
 		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
-			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN")
+			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN in the settings UI or .env")
 		return
 	}
-	u, err := url.Parse(s.cfg.HAURL)
+	baseURL, token := s.cfg.HASettings()
+	u, err := url.Parse(baseURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
 			"HOMEASSISTANT_URL is not a valid URL")
@@ -537,7 +608,7 @@ func (s *Server) haEmbedURL(c *gin.Context) {
 	u.RawQuery = ""
 	if embed != nil && embed.TokenURL {
 		q := u.Query()
-		q.Set("auth_long_lived", s.cfg.HAToken)
+		q.Set("auth_long_lived", token)
 		u.RawQuery = q.Encode()
 	}
 	c.JSON(http.StatusOK, gin.H{"url": u.String()})
@@ -548,9 +619,9 @@ func (s *Server) haEmbedURL(c *gin.Context) {
 // haDashboards lists the instance's dashboards (metadata only). ?reload=1
 // bypasses the server-side TTL cache.
 func (s *Server) haDashboards(c *gin.Context) {
-	if s.haDash == nil {
+	if s.haDash == nil || !s.cfg.HAConfigured() {
 		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
-			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN")
+			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN in the settings UI or .env")
 		return
 	}
 	list, err := s.haDash.ListDashboards(c.Request.Context(), reloadRequested(c))
@@ -570,9 +641,9 @@ func (s *Server) haDashboards(c *gin.Context) {
 // ?reload=1 bypasses the server-side TTL cache. Read-only: nothing here
 // writes to Home Assistant.
 func (s *Server) haDashboardConfig(c *gin.Context) {
-	if s.haDash == nil {
+	if s.haDash == nil || !s.cfg.HAConfigured() {
 		fail(c, http.StatusServiceUnavailable, "homeassistant_not_configured",
-			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN")
+			"set HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN in the settings UI or .env")
 		return
 	}
 	path := ha.NormalizeURLPath(c.Param("path"))
@@ -592,8 +663,8 @@ func reloadRequested(c *gin.Context) bool {
 // --- Hermes chat ----------------------------------------------------------
 
 func (s *Server) hermesChat(c *gin.Context) {
-	if s.hermes == nil {
-		fail(c, http.StatusServiceUnavailable, "hermes_not_configured", "set HERMES_BASE_URL")
+	if s.hermes == nil || !s.cfg.HermesConfigured() {
+		fail(c, http.StatusServiceUnavailable, "hermes_not_configured", "set HERMES_BASE_URL in the settings UI or .env")
 		return
 	}
 	var req hermes.ChatRequest
@@ -622,7 +693,7 @@ type pushRequest struct {
 
 func (s *Server) hermesPush(c *gin.Context) {
 	if !s.cfg.PushConfigured() {
-		fail(c, http.StatusServiceUnavailable, "push_not_configured", "set HERMES_PUSH_TOKEN to enable pushes")
+		fail(c, http.StatusServiceUnavailable, "push_not_configured", "set HERMES_PUSH_TOKEN in the settings UI or .env to enable pushes")
 		return
 	}
 	if !s.pushAuthorized(c) {
@@ -648,7 +719,7 @@ func (s *Server) hermesPush(c *gin.Context) {
 }
 
 func (s *Server) pushAuthorized(c *gin.Context) bool {
-	want := s.cfg.PushToken
+	want := s.cfg.PushTokenEffective()
 	var got string
 	if h := c.GetHeader("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		got = strings.TrimPrefix(h, "Bearer ")

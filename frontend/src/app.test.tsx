@@ -1565,6 +1565,111 @@ describe('app: Home Assistant board tiles', () => {
   })
 })
 
+describe('app: per-tile settings modal', () => {
+  const modalViews = {
+    order: ['calendar', 'chat', 'home', 'push', 'ha-lamp'],
+    hidden: [],
+    calendar_mode: 'month' as const,
+    sizes: { calendar: 'm', chat: 'm', home: 'm', push: 'm' } as Partial<Record<string, TileSize>>,
+    ha_tiles: [{ id: 'ha-lamp', entity: 'light.living_room', kind: 'button', label: 'Lamp' }],
+  }
+  const lampEntities = [
+    { entity_id: 'light.living_room', label: 'Living room', friendly: 'Living room light', state: 'off', attributes: {} },
+  ]
+
+  const dialog = () => document.querySelector('.tile-modal') as HTMLElement
+
+  /** The modal's field inputs (the entity picker is a combobox, not a
+   *  textbox; the aria-label is the stable handle). */
+  const modalInput = (name: string): HTMLInputElement => {
+    const el = document.querySelector(`.tile-modal input[aria-label="${name}"]`)
+    expect(el).toBeTruthy()
+    return el as HTMLInputElement
+  }
+
+  it('opens from the edit-mode button and saves the HA tile settings', async () => {
+    const { board } = stubBoardServer(modalViews, upcomingEvents(), lampEntities)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(5))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Lamp tile settings' }))
+    const d = await screen.findByRole('dialog')
+
+    // The type-specific HA options, seeded from the tile.
+    const entityInput = modalInput('Home Assistant entity')
+    expect(entityInput.value).toBe('light.living_room')
+    const labelInput = modalInput('Tile label')
+    expect(labelInput.value).toBe('Lamp')
+    expect(within(d).getByRole('button', { name: 'Button' }).getAttribute('aria-pressed')).toBe('true')
+
+    // Switch the kind and edit the label, then save through the
+    // board-views path (the replaced ha_tiles list, as the settings
+    // screen persists it).
+    fireEvent.click(within(d).getByRole('button', { name: 'Visual' }))
+    fireEvent.change(labelInput, { target: { value: 'Hall lamp' } })
+    fireEvent.click(within(d).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(dialog()).toBeNull())
+    expect(board.views?.ha_tiles).toEqual([
+      { id: 'ha-lamp', entity: 'light.living_room', kind: 'visual', label: 'Hall lamp' },
+    ])
+    // The board tile adopts the new kind (the visual tile shows the state).
+    const lamp = document.querySelector('[data-win="ha-lamp"]') as HTMLElement
+    await waitFor(() => expect(lamp.querySelector('.ha-state')).toBeTruthy())
+  })
+
+  it("saves a view tile's size step and the calendar view mode", async () => {
+    const { board } = stubBoardServer(modalViews, upcomingEvents(), lampEntities)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(5))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Calendar tile settings' }))
+    const d = await screen.findByRole('dialog')
+    // The calendar's type-specific options: the size step and the view mode.
+    expect(within(d).getByRole('button', { name: 'Medium' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(within(d).getByRole('button', { name: 'Large' }))
+    fireEvent.click(within(d).getByRole('button', { name: 'Schedule summary' }))
+    fireEvent.click(within(d).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(dialog()).toBeNull())
+
+    const v = board.views as { sizes?: Record<string, string>; calendar_mode?: string } | null
+    expect(v?.sizes?.calendar).toBe('l')
+    expect(v?.calendar_mode).toBe('schedule')
+    await waitFor(() => expect(tileSize('calendar')).toBe('l'))
+  })
+
+  it('offers only the size step for a view without its own options', async () => {
+    const { calls } = stubBoardServer(modalViews, upcomingEvents(), lampEntities)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(5))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Hermes chat tile settings' }))
+    const d = await screen.findByRole('dialog')
+    // No calendar-mode options, no HA fields — only the size step.
+    expect(within(d).queryByRole('button', { name: 'Schedule summary' })).toBeNull()
+    expect(within(d).queryByLabelText('Home Assistant entity')).toBeNull()
+    expect(within(d).getByRole('button', { name: 'Medium' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(within(d).getByRole('button', { name: 'Cancel' }))
+    expect(dialog()).toBeNull()
+    expect(calls.filter((c) => c.startsWith('PUT'))).toHaveLength(0)
+  })
+
+  it('closes from Escape without saving', async () => {
+    const { calls } = stubBoardServer(modalViews, upcomingEvents(), lampEntities)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(5))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Calendar tile settings' }))
+    await screen.findByRole('dialog')
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(dialog()).toBeNull()
+    expect(calls.filter((c) => c.startsWith('PUT'))).toHaveLength(0)
+  })
+})
+
 describe('app: narrow fallback with stored placements', () => {
   it('stacks the tiles (stored placements suspended) on a narrow viewport', async () => {
     stubNarrow(true)
