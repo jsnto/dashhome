@@ -40,7 +40,8 @@ tiles — to/from the main screen, reorder them, and switch the Calendar
 tile between the month grid and a schedule summary of upcoming events;
 persisted to `dashhome.json`), a Home Assistant section (add or remove the
 HA board tiles — a button or visual tile bound to one entity each, picked
-from `GET /api/ha/entities`; persisted to `dashhome.json` as
+from `GET /api/ha/entities`; a new tile is placed by default at the first
+free 2 × 2 cell of the board's unit grid; persisted to `dashhome.json` as
 `views.ha_tiles`), a read-only summary of
 which integrations are actually configured (including the full-dashboard
 embed settings), the board grid dimensions (how many units wide and tall the
@@ -52,7 +53,11 @@ set from numeric fields on the tile, tiles can be dragged by their grip to
 another cell (or resized by dragging the corner handle — every move snaps to
 the grid, and overlaps and drops off the board are refused and the tile
 snaps back); move and resize are pointer drags, and the width and height
-fields are keyboard-operable; placements are persisted to
+fields are keyboard-operable; each tile's edit row also carries a remove
+control (one press, no confirm — a Home Assistant tile leaves
+`views.ha_tiles`, a built-in view is hidden; the tile's entity and data are
+never touched, and the tile can be added back from the settings screen);
+placements and removals are persisted to
 `dashhome.json` the same way (the tile set and order are managed from the
 settings screen).
 
@@ -184,7 +189,10 @@ returned.
 the settings screen's Home Assistant section (or by hand in `views.ha_tiles`
 below): each tile binds to exactly one entity and is either a **button**
 tile (fires the board's allowlisted `toggle` action — the API also
-accepts `turn_on`/`turn_off`, on any entity domain) or a **visual**
+accepts `turn_on`/`turn_off`, on any entity domain; the toggle button
+wears the switch's current state — a dark button offering *Turn off*
+while the entity is on, a bright button offering *Turn on* while it is
+off, kept in sync with the tile's state polling) or a **visual**
 tile (shows the entity's current state). Entity states are polled by the browser while a
 HA tile is visible — never stored, and the token stays on the server;
 the only write path to HA is `POST /api/ha/service` with the allowlisted

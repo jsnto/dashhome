@@ -4,6 +4,7 @@ import type {
   ApiBoard,
   ApiConfig,
   GridDims,
+  HABoardTile,
   NormalizedViews,
   TileGeometry,
   ViewId,
@@ -186,11 +187,14 @@ export default function App() {
       ]
     : []
 
-  // Persist a board-views geometry patch through the guarded write path;
-  // the server's answer (the saved, re-normalized layout) is adopted.
-  // One in-flight layout save at a time.
+  // Persist a board-views patch through the guarded write path (the same
+  // PUT /api/config/views save the geometry changes go through); the
+  // server's answer (the saved, re-normalized layout) is adopted. One
+  // in-flight layout save at a time.
   const commitViews = (patch: {
+    hidden?: string[]
     geometry?: Record<string, TileGeometry | null>
+    ha_tiles?: HABoardTile[]
   }) => {
     if (!cfg) return
     api
@@ -210,6 +214,24 @@ export default function App() {
   const toggleEditMode = () => {
     if (!editMode) setMaximized(null)
     setEditMode(!editMode)
+  }
+
+  // Edit mode's per-tile remove control: a single press drops the tile
+  // from the board (no confirm — a removed tile can be added back from
+  // Settings), persisted through the same board-views save path as the
+  // geometry changes. A Home Assistant tile is dropped from views.ha_tiles
+  // (only the board's reference goes — its entity and data are untouched);
+  // a built-in view is hidden (it keeps its stored placement, so re-showing
+  // it from Settings restores the tile). The server re-normalizes the
+  // order/hidden/geometry around the new set.
+  const removeTile = (id: string) => {
+    if (savingSize) return
+    if (!isViewId(id)) {
+      commitViews({ ha_tiles: views.ha_tiles.filter((t) => t.id !== id) })
+      return
+    }
+    if (views.hidden.includes(id)) return
+    commitViews({ hidden: [...views.hidden, id] })
   }
 
   // Type a width or height (in grid units) into a tile's size field; the
@@ -535,6 +557,16 @@ export default function App() {
                       }}
                     />
                   </span>
+                  <button
+                    type="button"
+                    className="tile-remove"
+                    title="Remove this tile from the board"
+                    aria-label={`Remove ${tileName(id)} tile`}
+                    disabled={savingSize}
+                    onClick={() => removeTile(id)}
+                  >
+                    ✕
+                  </button>
                 </div>
               )}
               {winNode(id)}

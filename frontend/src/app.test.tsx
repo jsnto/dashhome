@@ -594,6 +594,52 @@ describe('app: tile edit mode', () => {
     expect(calEl.querySelector('.tile-grip')).toBeTruthy()
     // The corner resize handle is on every visible tile.
     expect(document.querySelectorAll('.tile-resize')).toHaveLength(3)
+    // The remove control is on every visible tile (the hidden tile gets none).
+    const removes = screen.getAllByRole('button', { name: /^Remove .* tile$/ })
+    expect(removes.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Remove Calendar tile',
+      'Remove Hermes chat tile',
+      'Remove Home tile',
+    ])
+  })
+
+  it('removes a built-in view by hiding it: a single press, persisted to the board file', async () => {
+    const { board, calls } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toEqual(['calendar', 'chat', 'home', 'push']))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Calendar tile' }))
+
+    // The removal PUTs the hidden set through the board-views save path
+    // (no confirm dialog; one press)…
+    await waitFor(() => expect(calls).toContain('PUT /api/config/views'))
+    expect(board.views?.hidden).toEqual(['calendar'])
+    // …the tile leaves the board, and its board-file entry survives (a
+    // hidden view can be re-shown from Settings, placement intact).
+    await waitFor(() => expect(tileWins()).toEqual(['chat', 'home', 'push']))
+    expect(board.views?.order).toEqual(['calendar', 'chat', 'home', 'push'])
+  })
+
+  it('removes an already-hidden view without a second hidden entry', async () => {
+    const { board, calls } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: ['push'],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toEqual(['calendar', 'chat', 'home']))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Home tile' }))
+
+    await waitFor(() => expect(calls).toContain('PUT /api/config/views'))
+    expect(board.views?.hidden).toEqual(['push', 'home'])
+    await waitFor(() => expect(tileWins()).toEqual(['calendar', 'chat']))
   })
 
   it('a numeric width change persists to the board file and round-trips to the tile', async () => {
@@ -1429,6 +1475,61 @@ describe('app: Home Assistant board tiles', () => {
     const lamp = document.querySelector('[data-win="ha-lamp"]') as HTMLElement
     expect(lamp.style.gridColumn).toBe('1 / span 2')
     expect(lamp.style.gridRow).toBe('3 / span 1')
+  })
+
+  it('removes an HA tile by dropping it from ha_tiles (the entity data is untouched)', async () => {
+    const { board, calls } = stubBoardServer(haViews, upcomingEvents(), haEntities)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(6))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    // The remove control is named from the tile's display label.
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Lamp tile' }))
+
+    // The removal PUTs the replaced ha_tiles list (the same full-replacement
+    // the settings screen uses) through the board-views save path…
+    await waitFor(() => expect(calls).toContain('PUT /api/config/views'))
+    expect(board.views?.ha_tiles).toEqual([
+      { id: 'ha-temp', entity: 'sensor.living_room_temperature', kind: 'visual', label: 'Temp' },
+    ])
+    // …the tile leaves the board (single press, no confirm), and the entity
+    // list still serves the removed tile's entity (removal touches the view,
+    // not the entity).
+    await waitFor(() => expect(tileWins()).toEqual([
+      'calendar',
+      'chat',
+      'home',
+      'push',
+      'ha-temp',
+    ]))
+  })
+
+  it('the HA tile toggle wears the switch\'s state: dark when on, bright when off', async () => {
+    // Fresh entity states: the shared fixture's lamp was already toggled
+    // by the action test above (its service handler mutates the list).
+    const freshEntities = [{ ...haEntities[0], state: 'on' }, haEntities[1]]
+    const { haServiceCalls } = stubBoardServer(haViews, upcomingEvents(), freshEntities)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(6))
+
+    // The lamp reports on: the button reads "Turn off" and wears the on
+    // (dark) state style.
+    const lamp = document.querySelector('[data-win="ha-lamp"]') as HTMLElement
+    const onBtn = await screen.findByRole('button', { name: 'Turn off' })
+    expect(onBtn.className).toContain('ha-action-on')
+    expect(onBtn.className).not.toContain('ha-action-off')
+
+    // Toggling re-polls the state; off now reads "Turn on" and wears the
+    // off (bright) state style — the button keeps its state styling in
+    // sync through the tile's state refresh.
+    fireEvent.click(onBtn)
+    await waitFor(() => expect(haServiceCalls).toEqual([
+      { entity_id: 'light.living_room', action: 'toggle' },
+    ]))
+    const offBtn = await screen.findByRole('button', { name: 'Turn on' })
+    expect(offBtn).toBe(lamp.querySelector('.ha-action'))
+    expect(offBtn.className).toContain('ha-action-off')
+    expect(offBtn.className).not.toContain('ha-action-on')
   })
 })
 

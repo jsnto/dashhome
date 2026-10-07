@@ -55,6 +55,12 @@ export default function HATile({ tile, entity, haOff, onService }: Props) {
           ? 'Turn off'
           : 'Turn on'
         : 'Toggle'
+  // The switch's current state, when the entity reports an on/off one: the
+  // button's styling wears it (kept in sync through the tile's existing
+  // state refresh) — ON reads dark and offers the turn-off, OFF reads
+  // bright and offers the turn-on. Any other state keeps the neutral fill.
+  const stateOn = entity?.state === 'on'
+  const stateOff = entity?.state === 'off'
 
   return (
     <section className={`card ha-card ha-${tile.kind}`}>
@@ -69,7 +75,17 @@ export default function HATile({ tile, entity, haOff, onService }: Props) {
           </p>
         ) : null}
         {tile.kind === 'button' ? (
-          <button className="ha-action" disabled={actionDisabled} onClick={() => run('toggle')}>
+          <button
+            className={[
+              'ha-action',
+              stateOn ? 'ha-action-on' : '',
+              stateOff ? 'ha-action-off' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            disabled={actionDisabled}
+            onClick={() => run('toggle')}
+          >
             {actionLabel}
           </button>
         ) : (

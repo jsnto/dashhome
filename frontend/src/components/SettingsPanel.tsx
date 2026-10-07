@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type PointerEvent } from 'react'
 import { ApiError, api, type HAEntity } from '../api'
 import { emitRefreshSeconds } from '../refreshBus'
-import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, GridDims, HABoardTile, HAKind } from '../types'
+import type {
+  ApiBoard,
+  ApiConfig,
+  BoardViews,
+  CalendarMode,
+  GridDims,
+  HABoardTile,
+  HAKind,
+  TileGeometry,
+} from '../types'
 import { VIEW_IDS } from '../types'
 import type { Theme } from '../theme'
 import {
@@ -13,6 +22,7 @@ import {
   normalizeGrid,
   normalizeViews,
 } from '../utils'
+import { NEW_TILE_DEFAULT_SIZE, firstFreeCell } from '../tileGrid'
 
 interface Props {
   cfg: ApiConfig | null
@@ -373,9 +383,13 @@ function TilesSection({
  */
 function HASection({
   views,
+  grid,
   onBoard,
 }: {
   views: BoardViews
+  /** The board's effective tile grid (cols x rows units): the new tile's
+   *  default 2x2 placement is computed on these dimensions. */
+  grid: GridDims
   onBoard?: (board: ApiBoard) => void
 }) {
   const [tiles, setTiles] = useState<HABoardTile[]>(views.ha_tiles ?? [])
@@ -410,16 +424,20 @@ function HASection({
     }
   }, [])
 
-  // Persist the full ha_tiles list (the endpoint replaces the list); the
+  // Persist the full ha_tiles list (the endpoint replaces the list),
+  // optionally together with the new tile's default placement; the
   // server re-normalizes the order/hidden/geometry around the new set.
-  const persist = (next: HABoardTile[]) => {
+  const persist = (next: HABoardTile[], geometry?: Record<string, TileGeometry | null>) => {
     if (busy) return
     const before = tiles
     setBusy(true)
     setErr(null)
     setTiles(next)
     api
-      .setViews({ ha_tiles: next })
+      .setViews({
+        ha_tiles: next,
+        ...(geometry ? { geometry } : {}),
+      })
       .then((board) => {
         onBoard?.(board)
         setEntity('')
@@ -432,10 +450,29 @@ function HASection({
       .finally(() => setBusy(false))
   }
 
+  // The new tile's default placement: a 2x2 cell on the board's grid, the
+  // first one (in reading order) that is free of the board's effective
+  // layout (the stored placements plus the auto flow, hidden tiles
+  // included). A grid too small for the span, or a board with no free
+  // cell, leaves the tile to auto placement (no geometry in the save).
   const add = () => {
     const entityId = entity.trim()
     if (entityId === '' || haOff) return
-    persist([...tiles, { id: nextHATileId(tiles), entity: entityId, ...(label.trim() !== '' ? { label: label.trim() } : {}), kind }])
+    const id = nextHATileId(tiles)
+    const nv = normalizeViews(views, grid)
+    const cell = firstFreeCell(
+      nv.order,
+      nv.sizes,
+      nv.geometry,
+      NEW_TILE_DEFAULT_SIZE.w,
+      NEW_TILE_DEFAULT_SIZE.h,
+      grid.cols,
+      grid.rows,
+    )
+    persist(
+      [...tiles, { id, entity: entityId, ...(label.trim() !== '' ? { label: label.trim() } : {}), kind }],
+      cell ? { [id]: cell } : undefined,
+    )
   }
 
   const remove = (id: string) => {
@@ -714,7 +751,7 @@ export default function SettingsPanel({
 
             {section === 'tiles' && <TilesSection views={views} grid={grid} onBoard={onBoard} />}
 
-            {section === 'ha' && <HASection views={views} onBoard={onBoard} />}
+            {section === 'ha' && <HASection views={views} grid={grid} onBoard={onBoard} />}
 
             {section === 'services' && (
               <section className="settings-section">

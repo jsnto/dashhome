@@ -721,8 +721,12 @@ describe('settings: Home Assistant section', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add tile' }))
 
     await waitFor(() => expect(calls.length).toBe(1))
+    // The new tile defaults to a 2x2 cell: the first one (reading order)
+    // free of the board's effective layout (the default 2x2 flow of medium
+    // tiles fills rows 1-2, so (1,3)).
     expect(calls[0].body).toEqual({
       ha_tiles: [{ id: 'ha-1', entity: 'light.kitchen', kind: 'button' }],
+      geometry: { 'ha-1': { x: 1, y: 3, w: 2, h: 2 } },
     })
     // The save answer lands: the row shows the new tile.
     await waitFor(() => expect(document.querySelectorAll('.ha-row')).toHaveLength(1))
@@ -767,13 +771,48 @@ describe('settings: Home Assistant section', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add tile' }))
 
     await waitFor(() => expect(calls.length).toBe(1))
+    // The new tile's 2x2 default lands beside the first tile's auto flow:
+    // rows 1-2 are the default medium flow, ha-1 flows to (1,3), so the
+    // first free 2x2 cell is (7,3).
     expect(calls[0].body).toEqual({
       ha_tiles: [
         { id: 'ha-1', entity: 'light.kitchen', kind: 'button' },
         { id: 'ha-2', entity: 'sensor.temperature', kind: 'visual', label: 'Temp' },
       ],
+      geometry: { 'ha-2': { x: 7, y: 3, w: 2, h: 2 } },
     })
     await waitFor(() => expect(document.querySelectorAll('.ha-row')).toHaveLength(2))
+  })
+
+  it('leaves the new tile auto-placed when the grid is too small for the 2x2 default', async () => {
+    const board: ApiBoard = {
+      ha_entities: [],
+      ha_labels: {},
+      calendars: [],
+      refresh_seconds: 30,
+      views: {
+        order: ['calendar', 'chat', 'home', 'push'],
+        hidden: [],
+        calendar_mode: 'month',
+        sizes: { ...defaultSizes },
+      },
+    }
+    const { calls } = stubViewsApi(board, [entity])
+    renderPanel({ views: board.views ?? undefined, grid: { cols: 1, rows: 1 } })
+    go('Home Assistant')
+
+    await screen.findByText('Kitchen')
+    const input = within(content()).getByRole('combobox', { name: 'Home Assistant entity' }) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'light.kitchen' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add tile' }))
+
+    // No 2x2 cell can fit the 1x1 grid: the save carries the tile only
+    // (no geometry), so the server's auto placement applies.
+    await waitFor(() => expect(calls.length).toBe(1))
+    expect(calls[0].body).toEqual({
+      ha_tiles: [{ id: 'ha-1', entity: 'light.kitchen', kind: 'button' }],
+    })
+    expect(calls[0].body).not.toHaveProperty('geometry')
   })
 
   it('removes a tile (the list is a full replacement)', async () => {

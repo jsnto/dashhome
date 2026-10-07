@@ -10,6 +10,12 @@
   --warn: #ffb84c;
   --err: #ff6b81;
   --radius: 14px;
+  /* the HA toggle button's state colors (dark theme): the switch ON reads
+     as a dark button, the switch OFF as a bright one */
+  --ha-toggle-on-bg: #0a0f1a;
+  --ha-toggle-on-fg: #e6ebf5;
+  --ha-toggle-off-bg: #f2f6fd;
+  --ha-toggle-off-fg: #101623;
 }
 
 /* light theme: every color in the app flows through these variables */
@@ -25,6 +31,11 @@
   --good: #2e9e44;
   --warn: #a8620a;
   --err: #d63b56;
+  /* the HA toggle button's state colors (light theme) */
+  --ha-toggle-on-bg: #101623;
+  --ha-toggle-on-fg: #f2f6fd;
+  --ha-toggle-off-bg: #ffffff;
+  --ha-toggle-off-fg: #101623;
 }
 
 :root[data-theme='dark'] {
@@ -290,6 +301,32 @@ body {
   color: var(--accent);
 }
 
+/* the edit-mode remove affordance: one press drops the tile from the
+   board (a Home Assistant tile leaves views.ha_tiles, a built-in view is
+   hidden — the tile's entity/data are never touched). No confirm: the
+   tile can be added back from the settings screen. */
+.tile-remove {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tile-remove:hover:not(:disabled) {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.tile-remove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .board[data-edit] .tile-grip:active {
   cursor: grabbing;
 }
@@ -362,6 +399,22 @@ body {
 .ha-action:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* the button tile's toggle wears the switch's current state: ON (dark,
+   offering the turn-off) and OFF (bright, offering the turn-on); the
+   accent fill stays for a state that is neither. The per-theme tokens
+   keep both readings legible in either theme. */
+.ha-action.ha-action-on {
+  background: var(--ha-toggle-on-bg);
+  border-color: var(--ha-toggle-on-bg);
+  color: var(--ha-toggle-on-fg);
+}
+
+.ha-action.ha-action-off {
+  background: var(--ha-toggle-off-bg);
+  border-color: var(--ha-toggle-off-bg);
+  color: var(--ha-toggle-off-fg);
 }
 
 .ha-visual {
