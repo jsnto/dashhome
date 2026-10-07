@@ -299,6 +299,14 @@ body {
   grid-column: 1 / -1;
 }
 
+/* scrollable content region inside a card */
+.card-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 
 .card {
   background: var(--bg-card);
