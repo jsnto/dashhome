@@ -33,10 +33,11 @@ type Board struct {
 	// HAEmbed configures the full-dashboard iframe section. Optional;
 	// missing means "embed the default dashboard, no token in the URL".
 	HAEmbed *HAEmbed `json:"ha_embed,omitempty"`
-	// Views configures the dashboard's view layout: which views are shown,
-	// in what order, and how the Calendar view renders. Optional; missing
-	// means the default board (all four views in the original order,
-	// month-grid calendar).
+	// Views configures the dashboard's tile layout: which tiles are shown,
+	// in what order, how the Calendar tile renders, and how big each tile
+	// is. Optional; missing means the default board (all four tiles in the
+	// original order, month-grid calendar, every tile at the default
+	// size).
 	Views *Views `json:"views,omitempty"`
 }
 
@@ -59,14 +60,14 @@ type HAEmbed struct {
 	TokenURL bool `json:"token_url"`
 }
 
-// Views is the dashboard's view layout: which of the four board views are
-// shown, in what order, and how the Calendar view renders.
+// Views is the dashboard's tile layout: which of the four board tiles are
+// shown, in what order, how the Calendar tile renders, and how big each
+// tile is on the board.
 type Views struct {
 	// Order lists the view IDs in board order: the reading order of the
-	// 2x2 layout (main-top, main-bottom, side-top, side-bottom). After
-	// normalization it is always a permutation of the four view IDs, even
-	// for hidden views (they stay in place, so re-showing restores the
-	// position).
+	// tile grid (row by row, left to right). After normalization it is
+	// always a permutation of the four view IDs, even for hidden views
+	// (they stay in place, so re-showing restores the position).
 	Order []string `json:"order"`
 	// Hidden is the set of view IDs hidden from the board (a subset of the
 	// view IDs). A hidden view is not rendered and needs no data polling.
@@ -74,10 +75,14 @@ type Views struct {
 	// CalendarMode is how the Calendar view renders: "month" is the
 	// month grid, "schedule" a chronological list of upcoming events.
 	CalendarMode string `json:"calendar_mode"`
+	// Sizes maps each view ID to its tile size step ("s", "m", "l", "xl":
+	// the column span on the board's 6-column grid). After normalization
+	// it always holds every view ID with a valid step.
+	Sizes map[string]string `json:"sizes"`
 }
 
-// The four board views, in the default board order (the 2x2 layout's
-// reading order: main-top, main-bottom, side-top, side-bottom).
+// The four board views, in the default board order (the tile grid's
+// reading order: row by row, left to right).
 const (
 	ViewCalendar = "calendar"
 	ViewChat     = "chat"
@@ -88,7 +93,18 @@ const (
 	CalendarModeSchedule = "schedule"
 )
 
+// The tile size steps, from smallest to widest. "m" (half the board's
+// width) is the default: four medium tiles form the board's default 2x2.
+const (
+	ViewSizeSmall  = "s"  // a third of the board's width
+	ViewSizeMedium = "m"  // half the board's width (the default)
+	ViewSizeLarge  = "l"  // two thirds of the board's width
+	ViewSizeXLarge = "xl" // the full board width
+)
+
 var viewIDs = []string{ViewCalendar, ViewChat, ViewHome, ViewPush}
+
+var viewSizes = []string{ViewSizeSmall, ViewSizeMedium, ViewSizeLarge, ViewSizeXLarge}
 
 // GoogleConfig carries the Google Calendar credential settings. It is a
 // type alias for calendar.GoogleSettings so the loaded config and the
@@ -320,9 +336,19 @@ func (c *Config) SetRefreshSeconds(n int) error {
 	return nil
 }
 
-// DefaultViews returns the default view layout: all four views in the
-// original board order, none hidden, month-grid calendar. Absent
-// configuration behaves exactly like this.
+// defaultViewSizes returns the default per-tile sizes: every view at the
+// default step ("m").
+func defaultViewSizes() map[string]string {
+	sizes := make(map[string]string, len(viewIDs))
+	for _, id := range viewIDs {
+		sizes[id] = ViewSizeMedium
+	}
+	return sizes
+}
+
+// DefaultViews returns the default tile layout: all four views in the
+// original board order, none hidden, month-grid calendar, every tile at
+// the default size. Absent configuration behaves exactly like this.
 func DefaultViews() Views {
 	order := make([]string, len(viewIDs))
 	copy(order, viewIDs)
@@ -330,14 +356,16 @@ func DefaultViews() Views {
 		Order:        order,
 		Hidden:       []string{},
 		CalendarMode: CalendarModeMonth,
+		Sizes:        defaultViewSizes(),
 	}
 }
 
-// ViewConfig returns the effective view layout: defaults filled in and
+// ViewConfig returns the effective tile layout: defaults filled in and
 // stored values repaired (the board file is a freehand-editable config
 // surface), so the result is always usable — order is a permutation of the
-// four view IDs, hidden holds only known IDs, and calendar_mode is "month"
-// or "schedule". Safe to read while the board mutates.
+// four view IDs, hidden holds only known IDs, calendar_mode is "month"
+// or "schedule", and sizes holds a valid step for every view ID. Safe to
+// read while the board mutates.
 func (c *Config) ViewConfig() Views {
 	c.boardMu.RLock()
 	defer c.boardMu.RUnlock()
@@ -348,10 +376,12 @@ func (c *Config) ViewConfig() Views {
 // effective value), validates them, persists the whole board to the board
 // file, and updates the in-memory board only after the write succeeds, so
 // a failed write leaves the running config (and the file) unchanged.
+// The sizes argument is a per-tile map of the entries to change (view ID
+// to size step); entries the map omits keep their current effective size.
 // Mirrors SetRefreshSeconds: a validation error is returned as-is, and a
 // persistence failure is wrapped in ErrBoardFileNotWritable (an absent
 // board file path is ErrNoBoardFile).
-func (c *Config) SetViews(order, hidden *[]string, mode *string) error {
+func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[string]string) error {
 	if order != nil {
 		if err := checkViewOrder(*order); err != nil {
 			return err
@@ -364,6 +394,11 @@ func (c *Config) SetViews(order, hidden *[]string, mode *string) error {
 	}
 	if mode != nil {
 		if err := checkViewMode(*mode); err != nil {
+			return err
+		}
+	}
+	if sizes != nil {
+		if err := checkViewSizes(*sizes); err != nil {
 			return err
 		}
 	}
@@ -381,6 +416,11 @@ func (c *Config) SetViews(order, hidden *[]string, mode *string) error {
 	}
 	if mode != nil {
 		views.CalendarMode = *mode
+	}
+	if sizes != nil {
+		for id, size := range *sizes {
+			views.Sizes[id] = size
+		}
 	}
 	v := views
 	updated.Views = &v
@@ -441,10 +481,35 @@ func checkViewMode(mode string) error {
 	return nil
 }
 
+func isViewSize(size string) bool {
+	for _, s := range viewSizes {
+		if size == s {
+			return true
+		}
+	}
+	return false
+}
+
+// checkViewSizes reports whether sizes is a per-tile map of known view IDs
+// to valid size steps (an empty map is valid: it changes nothing).
+func checkViewSizes(sizes map[string]string) error {
+	for id, size := range sizes {
+		if !isViewID(id) {
+			return fmt.Errorf("views.sizes keys may only be the view IDs (calendar, chat, home, push)")
+		}
+		if !isViewSize(size) {
+			return fmt.Errorf("views.sizes.%s must be one of s, m, l, xl", id)
+		}
+	}
+	return nil
+}
+
 // normalizeViews fills in defaults and repairs stored values: order becomes
 // a permutation of the four view IDs (known IDs in stored order first,
 // missing IDs appended in default order), hidden keeps only known distinct
-// IDs, and calendar_mode falls back to "month".
+// IDs, calendar_mode falls back to "month", and sizes becomes a complete
+// map of every view ID to a valid step (unknown keys dropped, absent or
+// invalid values fall back to the default step "m").
 func normalizeViews(v *Views) Views {
 	out := DefaultViews()
 	if v == nil {
@@ -474,6 +539,12 @@ func normalizeViews(v *Views) Views {
 	}
 	if v.CalendarMode == CalendarModeSchedule {
 		out.CalendarMode = CalendarModeSchedule
+	}
+	out.Sizes = defaultViewSizes()
+	for id, size := range v.Sizes {
+		if isViewID(id) && isViewSize(size) {
+			out.Sizes[id] = size
+		}
 	}
 	return out
 }

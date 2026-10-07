@@ -168,24 +168,27 @@ func (s *Server) putConfigRefresh(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"board": s.boardJSON()})
 }
 
-// putConfigViews persists part of the view layout (board.views) to the
-// board file: the order of the four views, which are hidden, and how the
-// Calendar view renders. Fields omitted from the request keep their current
-// effective value; each provided field is validated. Same exposure as
-// GET /api/config: the dashboard itself has no login; the board file is
-// deliberately a non-secret config surface.
+// putConfigViews persists part of the tile layout (board.views) to the
+// board file: the order of the four tiles, which are hidden, how the
+// Calendar tile renders, and per-tile size steps. Fields omitted from the
+// request keep their current effective value; each provided field is
+// validated. The sizes argument is a per-tile map (view ID to size step)
+// of the entries to change; entries it omits keep their current size.
+// Same exposure as GET /api/config: the dashboard itself has no login; the
+// board file is deliberately a non-secret config surface.
 func (s *Server) putConfigViews(c *gin.Context) {
 	var req struct {
-		Order        *[]string `json:"order"`
-		Hidden       *[]string `json:"hidden"`
-		CalendarMode *string   `json:"calendar_mode"`
+		Order        *[]string          `json:"order"`
+		Hidden       *[]string          `json:"hidden"`
+		CalendarMode *string            `json:"calendar_mode"`
+		Sizes        *map[string]string `json:"sizes"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, http.StatusBadRequest, "bad_request",
-			`body must be JSON {"order": [...], "hidden": [...], "calendar_mode": "month"|"schedule"}`)
+			`body must be JSON {"order": [...], "hidden": [...], "calendar_mode": "month"|"schedule", "sizes": {view: "s"|"m"|"l"|"xl"}}`)
 		return
 	}
-	if err := s.cfg.SetViews(req.Order, req.Hidden, req.CalendarMode); err != nil {
+	if err := s.cfg.SetViews(req.Order, req.Hidden, req.CalendarMode, req.Sizes); err != nil {
 		status := http.StatusBadRequest
 		code := "bad_views"
 		if errors.Is(err, config.ErrNoBoardFile) {

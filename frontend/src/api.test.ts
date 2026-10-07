@@ -63,6 +63,7 @@ describe('api.setViews', () => {
         order: ['chat', 'calendar', 'home', 'push'],
         hidden: ['push'],
         calendar_mode: 'schedule',
+        sizes: { calendar: 'm', chat: 'm', home: 'm', push: 'm' },
       },
     }
     const fetchMock = vi.fn().mockResolvedValue(
@@ -81,6 +82,38 @@ describe('api.setViews', () => {
     expect(url).toBe('/api/config/views')
     expect(init.method).toBe('PUT')
     expect(JSON.parse(String(init.body))).toEqual({ order: ['chat', 'calendar', 'home', 'push'] })
+  })
+
+  it('PUTs a per-tile size change', async () => {
+    const board: ApiBoard = {
+      ha_entities: [],
+      ha_labels: {},
+      calendars: [],
+      refresh_seconds: 45,
+      views: {
+        order: ['calendar', 'chat', 'home', 'push'],
+        hidden: [],
+        calendar_mode: 'month',
+        sizes: { calendar: 'xl', chat: 'm', home: 'm', push: 'm' },
+      },
+    }
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ board }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const got = await api.setViews({ sizes: { calendar: 'xl' } })
+    expect(got.views?.sizes?.calendar).toBe('xl')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/config/views')
+    expect(init.method).toBe('PUT')
+    // Only the changed tile's size is sent (the server keeps the rest).
+    expect(JSON.parse(String(init.body))).toEqual({ sizes: { calendar: 'xl' } })
   })
 
   it('surfaces backend validation errors as ApiError', async () => {

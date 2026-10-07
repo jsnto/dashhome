@@ -18,15 +18,25 @@ dashhome is a single Go process (Gin) on port **3000** that integrates with
   to. Pushes are recorded durably, the **latest push is always shown** on the
   dashboard, and previous pushes are browsable in tabs (newest first).
 
+The board is a **tile grid**: the four views (calendar, chat, home, push)
+are the tiles, each sized to one of the size steps (small / medium / large /
+full width), and the grid reflows by tile size and by how many tiles are
+shown. Clicking a tile's title fills the board with that tile (click it
+again to restore the grid). A header button toggles the browser's
+full-screen mode.
+
 The dashboard has a **settings screen** (header → *Settings*): light/dark
-theme (persisted per browser, defaults to the OS preference), a Views
-section (show/hide each of the four dashboard views, move them between the
-board's slots, and switch the Calendar view between the month grid and a
+theme (persisted per browser, defaults to the OS preference), a Tiles
+section (add or remove the four dashboard tiles to/from the main screen,
+reorder them, and switch the Calendar tile between the month grid and a
 schedule summary of upcoming events; persisted to `dashhome.json`), a
 read-only summary of which integrations are actually configured (including
 the full-dashboard embed settings), and the live-update
 interval (how often the Hermes push panel polls the backend, persisted to
-`dashhome.json`). A header button toggles the browser's full-screen mode.
+`dashhome.json`). The header's *Edit tiles* toggle switches the board into
+an edit mode, where each tile's size step is changed in place; sizes are
+persisted to `dashhome.json` the same way (the tile's size is edited on the
+board, the tile set and order are managed from the settings screen).
 
 Live updates: the Hermes push panel polls the backend on the configured
 interval; the backend fetches fresh data from each configured service on
@@ -291,7 +301,8 @@ the History tabs open any previous one.
   "views": {
     "order": ["calendar", "chat", "home", "push"],
     "hidden": [],
-    "calendar_mode": "month"
+    "calendar_mode": "month",
+    "sizes": { "calendar": "m", "chat": "m", "home": "m", "push": "m" }
   }
 }
 ```
@@ -318,19 +329,25 @@ dashboard, no token in the URL):
     `GET /api/ha/dashboards`).
   - `token_url` — put the long-lived token in the embed URL (server-side
     only). Default `false`. See the notes above.
-- `views` — the dashboard's view layout (optional; missing = the default
-  board). Also persisted by the settings screen's Views section:
+- `views` — the dashboard's tile layout (optional; missing = the default
+  board). Also persisted by the settings screen's Tiles section (tile set
+  and order) and the board's Edit tiles mode (sizes):
   - `order` — the four view IDs (`calendar`, `chat`, `home`, `push`) in
-    the 2x2 board's reading order (main-top, main-bottom, side-top,
-    side-bottom); the API always returns it as a permutation of the four.
+    the tile grid's reading order (row by row, left to right); the API
+    always returns it as a permutation of the four.
   - `hidden` — the view IDs hidden from the board (a subset of the view
     IDs); a hidden view is not rendered and needs no data polling.
-  - `calendar_mode` — how the Calendar view renders: `"month"` (the
+  - `calendar_mode` — how the Calendar tile renders: `"month"` (the
     month grid) or `"schedule"` (a chronological list of upcoming
     events).
+  - `sizes` — a per-tile map of view ID to size step: `"s"` (a third of
+    the board's width), `"m"` (half, the default), `"l"` (two thirds),
+    or `"xl"` (the full width). Missing/absent entries fall back to
+    `"m"`.
   Hand-edited values are repaired, not rejected: unknown IDs are dropped
-  (missing view IDs re-appear in the default order) and an unknown
-  `calendar_mode` falls back to `"month"`.
+  (missing view IDs re-appear in the default order), an unknown
+  `calendar_mode` falls back to `"month"`, and `sizes` entries with an
+  unknown view ID or an unknown step fall back to the default size.
 
 Path: `CONFIG_FILE` (default `./dashhome.json`).
 
@@ -351,7 +368,7 @@ Path: `CONFIG_FILE` (default `./dashhome.json`).
 | `GET /healthz` | Liveness probe |
 | `GET /api/config` | Dashboard config + integration status (no secrets) |
 | `PUT /api/config/refresh` | `{"refresh_seconds": n}` (5–3600) → persist to `dashhome.json` (the board file must be writable by the backend), `200 {board}` |
-| `PUT /api/config/views` | `{"order": [...], "hidden": [...], "calendar_mode": "month"\|"schedule"}` (any subset of the three fields; omitted fields keep their value) → persist the dashboard's view layout to `dashhome.json` (the board file must be writable by the backend), `400 bad_views` on invalid fields, `503` when the board file is missing or not writable, `200 {board}` |
+| `PUT /api/config/views` | `{"order": [...], "hidden": [...], "calendar_mode": "month"\|"schedule", "sizes": {view: "s"\|"m"\|"l"\|"xl"}}` (any subset of the four fields; omitted fields keep their value, and `sizes` changes only the tiles it lists) → persist the dashboard's tile layout to `dashhome.json` (the board file must be writable by the backend), `400 bad_views` on invalid fields, `503` when the board file is missing or not writable, `200 {board}` |
 | `GET /api/calendars` | Calendar tabs: the configured `calendars` (shown even if the API's calendar list omits them), else every calendar visible to the credentials (labels from config) |
 | `GET /api/events?start=&end=&calendar=` | Events in a range (RFC3339 or `YYYY-MM-DD`); optional `calendar` ID; otherwise all configured calendars (summary) |
 | `GET /api/ha/entities` | Configured entities with current states |

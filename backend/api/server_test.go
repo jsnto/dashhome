@@ -419,9 +419,10 @@ func TestGetConfigViewsDefault(t *testing.T) {
 	var resp struct {
 		Board struct {
 			Views struct {
-				Order        []string `json:"order"`
-				Hidden       []string `json:"hidden"`
-				CalendarMode string   `json:"calendar_mode"`
+				Order        []string          `json:"order"`
+				Hidden       []string          `json:"hidden"`
+				CalendarMode string            `json:"calendar_mode"`
+				Sizes        map[string]string `json:"sizes"`
 			} `json:"views"`
 		} `json:"board"`
 	}
@@ -439,6 +440,10 @@ func TestGetConfigViewsDefault(t *testing.T) {
 	if got.CalendarMode != "month" {
 		t.Errorf("default views.calendar_mode = %q, want month", got.CalendarMode)
 	}
+	if len(got.Sizes) != 4 || got.Sizes["calendar"] != "m" || got.Sizes["chat"] != "m" ||
+		got.Sizes["home"] != "m" || got.Sizes["push"] != "m" {
+		t.Errorf("default views.sizes = %v, want every view at the default step", got.Sizes)
+	}
 }
 
 func TestPutConfigViews(t *testing.T) {
@@ -452,11 +457,13 @@ func TestPutConfigViews(t *testing.T) {
 	cfg.Board.RefreshSeconds = 45
 	r := newServer(t, cfg, nil, nil, nil, nil)
 
-	// Full update: order, hidden, and calendar mode in one request.
+	// Full update: order, hidden, calendar mode, and per-tile sizes in one
+	// request.
 	body := map[string]any{
 		"order":         []string{"chat", "home", "push", "calendar"},
 		"hidden":        []string{"home"},
 		"calendar_mode": "schedule",
+		"sizes":         map[string]string{"calendar": "l", "push": "xl"},
 	}
 	w := do(r, "PUT", "/api/config/views", body, nil)
 	if w.Code != 200 {
@@ -466,9 +473,10 @@ func TestPutConfigViews(t *testing.T) {
 		Board struct {
 			RefreshSeconds int `json:"refresh_seconds"`
 			Views          struct {
-				Order        []string `json:"order"`
-				Hidden       []string `json:"hidden"`
-				CalendarMode string   `json:"calendar_mode"`
+				Order        []string          `json:"order"`
+				Hidden       []string          `json:"hidden"`
+				CalendarMode string            `json:"calendar_mode"`
+				Sizes        map[string]string `json:"sizes"`
 			} `json:"views"`
 		} `json:"board"`
 	}
@@ -481,10 +489,16 @@ func TestPutConfigViews(t *testing.T) {
 	if len(resp.Board.Views.Order) != 4 || resp.Board.Views.Order[0] != "chat" || resp.Board.Views.CalendarMode != "schedule" {
 		t.Errorf("response views = %+v", resp.Board.Views)
 	}
+	// The provided size entries change, the rest keep the default step.
+	if resp.Board.Views.Sizes["calendar"] != "l" || resp.Board.Views.Sizes["push"] != "xl" ||
+		resp.Board.Views.Sizes["chat"] != "m" || resp.Board.Views.Sizes["home"] != "m" {
+		t.Errorf("response views.sizes = %v", resp.Board.Views.Sizes)
+	}
 
 	// Persisted to the board file, other fields preserved.
 	data, _ := os.ReadFile(file)
-	if !strings.Contains(string(data), `"views"`) || !strings.Contains(string(data), `"calendar_mode": "schedule"`) {
+	if !strings.Contains(string(data), `"views"`) || !strings.Contains(string(data), `"calendar_mode": "schedule"`) ||
+		!strings.Contains(string(data), `"calendar": "l"`) || !strings.Contains(string(data), `"push": "xl"`) {
 		t.Errorf("views not written to the board file: %s", data)
 	}
 	if !strings.Contains(string(data), `"refresh_seconds": 45`) {
@@ -505,15 +519,19 @@ func TestPutConfigViews(t *testing.T) {
 	if len(resp.Board.Views.Hidden) != 1 || resp.Board.Views.Hidden[0] != "home" || resp.Board.Views.CalendarMode != "schedule" {
 		t.Errorf("partial update lost hidden/mode: %+v", resp.Board.Views)
 	}
+	if resp.Board.Views.Sizes["calendar"] != "l" || resp.Board.Views.Sizes["push"] != "xl" {
+		t.Errorf("partial update lost sizes: %+v", resp.Board.Views.Sizes)
+	}
 
 	// Visible via GET /api/config.
 	wg := do(r, "GET", "/api/config", nil, nil)
 	var getResp struct {
 		Board struct {
 			Views struct {
-				Order        []string `json:"order"`
-				Hidden       []string `json:"hidden"`
-				CalendarMode string   `json:"calendar_mode"`
+				Order        []string          `json:"order"`
+				Hidden       []string          `json:"hidden"`
+				CalendarMode string            `json:"calendar_mode"`
+				Sizes        map[string]string `json:"sizes"`
 			} `json:"views"`
 		} `json:"board"`
 	}
@@ -521,6 +539,23 @@ func TestPutConfigViews(t *testing.T) {
 	if len(getResp.Board.Views.Order) != 4 || getResp.Board.Views.Order[0] != "push" ||
 		len(getResp.Board.Views.Hidden) != 1 || getResp.Board.Views.CalendarMode != "schedule" {
 		t.Errorf("GET views = %+v", getResp.Board.Views)
+	}
+	if getResp.Board.Views.Sizes["calendar"] != "l" || getResp.Board.Views.Sizes["push"] != "xl" {
+		t.Errorf("GET views.sizes = %v", getResp.Board.Views.Sizes)
+	}
+
+	// Partial update: only one tile's size changes; the other tiles keep
+	// their stored sizes.
+	w = do(r, "PUT", "/api/config/views", map[string]any{
+		"sizes": map[string]string{"chat": "s"},
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("code = %d: %s", w.Code, w.Body.String())
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Board.Views.Sizes["chat"] != "s" || resp.Board.Views.Sizes["calendar"] != "l" ||
+		resp.Board.Views.Sizes["push"] != "xl" || resp.Board.Views.Sizes["home"] != "m" {
+		t.Errorf("sizes-only update = %+v", resp.Board.Views.Sizes)
 	}
 
 	// Clearing the hidden set: an empty array is valid.
@@ -554,6 +589,9 @@ func TestPutConfigViewsInvalid(t *testing.T) {
 		{"hidden-unknown-id", map[string]any{"hidden": []string{"nope"}}},
 		{"hidden-duplicate", map[string]any{"hidden": []string{"push", "push"}}},
 		{"mode-invalid", map[string]any{"calendar_mode": "grid"}},
+		{"sizes-unknown-key", map[string]any{"sizes": map[string]string{"nope": "m"}}},
+		{"sizes-invalid-value", map[string]any{"sizes": map[string]string{"calendar": "giant"}}},
+		{"sizes-mixed-invalid", map[string]any{"sizes": map[string]string{"home": "l", "push": "huge"}}},
 		{"wrong-type-body", "not-json"},
 	}
 	for _, tc := range cases {
@@ -574,6 +612,10 @@ func TestPutConfigViewsInvalid(t *testing.T) {
 	v := cfg.ViewConfig()
 	if len(v.Order) != 4 || v.Order[0] != "calendar" || len(v.Hidden) != 0 || v.CalendarMode != "month" {
 		t.Errorf("state changed by invalid updates: %+v", v)
+	}
+	if len(v.Sizes) != 4 || v.Sizes["calendar"] != "m" || v.Sizes["chat"] != "m" ||
+		v.Sizes["home"] != "m" || v.Sizes["push"] != "m" {
+		t.Errorf("sizes changed by invalid updates: %v", v.Sizes)
 	}
 	data, _ := os.ReadFile(file)
 	if strings.Contains(string(data), `"views"`) {

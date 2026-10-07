@@ -3,7 +3,7 @@ import { ApiError, api } from '../api'
 import { emitRefreshSeconds } from '../refreshBus'
 import type { ApiBoard, ApiConfig, BoardViews, CalendarMode, ViewId } from '../types'
 import type { Theme } from '../theme'
-import { BOARD_SLOT_NAMES, VIEW_LABELS, normalizeViews } from '../utils'
+import { TILE_SIZE_LABELS, VIEW_LABELS, normalizeViews } from '../utils'
 
 interface Props {
   cfg: ApiConfig | null
@@ -16,11 +16,11 @@ interface Props {
   onClose: () => void
 }
 
-type SectionId = 'appearance' | 'views' | 'services' | 'updates'
+type SectionId = 'appearance' | 'tiles' | 'services' | 'updates'
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
-  { id: 'views', label: 'Views' },
+  { id: 'tiles', label: 'Tiles' },
   { id: 'services', label: 'Services' },
   { id: 'updates', label: 'Updates' },
 ]
@@ -73,13 +73,14 @@ function serviceRows(cfg: ApiConfig): {
 }
 
 /**
- * The Views section: show/hide each dashboard view and choose which view
- * goes where on the 2x2 board (board slots in reading order: main top,
- * main bottom, side top, side bottom), plus how the Calendar view renders.
- * Every change is persisted to the board file as it happens (partial
- * updates; the server keeps the fields the request omits).
+ * The Tiles section: which dashboard tiles are on the main screen
+ * (show/hide each of the four), in what board order, and how the Calendar
+ * tile renders. Every change is persisted to the board file as it happens
+ * (partial updates; the server keeps the fields the request omits). Tile
+ * sizes are edited on the board itself (the header's Edit tiles mode),
+ * not here; the current size step is shown per tile.
  */
-function ViewsSection({
+function TilesSection({
   views,
   onBoard,
 }: {
@@ -137,10 +138,10 @@ function ViewsSection({
 
   return (
     <section className="settings-section">
-      <h3>Views</h3>
+      <h3>Tiles</h3>
       <p className="note">
-        Which dashboard windows are shown and where they sit on the board. Changes save
-        immediately.
+        Which dashboard tiles are on the main screen and in what board order. Changes
+        save immediately. Resize a tile in place from the board's Edit tiles mode.
       </p>
       {local.order.map((id, i) => {
         const hidden = local.hidden.includes(id)
@@ -148,7 +149,7 @@ function ViewsSection({
           <div className="view-row" key={id}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="view-name">{VIEW_LABELS[id]}</div>
-              <div className="view-slot">{BOARD_SLOT_NAMES[i]}</div>
+              <div className="view-size">{TILE_SIZE_LABELS[local.sizes[id]]} tile</div>
             </div>
             <div className="view-controls">
               <label className="view-toggle">
@@ -224,7 +225,7 @@ function ViewsSection({
 
 /**
  * The settings page: a left sidebar menu navigating the sections
- * (Appearance, Views, Services, Updates). Stays an overlay over the live
+ * (Appearance, Tiles, Services, Updates). Stays an overlay over the live
  * dashboard; closes from the Close button, a click on the backdrop outside
  * the card, or Escape.
  */
@@ -240,7 +241,7 @@ export default function SettingsPanel({
 
   // The live-update interval, edited here and persisted server-side. The
   // field adopts the config value only while it still holds the value the
-  // config last seeded: the Views section saves refresh the config
+  // config last seeded: the Tiles section's saves refresh the config
   // underneath an open panel (App adopts the answer via onBoard), and
   // that must not clobber an in-progress edit.
   const [seconds, setSeconds] = useState('30')
@@ -364,7 +365,7 @@ export default function SettingsPanel({
               </section>
             )}
 
-            {section === 'views' && <ViewsSection views={views} onBoard={onBoard} />}
+            {section === 'tiles' && <TilesSection views={views} onBoard={onBoard} />}
 
             {section === 'services' && (
               <section className="settings-section">

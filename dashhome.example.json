@@ -27,6 +27,7 @@
   "views": {
     "order": ["calendar", "chat", "home", "push"],
     "hidden": [],
-    "calendar_mode": "month"
+    "calendar_mode": "month",
+    "sizes": { "calendar": "m", "chat": "m", "home": "m", "push": "m" }
   }
 }

@@ -54,7 +54,7 @@ function renderPanel(props: PanelProps = {}) {
 }
 
 /** Navigate the sidebar to a section. */
-function go(section: 'Appearance' | 'Views' | 'Services' | 'Updates') {
+function go(section: 'Appearance' | 'Tiles' | 'Services' | 'Updates') {
   fireEvent.click(screen.getByRole('button', { name: section }))
 }
 
@@ -87,6 +87,8 @@ function disabled(el: HTMLElement): boolean {
 }
 
 /** Stub PUT /api/config/views, echoing the merged layout back as the board. */
+const defaultSizes = { calendar: 'm', chat: 'm', home: 'm', push: 'm' } as const
+
 function stubViewsApi(board: ApiBoard) {
   const calls: { body: unknown }[] = []
   const fetchMock = vi.fn().mockImplementation(async (input: unknown, init?: RequestInit) => {
@@ -98,12 +100,14 @@ function stubViewsApi(board: ApiBoard) {
         order: ['calendar', 'chat', 'home', 'push'],
         hidden: [],
         calendar_mode: 'month',
+        sizes: { ...defaultSizes },
       }
       const merged: BoardViews = {
         ...views,
         order: (body.order as ViewId[]) ?? views.order,
         hidden: body.hidden !== undefined ? (body.hidden as ViewId[]) : views.hidden,
         calendar_mode: (body.calendar_mode as CalendarMode) ?? views.calendar_mode,
+        sizes: { ...defaultSizes, ...(views.sizes ?? {}), ...((body.sizes as object) ?? {}) },
       }
       board.views = merged
       return new Response(JSON.stringify({ board: { ...board, views: merged } }), {
@@ -135,7 +139,7 @@ describe('settings: page and sidebar', () => {
   it('opens on Appearance and navigates the sections from the sidebar', () => {
     renderPanel()
     // The sidebar lists every section.
-    for (const label of ['Appearance', 'Views', 'Services', 'Updates']) {
+    for (const label of ['Appearance', 'Tiles', 'Services', 'Updates']) {
       expect(screen.getByRole('button', { name: label })).toBeTruthy()
     }
     // Appearance is the default section.
@@ -149,8 +153,8 @@ describe('settings: page and sidebar', () => {
     go('Updates')
     expect(screen.getByRole('heading', { name: 'Updates' })).toBeTruthy()
 
-    go('Views')
-    expect(screen.getByRole('heading', { name: 'Views' })).toBeTruthy()
+    go('Tiles')
+    expect(screen.getByRole('heading', { name: 'Tiles' })).toBeTruthy()
   })
 
   it('closes when the user clicks the backdrop outside the card', () => {
@@ -271,9 +275,9 @@ describe('settings: updates interval round-trip', () => {
     const input = screen.getByRole('spinbutton', { name: /refresh interval/i }) as HTMLInputElement
     fireEvent.change(input, { target: { value: '120' } })
 
-    // A views-section save persists and refreshes the config underneath
+    // A tiles-section save persists and refreshes the config underneath
     // the open panel (onBoard adopts the answer as a fresh cfg).
-    go('Views')
+    go('Tiles')
     fireEvent.click(screen.getByRole('button', { name: 'Move Calendar down' }))
     await vi.waitFor(() => expect(signals.board).toBeTruthy())
     // Commit the config refresh (and any field re-seed it triggers)
@@ -349,37 +353,41 @@ describe('settings: updates interval round-trip', () => {
   })
 })
 
-describe('settings: views section', () => {
-  it('lists the four views in order with their board slots, all visible', () => {
+describe('settings: tiles section', () => {
+  it('lists the four tiles in order with their size step, all on the main screen', () => {
     const { calls } = stubViewsApi({ ...fixtureConfig.board })
     renderPanel()
-    go('Views')
+    go('Tiles')
 
     const rows = document.querySelectorAll('.view-row')
     expect(rows).toHaveLength(4)
     const names = [...rows].map((r) => (r.querySelector('.view-name') as HTMLElement).textContent)
     expect(names).toEqual(['Calendar', 'Hermes chat', 'Home', 'Hermes push'])
-    const slots = [...rows].map((r) => (r.querySelector('.view-slot') as HTMLElement).textContent)
-    expect(slots).toEqual(['main top', 'main bottom', 'side top', 'side bottom'])
-    // All visible by default.
+    const sizes = [...rows].map((r) => (r.querySelector('.view-size') as HTMLElement).textContent)
+    expect(sizes).toEqual(['Medium tile', 'Medium tile', 'Medium tile', 'Medium tile'])
+    // All on the main screen by default.
     expect(screen.getAllByText('Visible')).toHaveLength(4)
     // No saves until the user changes something.
     expect(calls).toHaveLength(0)
   })
 
-  it('honors a stored views layout from the board config', () => {
+  it('honors a stored tile layout from the board config', () => {
     stubViewsApi({ ...fixtureConfig.board })
     renderPanel({
       views: {
         order: ['home', 'push', 'calendar', 'chat'],
         hidden: ['chat'],
         calendar_mode: 'schedule',
+        sizes: { calendar: 'm', chat: 's', home: 'l', push: 'xl' },
       },
     })
-    go('Views')
+    go('Tiles')
     const rows = document.querySelectorAll('.view-row')
     const names = [...rows].map((r) => (r.querySelector('.view-name') as HTMLElement).textContent)
     expect(names).toEqual(['Home', 'Hermes push', 'Calendar', 'Hermes chat'])
+    // The stored size steps are shown per tile.
+    const sizes = [...rows].map((r) => (r.querySelector('.view-size') as HTMLElement).textContent)
+    expect(sizes).toEqual(['Large tile', 'Full width tile', 'Medium tile', 'Small tile'])
     expect(screen.getByText('Hidden')).toBeTruthy()
     expect(screen.getAllByText('Visible')).toHaveLength(3)
     // The stored calendar mode is selected.
@@ -390,7 +398,7 @@ describe('settings: views section', () => {
   it('sends the new order when a view is moved up', async () => {
     const { calls, fetchMock } = stubViewsApi({ ...fixtureConfig.board })
     renderPanel()
-    go('Views')
+    go('Tiles')
 
     const up = screen.getByRole('button', { name: 'Move Hermes chat up' })
     expect(disabled(screen.getByRole('button', { name: 'Move Calendar up' }))).toBe(true)
@@ -400,22 +408,23 @@ describe('settings: views section', () => {
     await vi.waitFor(() => expect(calls).toHaveLength(1))
     expect(calls[0].body).toEqual({ order: ['chat', 'calendar', 'home', 'push'] })
 
-    // The row order updates in place (and the slot hints move with it).
+    // The row order updates in place (the size hints are keyed to the
+    // tile, so they move with the row).
     const names = [...document.querySelectorAll('.view-name')].map(
       (n) => (n as HTMLElement).textContent,
     )
     expect(names).toEqual(['Hermes chat', 'Calendar', 'Home', 'Hermes push'])
-    const slots = [...document.querySelectorAll('.view-slot')].map(
+    const sizes = [...document.querySelectorAll('.view-size')].map(
       (n) => (n as HTMLElement).textContent,
     )
-    expect(slots).toEqual(['main top', 'main bottom', 'side top', 'side bottom'])
+    expect(sizes).toEqual(['Medium tile', 'Medium tile', 'Medium tile', 'Medium tile'])
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('sends the new order when a view is moved down and disables the ends', async () => {
     const { calls } = stubViewsApi({ ...fixtureConfig.board })
     renderPanel()
-    go('Views')
+    go('Tiles')
 
     const down = screen.getByRole('button', { name: 'Move Calendar down' })
     fireEvent.click(down)
@@ -435,7 +444,7 @@ describe('settings: views section', () => {
   it('sends the hidden set when a view is hidden or shown again', async () => {
     const { calls } = stubViewsApi({ ...fixtureConfig.board })
     renderPanel()
-    go('Views')
+    go('Tiles')
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Show Hermes push' }))
     await vi.waitFor(() => expect(calls).toHaveLength(1))
@@ -456,7 +465,7 @@ describe('settings: views section', () => {
   it('sends the calendar render mode when the pick changes', async () => {
     const { calls } = stubViewsApi({ ...fixtureConfig.board })
     renderPanel()
-    go('Views')
+    go('Tiles')
 
     expect(screen.getByRole('button', { name: 'Calendar' }).getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(screen.getByRole('button', { name: 'Schedule summary' }))
@@ -482,7 +491,7 @@ describe('settings: views section', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     renderPanel()
-    go('Views')
+    go('Tiles')
 
     fireEvent.click(screen.getByRole('button', { name: 'Move Home up' }))
 

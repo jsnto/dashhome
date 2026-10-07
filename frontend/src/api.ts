@@ -6,6 +6,7 @@ import type {
   CalendarMode,
   ChatMessage,
   Push,
+  TileSize,
   ViewId,
 } from './types'
 
@@ -59,15 +60,21 @@ export const api = {
     }).then((b) => b.board),
 
   /**
-   * Persist part of the view layout (board.views) server-side: the board
-   * order of the four views, which are hidden, and how the Calendar view
-   * renders. Omitted fields keep their current server-side value.
+   * Persist part of the tile layout (board.views) server-side: the board
+   * order of the four tiles, which are hidden, how the Calendar tile
+   * renders, and per-tile size steps (a map of the tiles to resize; tiles
+   * it omits keep their current size). Omitted fields keep their current
+   * server-side value.
    */
-  setViews: (views: { order?: ViewId[]; hidden?: ViewId[]; calendar_mode?: CalendarMode }) =>
-    request<{ board: ApiBoard }>('/config/views', {
-      method: 'PUT',
-      body: JSON.stringify(views),
-    }).then((b) => b.board),
+  setViews: (views: {
+    order?: ViewId[]
+    hidden?: ViewId[]
+    calendar_mode?: CalendarMode
+    sizes?: Partial<Record<ViewId, TileSize>>
+  }) => request<{ board: ApiBoard }>('/config/views', {
+    method: 'PUT',
+    body: JSON.stringify(views),
+  }).then((b) => b.board),
 
   getCalendars: () =>
     request<{ calendars: CalendarInfo[] }>('/calendars').then((b) => b.calendars),
