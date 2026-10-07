@@ -988,6 +988,48 @@ describe('app: tile placement (edit mode)', () => {
     expect(geometryOf(board).push).toBeUndefined()
   })
 
+  it('discards an in-flight drag when edit mode is left mid-drag', async () => {
+    const { board, calls } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    const restoreBox = stubBoardBox()
+
+    const push = document.querySelector('[data-win="push"]') as HTMLElement
+    const grip = push.querySelector('.tile-grip') as HTMLElement
+    // Grab push and drag one row down: the ghost previews (4,3).
+    await act(async () => {
+      firePointer(grip, 'pointerdown', 10, 200)
+    })
+    await act(async () => {
+      firePointer(window, 'pointermove', 10, 200 + PITCH_Y)
+    })
+    expect(push.style.gridRow).toBe('3 / span 1')
+    // A second touch leaves edit mode while the drag is in flight.
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    // The ghost is cleared together with the pointer listeners.
+    expect(push.style.gridRow).toBe('')
+    expect(push.className).not.toContain('dragging')
+    // The first finger releases after the listeners are gone: nothing commits.
+    await act(async () => {
+      firePointer(window, 'pointerup', 10, 200 + PITCH_Y)
+    })
+    // Re-entering edit mode and releasing a pointer commits no stale ghost.
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    await act(async () => {
+      firePointer(window, 'pointerup', 10, 200 + PITCH_Y)
+    })
+    restoreBox()
+
+    expect(calls.filter((c) => c === 'PUT /api/config/views')).toHaveLength(0)
+    expect(geometryOf(board).push).toBeUndefined()
+  })
+
   it('steps the height of an auto-placed tile from its effective cell', async () => {
     const { board } = stubBoardServer({
       order: ['calendar', 'chat', 'home', 'push'],
@@ -1046,6 +1088,28 @@ describe('app: tile placement (edit mode)', () => {
     // A nudge to a free cell still commits.
     fireEvent.click(screen.getByRole('button', { name: 'move Home down' }))
     await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 1, y: 3, w: 3, h: 1 }))
+  })
+
+  it('leaves the board file untouched when a nudge clamps to the current cell', async () => {
+    const { board, calls } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month' as const,
+      geometry: { chat: { x: 4, y: 1, w: 3, h: 1 } },
+    })
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+    // Wait for the stored placement to render (the config has loaded).
+    const chatEl = document.querySelector('[data-win="chat"]') as HTMLElement
+    await waitFor(() => expect(chatEl.style.gridColumn).toBe('4 / span 3'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    // chat is pinned at the top-right corner: up and right both clamp to
+    // the cell it already occupies.
+    fireEvent.click(screen.getByRole('button', { name: 'move Hermes chat up' }))
+    fireEvent.click(screen.getByRole('button', { name: 'move Hermes chat right' }))
+    expect(calls.filter((c) => c === 'PUT /api/config/views')).toHaveLength(0)
+    expect(geometryOf(board).chat).toEqual({ x: 4, y: 1, w: 3, h: 1 })
   })
 
   it('changes a placed tile height with the height stepper', async () => {

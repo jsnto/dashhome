@@ -234,6 +234,7 @@ export default function App() {
       x: Math.max(1, Math.min(GRID_COLS - g.w + 1, g.x + dx)),
       y: Math.max(1, g.y + dy),
     }
+    if (cell.x === g.x && cell.y === g.y) return
     if (dropRefused(id, cell, visible, views.sizes, views.geometry)) return
     setSavingSize(true)
     setLayoutErr(null)
@@ -362,6 +363,12 @@ export default function App() {
       window.removeEventListener('pointercancel', cancel)
     }
   }, [editMode, onDragMove, endDrag])
+
+  useEffect(() => {
+    if (editMode && !narrow) return
+    dragRef.current = null
+    setPreview(null)
+  }, [editMode, narrow])
 
   // Clicking a tile's title (the h2 in .card-head) fills the board with
   // that tile; clicking it again restores the grid. Any board tile can be
