@@ -244,7 +244,9 @@ export default function App() {
   // unplaced tile at the cell it currently renders in.
   const stepHeight = (id: string, delta: number) => {
     if (savingSize) return
-    const cell: TileGeometry = { ...layout[id], h: Math.max(1, layout[id].h + delta) }
+    const h = Math.max(1, layout[id].h + delta)
+    if (h === layout[id].h) return
+    const cell: TileGeometry = { ...layout[id], h }
     if (dropRefused(id, cell, visible, views.sizes, views.geometry)) return
     setSavingSize(true)
     setLayoutErr(null)

@@ -1032,6 +1032,22 @@ describe('app: tile placement (edit mode)', () => {
     await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 1, y: 2, w: 3, h: 1 }))
   })
 
+  it('leaves the board file untouched when shrinking an already-short tile', async () => {
+    const { board, calls } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month' as const,
+    })
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    // push auto-places at h=1: the no-op shrink must not commit a
+    // placement that would pin the flowing tile.
+    fireEvent.click(screen.getByRole('button', { name: 'decrease height of Hermes push' }))
+    expect(calls.filter((c) => c === 'PUT /api/config/views')).toHaveLength(0)
+    expect(geometryOf(board).push).toBeUndefined()
+  })
+
   it('refuses a height step that would overlap a neighbour and keeps the height', async () => {
     const { board, calls } = stubBoardServer({
       order: ['calendar', 'chat', 'home', 'push'],

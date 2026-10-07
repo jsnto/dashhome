@@ -355,15 +355,17 @@ dashboard, no token in the URL):
   board). Also persisted by the settings screen's Tiles section (tile set,
   order, Home Assistant tiles) and the board's Edit tiles mode (sizes,
   positions):
-  - `order` — the four view IDs (`calendar`, `chat`, `home`, `push`) in
-    the tile grid's reading order (row by row, left to right); the API
-    always returns it as a permutation of the four.
-  - `hidden` — the view IDs hidden from the board (a subset of the view
-    IDs); a hidden view is not rendered and needs no data polling.
+  - `order` — the board tile IDs (the four view IDs `calendar`, `chat`,
+    `home`, `push` plus every `views.ha_tiles` id) in the tile grid's
+    reading order (row by row, left to right); the API always returns it
+    as a permutation of the board tile IDs.
+  - `hidden` — the board tile IDs hidden from the board (a subset of the
+    board tile IDs); a hidden tile is not rendered and needs no data
+    polling.
   - `calendar_mode` — how the Calendar tile renders: `"month"` (the
     month grid) or `"schedule"` (a chronological list of upcoming
     events).
-  - `sizes` — a per-tile map of view ID to size step: `"s"` (a third of
+  - `sizes` — a per-tile map of board tile ID to size step: `"s"` (a third of
     the board's width), `"m"` (half, the default), `"l"` (two thirds),
     or `"xl"` (the full width). Missing/absent entries fall back to
     `"m"`.
@@ -384,9 +386,9 @@ dashboard, no token in the URL):
     dropped from the list are also removed from `order`, `hidden`,
     `sizes`, and `geometry`.
   Hand-edited values are repaired, not rejected: unknown IDs are dropped
-  (missing view IDs re-appear in the default order), an unknown
+  (missing board tile IDs re-appear in the default order), an unknown
   `calendar_mode` falls back to `"month"`, `sizes` entries with an
-  unknown view ID or an unknown step fall back to the default size,
+  unknown board tile ID or an unknown step fall back to the default size,
   `geometry` entries that are out of bounds or overlap a neighbour are
   dropped (the tile falls back to automatic placement), and `ha_tiles`
   entries with a bad id, entity, or kind are dropped.
