@@ -32,13 +32,13 @@ const SIZES: TileSize[] = ['s', 'm', 'l', 'xl']
 
 /**
  * The per-tile settings modal: the edit options for one tile, grouped in
- * labeled sections — the size step (every tile; the width the board uses
- * when it places the tile automatically), the Calendar tile's view mode
- * (its content), and a Home Assistant tile's entity, kind and label (its
- * HA mapping) — saved through the same board-views path as the settings
- * screen. Closes from the Close button, Escape, or a click on the
- * backdrop; a successful save closes it too (the change is visible on the
- * board itself).
+ * labeled sections — a built-in view tile's size step (the width the
+ * board uses when it places the tile automatically), the Calendar
+ * tile's view mode (its content), and a Home Assistant tile's entity,
+ * kind and label (its HA mapping) — saved through the same board-views
+ * path as the settings screen. Closes from the Close button, Escape, or
+ * a click on the backdrop; a successful save closes it too (the change
+ * is visible on the board itself).
  */
 export default function TileEditModal({ id, views, entities, haOff, onClose, onBoard }: Props) {
   const view = isViewId(id)
@@ -82,7 +82,7 @@ export default function TileEditModal({ id, views, entities, haOff, onClose, onB
     kind !== (ht?.kind ?? 'button')
   const changed = view
     ? sizeChanged || (id === 'calendar' && mode !== views.calendar_mode)
-    : sizeChanged || haChanged
+    : haChanged
 
   // The board-views patch a save sends: the changed size step (per-tile
   // merge), the calendar view mode when the Calendar tile changed it, and
@@ -103,21 +103,16 @@ export default function TileEditModal({ id, views, entities, haOff, onClose, onB
             ...(id === 'calendar' && mode !== views.calendar_mode ? { calendar_mode: mode } : {}),
           })
         : await api.setViews({
-            ...(sizeChanged ? { sizes: { [id]: size } } : {}),
-            ...(haChanged
-              ? {
-                  ha_tiles: views.ha_tiles.map((t): HABoardTile =>
-                    t.id === id
-                      ? {
-                          id,
-                          entity: trimmedEntity,
-                          kind,
-                          ...(label.trim() !== '' ? { label: label.trim() } : {}),
-                        }
-                      : t,
-                  ),
-                }
-              : {}),
+            ha_tiles: views.ha_tiles.map((t): HABoardTile =>
+              t.id === id
+                ? {
+                    id,
+                    entity: trimmedEntity,
+                    kind,
+                    ...(label.trim() !== '' ? { label: label.trim() } : {}),
+                  }
+                : t,
+            ),
           })
       onBoard(board)
       onClose()
@@ -158,32 +153,34 @@ export default function TileEditModal({ id, views, entities, haOff, onClose, onB
             void save()
           }}
         >
-          <section className="settings-section">
-            <h3>Size</h3>
-            <div className="settings-row">
-              <div>
-                <div className="settings-row-label">Tile size</div>
-                <div className="settings-row-desc">
-                  The tile's width when the board places it automatically; an explicit
-                  placement (drag/resize on the board) keeps its own span.
+          {view && (
+            <section className="settings-section">
+              <h3>Size</h3>
+              <div className="settings-row">
+                <div>
+                  <div className="settings-row-label">Tile size</div>
+                  <div className="settings-row-desc">
+                    The tile's width when the board places it automatically; an explicit
+                    placement (drag/resize on the board) keeps its own span.
+                  </div>
+                </div>
+                <div className="tabs" role="group" aria-label="Tile size">
+                  {SIZES.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={size === s ? 'tab on' : 'tab'}
+                      aria-pressed={size === s}
+                      disabled={saving}
+                      onClick={() => setSize(s)}
+                    >
+                      {TILE_SIZE_LABELS[s].replace(' tile', '')}
+                    </button>
+                  ))}
                 </div>
               </div>
-              <div className="tabs" role="group" aria-label="Tile size">
-                {SIZES.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    className={size === s ? 'tab on' : 'tab'}
-                    aria-pressed={size === s}
-                    disabled={saving}
-                    onClick={() => setSize(s)}
-                  >
-                    {TILE_SIZE_LABELS[s].replace(' tile', '')}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </section>
+            </section>
+          )}
           {view && id === 'calendar' && (
             <section className="settings-section">
               <h3>Content</h3>

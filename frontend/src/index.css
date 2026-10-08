@@ -153,8 +153,9 @@ body {
    rest) and occupies only its own units — it is not stretched to fill
    the remaining board height. If the layout overflows the grid rows the
    grid stretches (the auto row rule covers the overflow). data-edit
-   marks the board's edit mode (each tile shows its move grip and the
-   width/height fields; App mounts those only while editing). data-max
+   marks the board's edit mode (each tile shows its move label and drag
+   grip, and its settings/remove buttons; App mounts the row only while
+   editing). data-max
    fills the board with one tile (the title-click maximize). data-narrow
    is the stacked mobile fallback: a single column of full-width tiles,
    driven from matchMedia in App.tsx (not a CSS media query) so there is

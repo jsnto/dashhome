@@ -1382,7 +1382,7 @@ describe('app: per-tile settings modal', () => {
     order: ['calendar', 'chat', 'home', 'push', 'ha-lamp'],
     hidden: [],
     calendar_mode: 'month' as const,
-    sizes: { calendar: 'm', chat: 'm', home: 'm', push: 'm', 'ha-lamp': 's' } as Partial<Record<string, TileSize>>,
+    sizes: { calendar: 'm', chat: 'm', home: 'm', push: 'm' } as Partial<Record<string, TileSize>>,
     ha_tiles: [{ id: 'ha-lamp', entity: 'light.living_room', kind: 'button', label: 'Lamp' }],
   }
   const lampEntities = [
@@ -1449,35 +1449,6 @@ describe('app: per-tile settings modal', () => {
     expect(v?.sizes?.calendar).toBe('l')
     expect(v?.calendar_mode).toBe('schedule')
     await waitFor(() => expect(tileSize('calendar')).toBe('l'))
-  })
-
-  it('saves an HA tile size step through the named steps, leaving ha_tiles untouched', async () => {
-    const { board, calls } = stubBoardServer(modalViews, upcomingEvents(), lampEntities)
-    render(<App />)
-    await waitFor(() => expect(tileWins()).toHaveLength(5))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Edit Lamp tile settings' }))
-    const d = await screen.findByRole('dialog')
-    // The size step is seeded from the tile's stored step (ha-lamp is 's')…
-    expect(within(d).getByRole('button', { name: 'Small' }).getAttribute('aria-pressed')).toBe(
-      'true',
-    )
-    // …and an HA tile sizes through the same named steps: grow to medium
-    // and save.
-    fireEvent.click(within(d).getByRole('button', { name: 'Medium' }))
-    fireEvent.click(within(d).getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(dialog()).toBeNull())
-
-    const v = board.views as { sizes?: Record<string, string>; ha_tiles?: unknown } | null
-    expect(v?.sizes?.['ha-lamp']).toBe('m')
-    // The size-only save does not rewrite the ha_tiles list.
-    expect(v?.ha_tiles).toEqual([
-      { id: 'ha-lamp', entity: 'light.living_room', kind: 'button', label: 'Lamp' },
-    ])
-    expect(calls.filter((c) => c === 'PUT /api/config/views')).toHaveLength(1)
-    const lamp = document.querySelector('[data-win="ha-lamp"]') as HTMLElement
-    await waitFor(() => expect(lamp.getAttribute('data-size')).toBe('m'))
   })
 
   it('offers only the size step for a view without its own options', async () => {
