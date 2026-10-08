@@ -56,12 +56,12 @@ snaps back); each tile's edit row also carries a remove
 control (one press, no confirm — a Home Assistant tile leaves
 `views.ha_tiles`, a built-in view is hidden; the tile's entity and data are
 never touched, and the tile can be added back from the settings screen);
-the row's edit button opens a modal with that tile's settings — the size
-step (the width the board uses when it places the tile automatically), the
-Calendar tile's view mode, a Home Assistant tile's entity, label, and kind,
-grouped in labeled sections (size, content, Home Assistant) — saved through
-the same path; placements, removals, and the
-modal's saves are persisted to
+the row's edit button opens a modal with that tile's settings — the
+built-in view tile's size step (the width the board uses when it places the
+tile automatically), the Calendar tile's view mode, a Home Assistant
+tile's entity, label, and kind, grouped in labeled sections (size, content,
+Home Assistant) — saved through the same path; placements, removals, and
+the modal's saves are persisted to
 `dashhome.json` the same way (the tile set and order are managed from the
 settings screen).
 
@@ -386,8 +386,8 @@ dashboard, no token in the URL):
 - `views` — the dashboard's tile layout (optional; missing = the default
   board). Also persisted by the settings screen's Tiles section (tile set,
   order, Home Assistant tiles) and the board's Edit tiles mode (positions,
-  plus the per-tile settings modal's size step, Calendar view mode, and HA
-  tile entity/label/kind):
+  plus the per-tile settings modal's size step (built-in view tiles),
+  Calendar view mode, and HA tile entity/label/kind):
   - `order` — the board tile IDs (the four view IDs `calendar`, `chat`,
     `home`, `push` plus every `views.ha_tiles` id) in the tile grid's
     reading order (row by row, left to right); the API always returns it
