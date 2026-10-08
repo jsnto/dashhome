@@ -31,12 +31,14 @@ const isViewId = (id: string): id is ViewId => (VIEW_IDS as readonly string[]).i
 const SIZES: TileSize[] = ['s', 'm', 'l', 'xl']
 
 /**
- * The per-tile settings modal: the type-specific options for one tile —
- * a built-in view's size step (and the Calendar tile's view mode), a Home
- * Assistant tile's entity, label and kind — saved through the same
- * board-views path as the settings screen. Closes from the Close button,
- * Escape, or a click on the backdrop; a successful save closes it too (the
- * change is visible on the board itself).
+ * The per-tile settings modal: the edit options for one tile, grouped in
+ * labeled sections — a built-in view tile's size step (the width the
+ * board uses when it places the tile automatically), the Calendar
+ * tile's view mode (its content), and a Home Assistant tile's entity,
+ * kind and label (its HA mapping) — saved through the same board-views
+ * path as the settings screen. Closes from the Close button, Escape, or
+ * a click on the backdrop; a successful save closes it too (the change
+ * is visible on the board itself).
  */
 export default function TileEditModal({ id, views, entities, haOff, onClose, onBoard }: Props) {
   const view = isViewId(id)
@@ -73,15 +75,18 @@ export default function TileEditModal({ id, views, entities, haOff, onClose, onB
   }
 
   const sizeSeed = views.sizes[id] ?? 'm'
+  const sizeChanged = size !== sizeSeed
+  const haChanged =
+    entity.trim() !== (ht?.entity ?? '') ||
+    label.trim() !== (ht?.label ?? '') ||
+    kind !== (ht?.kind ?? 'button')
   const changed = view
-    ? size !== sizeSeed || (id === 'calendar' && mode !== views.calendar_mode)
-    : entity.trim() !== (ht?.entity ?? '') ||
-      label.trim() !== (ht?.label ?? '') ||
-      kind !== (ht?.kind ?? 'button')
+    ? sizeChanged || (id === 'calendar' && mode !== views.calendar_mode)
+    : haChanged
 
   // The board-views patch a save sends: the changed size step (per-tile
-  // merge), the calendar view mode when the Calendar tile changed it, or —
-  // for an HA tile — the ha_tiles list with this tile's fields replaced.
+  // merge), the calendar view mode when the Calendar tile changed it, and
+  // — for an HA tile — the ha_tiles list with this tile's fields replaced.
   const save = async () => {
     if (saving || !changed) return
     const trimmedEntity = entity.trim()
@@ -94,7 +99,7 @@ export default function TileEditModal({ id, views, entities, haOff, onClose, onB
     try {
       const board = view
         ? await api.setViews({
-            ...(size !== sizeSeed ? { sizes: { [id]: size } } : {}),
+            ...(sizeChanged ? { sizes: { [id]: size } } : {}),
             ...(id === 'calendar' && mode !== views.calendar_mode ? { calendar_mode: mode } : {}),
           })
         : await api.setViews({
@@ -148,13 +153,9 @@ export default function TileEditModal({ id, views, entities, haOff, onClose, onB
             void save()
           }}
         >
-          {view ? (
-            <>
-              <p className="note">
-                {id === 'calendar'
-                  ? 'The Calendar tile’s view and size.'
-                  : 'The tile’s size step — its width when the board places it automatically.'}
-              </p>
+          {view && (
+            <section className="settings-section">
+              <h3>Size</h3>
               <div className="settings-row">
                 <div>
                   <div className="settings-row-label">Tile size</div>
@@ -178,45 +179,45 @@ export default function TileEditModal({ id, views, entities, haOff, onClose, onB
                   ))}
                 </div>
               </div>
-              {id === 'calendar' && (
-                <div className="settings-row">
-                  <div>
-                    <div className="settings-row-label">Calendar view</div>
-                    <div className="settings-row-desc">
-                      How the Calendar tile renders: the month grid, or a schedule summary —
-                      a chronological list of upcoming events.
-                    </div>
-                  </div>
-                  <div className="tabs" role="group" aria-label="Calendar view">
-                    <button
-                      type="button"
-                      className={mode === 'month' ? 'tab on' : 'tab'}
-                      aria-pressed={mode === 'month'}
-                      disabled={saving}
-                      onClick={() => setMode('month')}
-                    >
-                      Calendar
-                    </button>
-                    <button
-                      type="button"
-                      className={mode === 'schedule' ? 'tab on' : 'tab'}
-                      aria-pressed={mode === 'schedule'}
-                      disabled={saving}
-                      onClick={() => setMode('schedule')}
-                    >
-                      Schedule summary
-                    </button>
+            </section>
+          )}
+          {view && id === 'calendar' && (
+            <section className="settings-section">
+              <h3>Content</h3>
+              <div className="settings-row">
+                <div>
+                  <div className="settings-row-label">Calendar view</div>
+                  <div className="settings-row-desc">
+                    How the Calendar tile renders: the month grid, or a schedule summary —
+                    a chronological list of upcoming events.
                   </div>
                 </div>
-              )}
-            </>
-          ) : (
-            <>
-              <p className="note">
-                Board tile bound to one Home Assistant entity: a <em>button</em> tile fires the
-                allowlisted action (toggle) from the board, a <em>visual</em> tile shows the
-                entity's state.
-              </p>
+                <div className="tabs" role="group" aria-label="Calendar view">
+                  <button
+                    type="button"
+                    className={mode === 'month' ? 'tab on' : 'tab'}
+                    aria-pressed={mode === 'month'}
+                    disabled={saving}
+                    onClick={() => setMode('month')}
+                  >
+                    Calendar
+                  </button>
+                  <button
+                    type="button"
+                    className={mode === 'schedule' ? 'tab on' : 'tab'}
+                    aria-pressed={mode === 'schedule'}
+                    disabled={saving}
+                    onClick={() => setMode('schedule')}
+                  >
+                    Schedule summary
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+          {!view && (
+            <section className="settings-section">
+              <h3>Home Assistant</h3>
               <div className="settings-row">
                 <div>
                   <div className="settings-row-label">Entity</div>
@@ -244,6 +245,10 @@ export default function TileEditModal({ id, views, entities, haOff, onClose, onB
               <div className="settings-row">
                 <div>
                   <div className="settings-row-label">Tile kind</div>
+                  <div className="settings-row-desc">
+                    A button tile fires the allowlisted action (toggle) from the board; a
+                    visual tile shows the entity's state.
+                  </div>
                 </div>
                 <div className="tabs" role="group" aria-label="Tile kind">
                   <button
@@ -287,7 +292,7 @@ export default function TileEditModal({ id, views, entities, haOff, onClose, onB
                   connection is set.
                 </p>
               )}
-            </>
+            </section>
           )}
           {saveErr && (
             <p className="note err">

@@ -23,7 +23,6 @@ import SettingsPanel from './components/SettingsPanel'
 import TileEditModal from './components/TileEditModal'
 import {
   autoLayout,
-  clampCell,
   dragCell,
   dropRefused,
   GridMetrics,
@@ -37,8 +36,9 @@ import {
  * flows automatically (its size step's fraction of the grid's width) or
  * sits at a stored placement (the board file's views.geometry, which the
  * server repairs). Edit mode exposes the placement affordances: drag with
- * the grip, set the width and height in units (numeric fields or the
- * corner resize handle), both snapping to the grid.
+ * the grip or the corner resize handle (both snapping to the grid), the
+ * settings button (the per-tile modal: the size step, the type-specific
+ * options), and the remove button.
  */
 
 // The stacked mobile fallback: below this breakpoint the board is a single
@@ -84,9 +84,9 @@ export default function App() {
   const [cfg, setCfg] = useState<ApiConfig | null>(null)
   const [theme, setTheme] = useTheme()
   const [showSettings, setShowSettings] = useState(false)
-  // The board's edit mode: each visible tile shows the size, move and
-  // height controls plus the drag/resize handles; the title-click maximize
-  // is suspended while it is on.
+  // The board's edit mode: each visible tile shows the move grip, the
+  // settings and remove buttons plus the corner resize handle; the
+  // title-click maximize is suspended while it is on.
   const [editMode, setEditMode] = useState(false)
   // The tile whose title was last clicked (fills the board), if any.
   const [maximized, setMaximized] = useState<string | null>(null)
@@ -95,9 +95,6 @@ export default function App() {
   // attempt).
   const [layoutErr, setLayoutErr] = useState<ApiError | null>(null)
   const [savingSize, setSavingSize] = useState(false)
-  // The width/height a user is typing into a tile's size fields, if any:
-  // { id, w, h } as raw input strings, committed on Enter/blur.
-  const [sizeDraft, setSizeDraft] = useState<{ id: string; w: string; h: string } | null>(null)
   // The tile whose settings modal is open (the per-tile edit button), if any.
   const [editingTile, setEditingTile] = useState<string | null>(null)
 
@@ -236,40 +233,6 @@ export default function App() {
     }
     if (views.hidden.includes(id)) return
     commitViews({ hidden: [...views.hidden, id] })
-  }
-
-  // Type a width or height (in grid units) into a tile's size field; the
-  // draft keeps the raw strings until committed, and a tile whose draft is
-  // cleared (or that is not the drafted one) shows its stored value.
-  const onSizeChange = (id: string, field: 'w' | 'h', value: string) => {
-    const g = layout[id]
-    if (!g) return
-    setSizeDraft((cur) => ({
-      id,
-      w: field === 'w' ? value : cur?.id === id ? cur.w : String(g.w),
-      h: field === 'h' ? value : cur?.id === id ? cur.h : String(g.h),
-    }))
-  }
-
-  // Commit the width/height a user typed into a tile's size fields: the
-  // tile is placed (or re-placed) at the cell it currently renders with
-  // the new span, clamped into the cols x rows grid. A commit that would
-  // overlap a neighbour or no longer fit the grid is refused (the fields
-  // revert to the stored layout) — the same contract as a refused drag.
-  const commitSize = () => {
-    const draft = sizeDraft
-    setSizeDraft(null)
-    if (!draft) return
-    const cur = layout[draft.id]
-    if (!cur) return
-    const w = parseInt(draft.w, 10)
-    const h = parseInt(draft.h, 10)
-    if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) return
-    const cell = clampCell({ x: cur.x, y: cur.y, w, h }, grid.cols, grid.rows)
-    if (cell.x === cur.x && cell.y === cur.y && cell.w === cur.w && cell.h === cur.h) return
-    if (dropRefused(draft.id, cell, visible, views.sizes, views.geometry, grid.cols, grid.rows)) return
-    setLayoutErr(null)
-    commitViews({ geometry: { [draft.id]: cell } })
   }
 
   // --- Drag & drop (edit mode only). The live drag data lives in a ref;
@@ -517,48 +480,13 @@ export default function App() {
                   role="group"
                   aria-label={`${tileName(id)} tile controls`}
                 >
+                  <span className="tile-edit-label">Move</span>
                   <span
                     className="tile-grip"
                     title="Drag to move this tile"
                     onPointerDown={(e) => beginDrag(id, 'move', e)}
                   >
                     ⠿
-                  </span>
-                  <span className="tile-size-field" title="Width, in grid units">
-                    <span className="tile-size-unit">W</span>
-                    <input
-                      className="tile-size-input"
-                      type="number"
-                      inputMode="numeric"
-                      min={1}
-                      max={grid.cols}
-                      aria-label={`width of ${tileName(id)} in grid units`}
-                      value={sizeDraft?.id === id ? sizeDraft.w : String(layout[id].w)}
-                      disabled={savingSize}
-                      onChange={(e) => onSizeChange(id, 'w', e.target.value)}
-                      onBlur={commitSize}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') commitSize()
-                      }}
-                    />
-                  </span>
-                  <span className="tile-size-field" title="Height, in grid units">
-                    <span className="tile-size-unit">H</span>
-                    <input
-                      className="tile-size-input"
-                      type="number"
-                      inputMode="numeric"
-                      min={1}
-                      max={grid.rows}
-                      aria-label={`height of ${tileName(id)} in grid units`}
-                      value={sizeDraft?.id === id ? sizeDraft.h : String(layout[id].h)}
-                      disabled={savingSize}
-                      onChange={(e) => onSizeChange(id, 'h', e.target.value)}
-                      onBlur={commitSize}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') commitSize()
-                      }}
-                    />
                   </span>
                   <button
                     type="button"

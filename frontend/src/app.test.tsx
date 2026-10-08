@@ -577,16 +577,16 @@ describe('app: tile edit mode', () => {
     )
 
     // One control row per visible tile (the hidden tile gets none): the
-    // move grip and the numeric width/height fields, each showing the
-    // tile's effective span. No size-stepper buttons.
+    // move grip (labeled) and the settings/remove buttons. No numeric
+    // width/height fields and no size-stepper buttons — the size step
+    // lives in the tile's settings modal, and the corner resize handle
+    // covers exact spans.
     const groups = screen.getAllByRole('group', { name: /tile controls/ })
     expect(groups).toHaveLength(3)
     const calEl = screen.getByRole('group', { name: 'Calendar tile controls' }) as HTMLElement
     const cal = within(calEl)
-    const inputs = calEl.querySelectorAll('.tile-size-input')
-    expect(inputs).toHaveLength(2)
-    expect((inputs[0] as HTMLInputElement).value).toBe('6') // m = half of 12
-    expect((inputs[1] as HTMLInputElement).value).toBe('1')
+    expect(calEl.querySelectorAll('.tile-size-input')).toHaveLength(0)
+    expect(cal.queryByRole('spinbutton')).toBeNull()
     expect(cal.queryByRole('button', { name: 'S' })).toBeNull()
     expect(cal.queryByRole('button', { name: 'M' })).toBeNull()
     expect(cal.queryByRole('button', { name: 'L' })).toBeNull()
@@ -601,6 +601,28 @@ describe('app: tile edit mode', () => {
       'Remove Hermes chat tile',
       'Remove Home tile',
     ])
+  })
+
+  it('labels the move grip in every tile edit row', async () => {
+    stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: ['push'],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toEqual(['calendar', 'chat', 'home']))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    const groups = screen.getAllByRole('group', { name: /tile controls/ })
+    for (const g of groups) {
+      // The small-caps group label keeps the row readable: the grip is the
+      // move control, and the row also carries the settings/remove buttons.
+      const label = within(g).getByText('Move')
+      expect(label.className).toBe('tile-edit-label')
+      expect(g.querySelector('.tile-grip')).toBeTruthy()
+      expect(g.querySelector('.tile-edit-open')).toBeTruthy()
+      expect(g.querySelector('.tile-remove')).toBeTruthy()
+    }
   })
 
   it('removes a built-in view by hiding it: a single press, persisted to the board file', async () => {
@@ -640,152 +662,6 @@ describe('app: tile edit mode', () => {
     await waitFor(() => expect(calls).toContain('PUT /api/config/views'))
     expect(board.views?.hidden).toEqual(['push', 'home'])
     await waitFor(() => expect(tileWins()).toEqual(['calendar', 'chat']))
-  })
-
-  it('a numeric width change persists to the board file and round-trips to the tile', async () => {
-    const { fetchMock, board, calls } = stubBoardServer({
-      order: ['calendar', 'chat', 'home', 'push'],
-      hidden: ['chat', 'home', 'push'], // the lone visible tile has room to grow
-      calendar_mode: 'month',
-    })
-    render(<App />)
-    await waitFor(() => expect(tileWins()).toEqual(['calendar']))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
-    const cal = within(screen.getByRole('group', { name: 'Calendar tile controls' }))
-    const w = cal.getByRole('spinbutton', { name: 'width of Calendar in grid units' }) as HTMLInputElement
-    fireEvent.change(w, { target: { value: '12' } })
-    fireEvent.keyDown(w, { key: 'Enter' })
-
-    // The change PUTs to the views endpoint with just this tile's geometry.
-    await waitFor(() => {
-      expect(calls).toContain('PUT /api/config/views')
-    })
-    const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT') as [
-      string,
-      RequestInit,
-    ]
-    expect(put[0]).toBe('/api/config/views')
-    expect(JSON.parse(String(put[1].body))).toEqual({
-      geometry: { calendar: { x: 1, y: 1, w: 12, h: 1 } },
-    })
-
-    // The board file holds the placement…
-    expect(geometryOf(board).calendar).toEqual({ x: 1, y: 1, w: 12, h: 1 })
-
-    // …and the answer adopts it back onto the tile (the field shows the
-    // saved span, the board renders the wider cell).
-    await waitFor(() => expect(w.value).toBe('12'))
-    const calTile = document.querySelector('[data-win="calendar"]') as HTMLElement
-    await waitFor(() => expect(calTile.style.gridColumn).toBe('1 / span 12'))
-  })
-
-  it('a numeric height change pins the effective cell and persists', async () => {
-    const { board } = stubBoardServer(placedViews)
-    render(<App />)
-    await waitFor(() => expect(tileWins()).toHaveLength(4))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
-    // Home is placed at (1,2,3,1): growing its height keeps its cell.
-    const home = within(screen.getByRole('group', { name: 'Home tile controls' }))
-    const h = home.getByRole('spinbutton', { name: 'height of Home in grid units' }) as HTMLInputElement
-    fireEvent.change(h, { target: { value: '2' } })
-    fireEvent.keyDown(h, { key: 'Enter' })
-    await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 1, y: 2, w: 3, h: 2 }))
-    const homeTile = document.querySelector('[data-win="home"]') as HTMLElement
-    await waitFor(() => expect(homeTile.style.gridRow).toBe('2 / span 2'))
-  })
-
-  it('clamps a numeric size into the grid before committing', async () => {
-    const { board } = stubBoardServer({
-      order: ['calendar', 'chat', 'home', 'push'],
-      hidden: ['chat', 'home', 'push'],
-      calendar_mode: 'month',
-    })
-    render(<App />)
-    await waitFor(() => expect(tileWins()).toEqual(['calendar']))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
-    // Calendar's effective cell is (1,1,6,1); a width of 20 units cannot
-    // fit the 12-column grid: the commit clamps to full width.
-    const cal = within(screen.getByRole('group', { name: 'Calendar tile controls' }))
-    const w = cal.getByRole('spinbutton', { name: 'width of Calendar in grid units' }) as HTMLInputElement
-    fireEvent.change(w, { target: { value: '20' } })
-    fireEvent.keyDown(w, { key: 'Enter' })
-    await waitFor(() => expect(geometryOf(board).calendar).toEqual({ x: 1, y: 1, w: 12, h: 1 }))
-  })
-
-  it('refuses a numeric size that would overlap a neighbour and reverts the fields', async () => {
-    const { board, calls } = stubBoardServer(undefined)
-    render(<App />)
-    await waitFor(() => expect(tileWins()).toHaveLength(4))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
-    // The default board: calendar (1,1,6,1), chat (7,1,6,1), home
-    // (1,2,6,1), push (7,2,6,1). Growing calendar to 8 units would cover
-    // chat's column 7 — the commit is refused and nothing is saved.
-    const cal = within(screen.getByRole('group', { name: 'Calendar tile controls' }))
-    const w = cal.getByRole('spinbutton', { name: 'width of Calendar in grid units' }) as HTMLInputElement
-    fireEvent.change(w, { target: { value: '8' } })
-    fireEvent.keyDown(w, { key: 'Enter' })
-    await waitFor(() => expect(w.value).toBe('6')) // reverted to the effective width
-    expect(calls.filter((c) => c === 'PUT /api/config/views')).toHaveLength(0)
-    expect(geometryOf(board).calendar).toBeUndefined()
-    const calTile = document.querySelector('[data-win="calendar"]') as HTMLElement
-    expect(calTile.style.gridColumn).toBe('1 / span 6')
-  })
-
-  it('leaves the board file untouched when a numeric size is a no-op', async () => {
-    const { board, calls } = stubBoardServer(undefined)
-    render(<App />)
-    await waitFor(() => expect(tileWins()).toHaveLength(4))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
-    // Entering the tile's current effective width and committing changes
-    // nothing: no placement is pinned onto the auto-flowing tile.
-    const cal = within(screen.getByRole('group', { name: 'Calendar tile controls' }))
-    const w = cal.getByRole('spinbutton', { name: 'width of Calendar in grid units' }) as HTMLInputElement
-    fireEvent.change(w, { target: { value: '6' } })
-    fireEvent.keyDown(w, { key: 'Enter' })
-    expect(calls.filter((c) => c === 'PUT /api/config/views')).toHaveLength(0)
-    expect(geometryOf(board).calendar).toBeUndefined()
-  })
-
-  it('reports a failed size save and reverts the fields to the effective spans', async () => {
-    const { fetchMock } = stubBoardServer({
-      order: ['calendar', 'chat', 'home', 'push'],
-      hidden: ['chat', 'home', 'push'],
-      calendar_mode: 'month',
-    })
-    vi.stubGlobal(
-      'fetch',
-      async (input: unknown, init?: RequestInit) => {
-        if (String(input) === '/api/config/views' && init?.method === 'PUT') {
-          return new Response(
-            JSON.stringify({
-              error: 'board_file_not_writable',
-              detail: 'board file not writable: denied',
-            }),
-            { status: 503, headers: { 'Content-Type': 'application/json' } },
-          )
-        }
-        return fetchMock(input, init)
-      },
-    )
-    render(<App />)
-    await waitFor(() => expect(tileWins()).toEqual(['calendar']))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
-    const cal = within(screen.getByRole('group', { name: 'Calendar tile controls' }))
-    const w = cal.getByRole('spinbutton', { name: 'width of Calendar in grid units' }) as HTMLInputElement
-    fireEvent.change(w, { target: { value: '12' } })
-    fireEvent.keyDown(w, { key: 'Enter' })
-
-    await screen.findByText(/board_file_not_writable — board file not writable: denied/)
-    // The failed save reverted the fields to the effective span.
-    expect(w.value).toBe('6')
-    const calTile = document.querySelector('[data-win="calendar"]') as HTMLElement
-    expect(calTile.style.gridColumn).toBe('1 / span 6')
   })
 
   it('a tile title does not maximize while the board is in edit mode', () => {
@@ -1112,6 +988,81 @@ describe('app: tile placement (edit mode)', () => {
     expect(geometryOf(board).calendar).toBeUndefined()
   })
 
+  it('resizes a tile by dragging the corner handle and persists the new span', async () => {
+    const { board, calls } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    const restoreBox = stubBoardBox()
+
+    // push auto-places at (7,2,6,1): grow it one row down from the corner
+    // handle — the exact-sizing path left by the removed width/height
+    // fields.
+    const push = document.querySelector('[data-win="push"]') as HTMLElement
+    const handle = push.querySelector('.tile-resize') as HTMLElement
+    await act(async () => {
+      firePointer(handle, 'pointerdown', 900, 400)
+    })
+    await act(async () => {
+      firePointer(window, 'pointermove', 900, 400 + PITCH_Y)
+    })
+
+    // The live preview grows the tile in place (the origin is kept).
+    expect(push.className).toContain('dragging')
+    expect(push.className).not.toContain('preview-invalid')
+    expect(push.style.gridColumn).toBe('7 / span 6')
+    expect(push.style.gridRow).toBe('2 / span 2')
+
+    await act(async () => {
+      firePointer(window, 'pointerup', 900, 400 + PITCH_Y)
+    })
+    restoreBox()
+
+    // The new span persists to the board file and renders back.
+    await waitFor(() => expect(geometryOf(board).push).toEqual({ x: 7, y: 2, w: 6, h: 2 }))
+    expect(calls.filter((c) => c === 'PUT /api/config/views')).toHaveLength(1)
+    await waitFor(() => expect(push.style.gridRow).toBe('2 / span 2'))
+  })
+
+  it('refuses a resize that would overlap a neighbour and snaps back', async () => {
+    const { board, calls } = stubBoardServer({
+      order: ['calendar', 'chat', 'home', 'push'],
+      hidden: [],
+      calendar_mode: 'month',
+    })
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(4))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+    const restoreBox = stubBoardBox()
+
+    // chat at (7,1,6,1): growing it one row down would cover push at
+    // (7,2) — the resize is refused and the span is kept.
+    const chat = document.querySelector('[data-win="chat"]') as HTMLElement
+    const handle = chat.querySelector('.tile-resize') as HTMLElement
+    await act(async () => {
+      firePointer(handle, 'pointerdown', 900, 10)
+    })
+    await act(async () => {
+      firePointer(window, 'pointermove', 900, 10 + PITCH_Y)
+    })
+    expect(chat.className).toContain('preview-invalid')
+
+    await act(async () => {
+      firePointer(window, 'pointerup', 900, 10 + PITCH_Y)
+    })
+    restoreBox()
+
+    expect(calls.filter((c) => c === 'PUT /api/config/views')).toHaveLength(0)
+    expect(geometryOf(board).chat).toBeUndefined()
+    expect(chat.style.gridRow).toBe('1 / span 1')
+  })
+
   it('drags an auto-placed tile from its effective cell (not (1,1))', async () => {
     const { board } = stubBoardServer({
       order: ['calendar', 'chat', 'home', 'push'],
@@ -1222,52 +1173,10 @@ describe('app: tile placement (edit mode)', () => {
     expect(geometryOf(board).push).toBeUndefined()
   })
 
-  it('grows an auto-placed tile from its effective cell with the height field', async () => {
-    const { board } = stubBoardServer({
-      order: ['calendar', 'chat', 'home', 'push'],
-      hidden: [],
-      calendar_mode: 'month',
-    })
-    render(<App />)
-    await waitFor(() => expect(tileWins()).toHaveLength(4))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
-    // push auto-places at (7,2): growing it pins (7,2,6,2) — not
-    // (1,2,6,2), which would overlap the home tile on row 2.
-    const push = within(screen.getByRole('group', { name: 'Hermes push tile controls' }))
-    const h = push.getByRole('spinbutton', { name: 'height of Hermes push in grid units' }) as HTMLInputElement
-    fireEvent.change(h, { target: { value: '2' } })
-    fireEvent.keyDown(h, { key: 'Enter' })
-    await waitFor(() => expect(geometryOf(board).push).toEqual({ x: 7, y: 2, w: 6, h: 2 }))
-  })
-
-  it('commits a numeric width for a placed tile, refusing the overlaps', async () => {
-    const { board, calls } = stubBoardServer(placedViews)
-    render(<App />)
-    await waitFor(() => expect(tileWins()).toHaveLength(4))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
-    // Home is fixed at (1,2,3,1) and push auto-places at (7,2,6,1):
-    // growing home's width to 12 would cover push — the commit is
-    // refused and the placement is kept.
-    const home = within(screen.getByRole('group', { name: 'Home tile controls' }))
-    const w = home.getByRole('spinbutton', { name: 'width of Home in grid units' }) as HTMLInputElement
-    fireEvent.change(w, { target: { value: '12' } })
-    fireEvent.keyDown(w, { key: 'Enter' })
-    expect(geometryOf(board).home).toEqual({ x: 1, y: 2, w: 3, h: 1 })
-
-    // A width that fits the row commits (the origin column is kept).
-    fireEvent.change(w, { target: { value: '2' } })
-    fireEvent.keyDown(w, { key: 'Enter' })
-    await waitFor(() => expect(geometryOf(board).home).toEqual({ x: 1, y: 2, w: 2, h: 1 }))
-    expect(calls.filter((c) => c === 'PUT /api/config/views').length).toBe(1)
-  })
-
   it('renders no placement affordances outside edit mode', () => {
     stubBoardServer(placedViews)
     render(<App />)
     expect(document.querySelector('.tile-grip')).toBeNull()
-    expect(document.querySelector('.tile-size-input')).toBeNull()
     expect(document.querySelector('.tile-resize')).toBeNull()
   })
 })
@@ -1613,6 +1522,9 @@ describe('app: per-tile settings modal', () => {
     expect(board.views?.ha_tiles).toEqual([
       { id: 'ha-lamp', entity: 'light.living_room', kind: 'visual', label: 'Hall lamp' },
     ])
+    // The modal offers no size step for HA tiles, so the save leaves the
+    // stored sizes untouched.
+    expect((board.views as { sizes?: Record<string, string> }).sizes?.['ha-lamp']).toBeUndefined()
     // The board tile adopts the new kind (the visual tile shows the state).
     const lamp = document.querySelector('[data-win="ha-lamp"]') as HTMLElement
     await waitFor(() => expect(lamp.querySelector('.ha-state')).toBeTruthy())
@@ -1667,6 +1579,50 @@ describe('app: per-tile settings modal', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(dialog()).toBeNull()
     expect(calls.filter((c) => c.startsWith('PUT'))).toHaveLength(0)
+  })
+
+  it('groups the modal options into labeled sections per tile type', async () => {
+    stubBoardServer(modalViews, upcomingEvents(), lampEntities)
+    render(<App />)
+    await waitFor(() => expect(tileWins()).toHaveLength(5))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tiles' }))
+
+    // Calendar: the size step and its view mode, under named sections.
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Calendar tile settings' }))
+    let d = await screen.findByRole('dialog')
+    expect(
+      within(d)
+        .getAllByRole('heading', { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual(['Size', 'Content'])
+
+    fireEvent.click(within(d).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(dialog()).toBeNull())
+
+    // A plain view tile: only the size section (no content options).
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Hermes chat tile settings' }))
+    d = await screen.findByRole('dialog')
+    expect(
+      within(d)
+        .getAllByRole('heading', { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual(['Size'])
+
+    fireEvent.click(within(d).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(dialog()).toBeNull())
+
+    // A Home Assistant tile: only its HA mapping — the modal is view-only
+    // for HA tiles, so no size section is offered.
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Lamp tile settings' }))
+    d = await screen.findByRole('dialog')
+    expect(
+      within(d)
+        .getAllByRole('heading', { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual(['Home Assistant'])
+    expect(within(d).queryByRole('group', { name: 'Tile size' })).toBeNull()
+    expect(within(d).queryByRole('button', { name: 'Medium' })).toBeNull()
   })
 })
 

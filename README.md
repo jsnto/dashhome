@@ -49,19 +49,19 @@ as `board.services`; see Configuration below), the board grid dimensions
 (how many units wide and tall the tile grid is — `board.grid` in
 `dashhome.json`, default 12 × 12), and the live-update interval (how often
 the Hermes push panel polls the backend, persisted to `dashhome.json`). The header's *Edit tiles* toggle switches the
-board into an edit mode: each tile's width and height (in grid units) are
-set from numeric fields on the tile, tiles can be dragged by their grip to
+board into an edit mode: tiles can be dragged by their grip to
 another cell (or resized by dragging the corner handle — every move snaps to
 the grid, and overlaps and drops off the board are refused and the tile
-snaps back); move and resize are pointer drags, and the width and height
-fields are keyboard-operable; each tile's edit row also carries a remove
+snaps back); each tile's edit row also carries a remove
 control (one press, no confirm — a Home Assistant tile leaves
 `views.ha_tiles`, a built-in view is hidden; the tile's entity and data are
 never touched, and the tile can be added back from the settings screen);
-the row's edit button opens a modal with that tile's settings — the size
-step, the Calendar tile's view mode, a Home Assistant tile's entity, label,
-and kind — saved through the same path; placements, removals, and the
-modal's saves are persisted to
+the row's edit button opens a modal with that tile's settings — the
+built-in view tile's size step (the width the board uses when it places the
+tile automatically), the Calendar tile's view mode, a Home Assistant
+tile's entity, label, and kind, grouped in labeled sections (size, content,
+Home Assistant) — saved through the same path; placements, removals, and
+the modal's saves are persisted to
 `dashhome.json` the same way (the tile set and order are managed from the
 settings screen).
 
@@ -386,8 +386,8 @@ dashboard, no token in the URL):
 - `views` — the dashboard's tile layout (optional; missing = the default
   board). Also persisted by the settings screen's Tiles section (tile set,
   order, Home Assistant tiles) and the board's Edit tiles mode (positions,
-  plus the per-tile settings modal's size step, Calendar view mode, and HA
-  tile entity/label/kind):
+  plus the per-tile settings modal's size step (built-in view tiles),
+  Calendar view mode, and HA tile entity/label/kind):
   - `order` — the board tile IDs (the four view IDs `calendar`, `chat`,
     `home`, `push` plus every `views.ha_tiles` id) in the tile grid's
     reading order (row by row, left to right); the API always returns it
