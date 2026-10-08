@@ -229,10 +229,11 @@ body {
   cursor: pointer;
 }
 
-/* edit mode: the per-tile control row above the card: the drag grip
-   (move), and the width/height fields (grid units). App renders it only
-   while the board is in edit mode, so the normal board stays free of
-   editing affordances. */
+/* edit mode: the per-tile control row above the card: the move label and
+   drag grip, and the settings/remove buttons. App renders it only while
+   the board is in edit mode, so the normal board stays free of editing
+   affordances. Sizing lives in the tile's settings modal (the size step)
+   and the corner resize handle. */
 .tile-edit {
   flex: none;
   display: flex;
@@ -241,47 +242,18 @@ body {
   margin-bottom: 8px;
 }
 
-/* one width/height field: a small pill holding the unit letter and a
-   compact number input (committed on Enter/blur) */
-.tile-size-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-card-2);
-}
-
-.tile-size-unit {
+/* the edit-mode group label (e.g. "Move" before the drag grip): the same
+   small caps as the section headings, keeping the row readable */
+.tile-edit-label {
   font-size: 11px;
   font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
   color: var(--text-dim);
 }
 
-.tile-size-input {
-  width: 3.4em;
-  padding: 1px 0;
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-  background: transparent;
-  border: none;
-  outline: none;
-}
-
-.tile-size-field:has(.tile-size-input:focus) {
-  border-color: var(--accent);
-}
-
-.tile-size-input:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* the edit-mode move affordance: the drag grip (the width/height fields
-   and the corner resize handle cover sizing). */
+/* the edit-mode move affordance: the drag grip (the corner resize handle
+   covers sizing). */
 .tile-grip {
   flex: none;
   padding: 1px 7px;
