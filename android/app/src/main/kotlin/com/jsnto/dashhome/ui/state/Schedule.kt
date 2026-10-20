@@ -80,15 +80,5 @@ object Schedule {
         if (e.allDay) return "All day"
         return "${MonthGrid.fmtTime(e.start, zone)} – ${MonthGrid.fmtTime(e.end, zone)}"
     }
-
-    /** The day label used by the schedule list's day headers. */
-    fun dayLabel(d: LocalDate): String = d.format(dayLabelFmt)
-
-    /**
-     * The viewer's IANA zone for schedule grouping. This is a phone, not
-     * a pinned wall: the zone is the device's current zone (the viewer's
-     * zone - the closest device analog to the web's pinned viewer, which
-     * resolves the same on a laptop the viewer carries around).
-     */
-    fun viewerZone(): ZoneId = ZoneId.systemDefault()
 }
+

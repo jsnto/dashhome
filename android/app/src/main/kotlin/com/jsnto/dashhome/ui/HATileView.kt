@@ -40,7 +40,8 @@ import java.util.Locale
  * last-changed time. The button's styling wears the entity's on/off
  * state the way the web's switch does: ON reads dark and offers the
  * turn-off, OFF reads bright and offers the turn-on (the web's
- * --ha-toggle-on/off pair, which is the same colors on both themes).
+ * --ha-toggle-on/off pairs, which differ per theme - [dark] picks the
+ * right pair).
  */
 @Composable
 fun HATileView(
@@ -49,6 +50,7 @@ fun HATileView(
     haOff: Boolean,
     onService: () -> Unit,
     modifier: Modifier = Modifier,
+    dark: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
@@ -93,13 +95,13 @@ fun HATileView(
                 enabled = !actionDisabled,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = when {
-                        stateOn -> HA_ON_BG
-                        stateOff -> HA_OFF_BG
+                        stateOn -> HA_ON_BG(dark)
+                        stateOff -> HA_OFF_BG(dark)
                         else -> MaterialTheme.colorScheme.primary
                     },
                     contentColor = when {
-                        stateOn -> HA_ON_FG
-                        stateOff -> HA_OFF_FG
+                        stateOn -> HA_ON_FG(dark)
+                        stateOff -> HA_OFF_FG(dark)
                         else -> MaterialTheme.colorScheme.onPrimary
                     },
                 ),
@@ -155,10 +157,14 @@ private fun stamp(iso: String?, zone: ZoneId): String? {
     }
 }
 
-/** The web's --ha-toggle-on pair (the ON state reads as a dark button). */
-private val HA_ON_BG = Color(0xFF0A0F1A)
-private val HA_ON_FG = Color(0xFFE6EBF5)
-
-/** The web's --ha-toggle-off pair (the OFF state reads as a bright one). */
-private val HA_OFF_BG = Color(0xFFF2F6FD)
-private val HA_OFF_FG = Color(0xFF101623)
+// The web's --ha-toggle pairs (frontend/src/index.css): the dark theme's
+// near-black ON / near-white OFF, and the light theme's navy ON / white
+// OFF. The ON state reads dark (it offers the turn-off); the OFF state
+// reads bright (it offers the turn-on).
+private fun HA_ON_BG(dark: Boolean) =
+    if (dark) Color(0xFF0A0F1A) else Color(0xFF101623)
+private fun HA_ON_FG(dark: Boolean) =
+    if (dark) Color(0xFFE6EBF5) else Color(0xFFF2F6FD)
+private fun HA_OFF_BG(dark: Boolean) =
+    if (dark) Color(0xFFF2F6FD) else Color(0xFFFFFFFF)
+private fun HA_OFF_FG(dark: Boolean) = Color(0xFF101623)

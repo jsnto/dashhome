@@ -26,6 +26,12 @@ class BoardState {
         if (apiConfig == null) apiConfig = config
     }
 
+    /** Drop the adopted config (the app was pointed at a different
+     *  server): the next load loop re-fetches from the new one. */
+    fun reset() {
+        apiConfig = null
+    }
+
     /** Adopt the board a write just persisted server-side (the web's
      *  onBoard). A write before the first load lands is dropped, like
      *  the web's `c ? ... : c` guard. */

@@ -574,10 +574,21 @@ private fun HASection(
     var kind by remember { mutableStateOf("button") }
     var label by remember { mutableStateOf("") }
 
+    // The placements this session has already persisted for the tiles
+    // it added (the one-shot config above goes stale after every save,
+    // so consecutive adds must see each other's cells - the web
+    // re-derives its views from the adopted config after each save).
+    var savedCells by remember { mutableStateOf<Map<String, TileGeometry>>(emptyMap()) }
+
     // Persist the full ha_tiles list (the endpoint replaces the list),
     // optionally together with the new tile's default placement; the
     // server re-normalizes the order/hidden/geometry around the new set.
-    fun persist(next: List<HABoardTile>, geometry: Map<String, TileGeometry?>? = null) {
+    fun persist(
+        next: List<HABoardTile>,
+        geometry: Map<String, TileGeometry?>? = null,
+        placedId: String? = null,
+        placedCell: TileGeometry? = null,
+    ) {
         if (busy) return
         val before = tiles
         busy = true
@@ -586,6 +597,9 @@ private fun HASection(
         scope.launch {
             try {
                 onBoard(DashApi.setViews(haTiles = next, geometry = geometry))
+                if (placedId != null && placedCell != null) {
+                    savedCells = savedCells + (placedId to placedCell)
+                }
                 entity = ""
                 label = ""
             } catch (e: ApiException) {
@@ -600,18 +614,20 @@ private fun HASection(
     // The new tile's default placement: a 2x2 cell on the board's grid,
     // the first one (in reading order) that is free of the board's
     // effective layout (the stored placements plus the auto flow, hidden
-    // tiles included). A grid too small for the span, or a board with no
-    // free cell, leaves the tile to auto placement (no geometry in the
-    // save).
+    // tiles included), computed over the optimistic tile list plus the
+    // placements this session already saved. A grid too small for the
+    // span, or a board with no free cell, leaves the tile to auto
+    // placement (no geometry in the save).
     fun add() {
         val entityId = entity.trim()
         if (entityId.isEmpty() || haOff) return
         val id = nextHATileId(tiles)
-        val nv = normalizeViews(views, grid)
+        val liveIds = tiles.map { it.id }.toSet()
+        val nv = normalizeViews(views.copy(haTiles = tiles), grid)
         val cell = firstFreeCell(
             nv.order,
             nv.sizes,
-            nv.geometry,
+            nv.geometry + savedCells.filterKeys { it in liveIds },
             NEW_TILE_DEFAULT_SIZE.w,
             NEW_TILE_DEFAULT_SIZE.h,
             grid.cols,
@@ -625,6 +641,8 @@ private fun HASection(
                 kind = kind,
             ),
             cell?.let { mapOf(id to it) },
+            placedId = id,
+            placedCell = cell,
         )
     }
 

@@ -46,6 +46,7 @@ import com.jsnto.dashhome.api.GridDims
 import com.jsnto.dashhome.api.HABoardTile
 import com.jsnto.dashhome.api.HAEntity
 import com.jsnto.dashhome.ui.state.VIEW_IDS
+import com.jsnto.dashhome.ui.state.haTileLabel
 import com.jsnto.dashhome.ui.state.isHATileId
 import com.jsnto.dashhome.ui.state.tileName
 import kotlinx.coroutines.launch
@@ -75,7 +76,13 @@ fun TileEditModal(
 ) {
     val view = id in VIEW_IDS
     val ht = views.haTiles.firstOrNull { it.id == id }
-    val name = tileName(id, views)
+    // The web's modal header: an HA tile wears the entity's friendly
+    // label (the tile's label, else the entity's own label, else the id).
+    val name = if (ht != null) {
+        haTileLabel(ht, entities[ht.entity])
+    } else {
+        tileName(id, views)
+    }
 
     // Drafts seeded from the effective layout (the modal mounts fresh for
     // every tile it opens on).

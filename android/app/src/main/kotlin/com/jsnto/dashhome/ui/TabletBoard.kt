@@ -65,10 +65,12 @@ import com.jsnto.dashhome.ui.state.autoLayout
 import com.jsnto.dashhome.ui.state.dragCell
 import com.jsnto.dashhome.ui.state.dropRefused
 import com.jsnto.dashhome.ui.state.gridMetrics
+import com.jsnto.dashhome.ui.state.haTileLabel
 import com.jsnto.dashhome.ui.state.normalizeGrid
 import com.jsnto.dashhome.ui.state.normalizeViews
 import com.jsnto.dashhome.ui.state.renderedRows
 import com.jsnto.dashhome.ui.state.tileName
+import com.jsnto.dashhome.ui.state.visibleOrder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -161,15 +163,19 @@ fun TabletBoard(
     chatScope: CoroutineScope,
     sections: TabletSectionState,
     onOpen: (TabletItem) -> Unit,
+    dark: Boolean,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val gapPx = with(density) { BOARD_GAP.roundToPx() }
 
-    // The board's first GET /api/config load: the grid, the views, and
-    // the integration flags below all derive from that answer (the web
-    // loads the config on mount and retries while it is missing).
-    LaunchedEffect(Unit) {
+    // The board's GET /api/config load: the grid, the views, and the
+    // integration flags below all derive from that answer (the web loads
+    // the config on mount and retries while it is missing). Keyed on the
+    // server base: when the user points the app at a different server,
+    // the previous server's board answer is dropped and re-fetched.
+    LaunchedEffect(DashApi.baseUrl) {
+        state.reset()
         while (state.apiConfig == null) {
             try {
                 state.load(DashApi.getConfig())
@@ -188,9 +194,9 @@ fun TabletBoard(
     val views = remember(state.apiConfig, grid) {
         normalizeViews(state.apiConfig?.board?.views, grid)
     }
-    val visible = remember(views) { views.order.filter { it !in views.hidden } }
+    val visible = remember(views, grid) { visibleOrder(views, grid) }
     val layout = remember(visible, views, grid) {
-        autoLayout(visible, views.sizes, views.geometry, grid.cols, grid.rows)
+        autoLayout(visible, views.sizes, views.geometry, grid.cols)
     }
     // The rows the board actually renders: the auto flow is open on rows,
     // so a layout that overflows the grid's rows stretches the board with
@@ -250,6 +256,20 @@ fun TabletBoard(
             haLoad()
         }
     }
+
+    // A board tile's display name: a Home Assistant tile wears the
+    // entity's friendly label (the web's HATile card head: the tile's
+    // label, else the entity's own label, else the id); view tiles wear
+    // their view/label name.
+    fun displayName(id: String): String {
+        val ht = views.haTiles.firstOrNull { it.id == id }
+        return if (ht != null) {
+            haTileLabel(ht, haEntities[ht.entity])
+        } else {
+            tileName(id, views)
+        }
+    }
+
 
     // The live drag data (the web's dragRef, kept out of composition).
     val dragHolder = remember { object { var session: DragSession? = null } }
@@ -447,14 +467,14 @@ fun TabletBoard(
                         // grid.
                         BoardTile(
                             id = maxId,
-                            name = tileName(maxId, views),
+                            name = displayName(maxId),
                             cell = TileGeometry(1, 1, grid.cols, rows),
                             unitW = unitWDp,
                             unitH = unitHDp,
                             editMode = false,
                             onTitleClick = { maximized = null },
                         ) {
-                            haContent(maxId, views, haEntities, haOff, haLoad)
+                            haContent(maxId, views, haEntities, haOff, haLoad, dark)
                         }
                     } else {
                         visible.forEach { id ->
@@ -462,7 +482,7 @@ fun TabletBoard(
                             val cell = preview?.takeIf { it.id == id }?.cell ?: base
                             BoardTile(
                                 id = id,
-                                name = tileName(id, views),
+                                name = displayName(id),
                                 cell = cell,
                                 unitW = unitWDp,
                                 unitH = unitHDp,
@@ -499,6 +519,7 @@ fun TabletBoard(
                                     haLoad,
                                     hermesChat,
                                     hermesPush,
+                                    dark,
                                 )
                             }
                         }
@@ -551,13 +572,18 @@ private fun tileContent(
     haLoad: () -> Unit,
     hermesChat: Boolean,
     hermesPush: Boolean,
+    dark: Boolean,
 ) {
     when (id) {
-        "calendar" -> CalendarScreen(wide = true, shared = sections)
+        "calendar" -> CalendarScreen(
+            wide = true,
+            shared = sections,
+            calendarMode = views.calendarMode,
+        )
         "chat" -> ChatPane(state = chat, scope = chatScope, configured = hermesChat)
         "home" -> HomeScreen(showTitle = false)
         "push" -> PushPane(configured = hermesPush, shared = sections)
-        else -> haContent(id, views, haEntities, haOff, haLoad)
+        else -> haContent(id, views, haEntities, haOff, haLoad, dark)
     }
 }
 
@@ -569,6 +595,7 @@ private fun haContent(
     haEntities: Map<String, HAEntity>,
     haOff: Boolean,
     haLoad: () -> Unit,
+    dark: Boolean,
 ) {
     val tile = views.haTiles.firstOrNull { it.id == id } ?: return
     HATileView(
@@ -576,6 +603,7 @@ private fun haContent(
         entity = haEntities[tile.entity],
         haOff = haOff,
         onService = haLoad,
+        dark = dark,
     )
 }
 

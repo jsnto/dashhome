@@ -67,12 +67,16 @@ private const val WEEKS = 6
  * on exactly the state the board's window was showing. When absent the
  * screen owns its own saveable state. [configVersion] is bumped when the
  * settings screen closes, re-fetching the board's calendar_mode then.
+ * [calendarMode], when the tablet board supplies it, is the board's live
+ * server value (adopted after every board write) and is used directly -
+ * the tile then renders exactly the mode the board's views carry.
  */
 @Composable
 fun CalendarScreen(
     wide: Boolean = false,
     shared: TabletSectionState? = null,
     configVersion: Int = 0,
+    calendarMode: String? = null,
 ) {
     val zone = remember { ZoneId.systemDefault() }
     val today = remember { LocalDate.now(zone) }
@@ -108,9 +112,19 @@ fun CalendarScreen(
 
     // The board's calendar_mode (the web's CalendarSection fetches it from
     // the config and honors it on every form factor where the calendar
-    // renders); re-fetched when the settings screen closed (configVersion).
-    var calMode by remember { mutableStateOf("month") }
-    LaunchedEffect(DashApi.baseUrl, configVersion) {
+    // renders). When the board supplies its live value (a board tile) that
+    // is the source of truth - it updates as board writes are adopted, so
+    // a mode change saved anywhere is reflected in the tile without a
+    // restart; otherwise (the phone section) it is fetched from the
+    // config, re-fetched when the settings screen closed (configVersion).
+    var calMode by remember {
+        mutableStateOf(if (calendarMode == "schedule") "schedule" else "month")
+    }
+    LaunchedEffect(DashApi.baseUrl, configVersion, calendarMode) {
+        if (calendarMode != null) {
+            calMode = if (calendarMode == "schedule") "schedule" else "month"
+            return@LaunchedEffect
+        }
         try {
             val v = DashApi.getConfig().board.views
             calMode = if (v?.calendarMode == "schedule") "schedule" else "month"

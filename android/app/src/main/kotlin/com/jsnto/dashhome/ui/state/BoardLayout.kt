@@ -85,7 +85,7 @@ fun firstFreeCell(
 ): TileGeometry? {
     if (w < 1 || h < 1) return null
     if (w > cols || h > rows) return null
-    val layout = autoLayout(order, sizes, geometry, cols, rows)
+    val layout = autoLayout(order, sizes, geometry, cols)
     for (y in 1..(rows - h + 1)) {
         for (x in 1..(cols - w + 1)) {
             val cell = TileGeometry(x, y, w, h)
@@ -111,56 +111,49 @@ fun autoLayout(
     sizes: Map<String, String?>,
     fixed: Map<String, TileGeometry> = emptyMap(),
     cols: Int = GRID_DEFAULTS.cols,
-    rows: Int = GRID_DEFAULTS.rows,
 ): Map<String, TileGeometry> {
-    val occupied = Array(rows + 1) { BooleanArray(cols + 1) }
+    // The web's single pass, ported 1:1 (frontend/src/tileGrid.ts):
+    // stored placements are placed as-is (the server's normalization
+    // already resolved overlaps), and the rest flow in board order
+    // behind a cursor that never moves backwards. Rows are open for
+    // the auto flow: if the board overflows its grid rows the grid
+    // stretches (renderedRows models that); user-placed cells stay
+    // bounded by clampCell/dropRefused.
+    val placed = mutableListOf<TileGeometry>()
+    for (id in order) fixed[id]?.let { placed.add(it) }
     val layout = LinkedHashMap<String, TileGeometry>()
-
-    fun cellFree(x: Int, y: Int, w: Int, h: Int): Boolean {
-        if (x < 1 || y < 1) return false
-        if (x + w - 1 > cols || y + h - 1 > rows) return false
-        for (yy in y until y + h) for (xx in x until x + w) if (occupied[yy][xx]) return false
-        return true
-    }
-
-    fun mark(cell: TileGeometry) {
-        for (yy in cell.y until cell.y + cell.h) for (xx in cell.x until cell.x + cell.w) occupied[yy][xx] = true
-    }
-
-    // Pass 1 — the stored placements (CSS places every explicitly
-    // positioned tile before the auto flow starts). Clamped; a stored
-    // cell that overlaps an earlier one is dropped back into the flow.
-    for (id in order) {
-        fixed[id]?.let { stored ->
-            val clamped = clampCell(stored, cols, rows)
-            if (cellFree(clamped.x, clamped.y, clamped.w, clamped.h)) {
-                layout[id] = clamped
-                mark(clamped)
-            }
-        }
-    }
-
-    // Pass 2 — the auto flow of the rest, in board order, behind a cursor
-    // that never moves backwards (the sparse flow: gaps are not
-    // backfilled).
-    var cursorX = 1
+    fun free(y: Int, x: Int, w: Int): Boolean =
+        placed.none { it.x < x + w && x < it.x + it.w && it.y < y + 1 && y < it.y + it.h }
     var cursorY = 1
+    var cursorX = 1
     for (id in order) {
-        if (layout.containsKey(id)) continue
+        // A stored placement is placed as-is; the rest of the loop body
+        // is skipped for it (the web's `continue`).
+        val stored = fixed[id]
+        if (stored != null) {
+            layout[id] = stored
+            continue
+        }
         val w = minOf(stepWidth(sizes[id], cols), cols)
-        outer@ while (cursorY <= rows) {
-            for (x in cursorX..(cols - w + 1)) {
-                if (cellFree(x, cursorY, w, 1)) {
-                    val cell = TileGeometry(x, cursorY, w, 1)
-                    layout[id] = cell
-                    mark(cell)
-                    cursorX = x + w
-                    break@outer
+        var y = cursorY
+        var cell: TileGeometry? = null
+        while (cell == null) {
+            // A width-w tile starting at x occupies columns x..x+w-1, so
+            // x may reach cols-w+1 (an xl tile fills the row from column
+            // 1). Rows beyond the cursor restart the scan at column 1.
+            val xStart = if (y == cursorY) cursorX else 1
+            for (x in xStart..(cols - w + 1)) {
+                if (free(y, x, w)) {
+                    cell = TileGeometry(x, y, w, 1)
+                    break
                 }
             }
-            cursorY += 1
-            cursorX = 1
+            if (cell == null) y++
         }
+        placed.add(cell!!)
+        layout[id] = cell!!
+        cursorY = cell!!.y
+        cursorX = cell!!.x + cell!!.w
     }
     return layout
 }
@@ -255,7 +248,7 @@ fun dropRefused(
     rows: Int = GRID_DEFAULTS.rows,
 ): Boolean {
     if (cell.x + cell.w - 1 > cols || cell.y + cell.h - 1 > rows) return true
-    val layout = autoLayout(order, sizes, geometry, cols, rows)
+    val layout = autoLayout(order, sizes, geometry, cols)
     for (other in order) {
         if (other == id) continue
         val c = layout[other] ?: continue

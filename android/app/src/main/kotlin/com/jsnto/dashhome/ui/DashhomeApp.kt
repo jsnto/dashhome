@@ -182,6 +182,7 @@ private fun dashhomeRoot(
                 chatScope = chatScope,
                 sections = sections,
                 onOpen = { openItem = it.ordinal },
+                dark = (themeName == "dark"),
             )
             if (open != null) {
                 TabletDrillDown(
