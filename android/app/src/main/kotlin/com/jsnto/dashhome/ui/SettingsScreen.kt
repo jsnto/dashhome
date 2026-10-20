@@ -76,8 +76,9 @@ private const val SECTION_DANGER = "Danger zone"
  *
  * [theme] is the currently effective theme ("light"/"dark") and
  * [onThemePick] persists the user's choice; [onBoard] adopts a board a
- * save just persisted server-side (the web's onBoard, so the board
- * underneath - when open - stays in sync).
+ * save just persisted server-side - into this screen's cfg (so the
+ * sections re-derive their views/grid from the answer after every save,
+ * the web's adopt-after-save) and to the board underneath, when open.
  */
 @Composable
 fun SettingsScreen(
@@ -118,6 +119,15 @@ fun SettingsScreen(
     // derives it.
     val grid = remember(cfg) { normalizeGrid(cfg?.board?.grid) }
     val views = remember(cfg, grid) { normalizeViews(cfg?.board?.views, grid) }
+
+    // Every save persists server-side and returns the updated board:
+    // adopt it into this screen's cfg (the web's App adopts the answer
+    // via onBoard, so the re-derived views/grid stay current while the
+    // panel is open), then hand it on.
+    val adoptBoard: (Board) -> Unit = { board ->
+        cfg = cfg?.copy(board = board)
+        onBoard(board)
+    }
 
     Scaffold(
         topBar = { BackAppBar(title = "Settings", onBack = onBack) },
@@ -169,12 +179,12 @@ fun SettingsScreen(
                         if (cfg == null && cfgErr != null) {
                             ErrorNote(cfgErr!!)
                         } else {
-                            TilesSection(views = views, grid = grid, onBoard = onBoard)
+                            TilesSection(views = views, grid = grid, onBoard = adoptBoard)
                         }
                     }
                     SECTION_HA -> {
                         SectionHeader(SECTION_HA)
-                        HASection(views = views, grid = grid, onBoard = onBoard)
+                        HASection(views = views, grid = grid, onBoard = adoptBoard)
                     }
                     SECTION_SERVER -> {
                         SectionHeader(SECTION_SERVER)
@@ -574,20 +584,12 @@ private fun HASection(
     var kind by remember { mutableStateOf("button") }
     var label by remember { mutableStateOf("") }
 
-    // The placements this session has already persisted for the tiles
-    // it added (the one-shot config above goes stale after every save,
-    // so consecutive adds must see each other's cells - the web
-    // re-derives its views from the adopted config after each save).
-    var savedCells by remember { mutableStateOf<Map<String, TileGeometry>>(emptyMap()) }
-
     // Persist the full ha_tiles list (the endpoint replaces the list),
     // optionally together with the new tile's default placement; the
     // server re-normalizes the order/hidden/geometry around the new set.
     fun persist(
         next: List<HABoardTile>,
         geometry: Map<String, TileGeometry?>? = null,
-        placedId: String? = null,
-        placedCell: TileGeometry? = null,
     ) {
         if (busy) return
         val before = tiles
@@ -597,9 +599,6 @@ private fun HASection(
         scope.launch {
             try {
                 onBoard(DashApi.setViews(haTiles = next, geometry = geometry))
-                if (placedId != null && placedCell != null) {
-                    savedCells = savedCells + (placedId to placedCell)
-                }
                 entity = ""
                 label = ""
             } catch (e: ApiException) {
@@ -614,20 +613,19 @@ private fun HASection(
     // The new tile's default placement: a 2x2 cell on the board's grid,
     // the first one (in reading order) that is free of the board's
     // effective layout (the stored placements plus the auto flow, hidden
-    // tiles included), computed over the optimistic tile list plus the
-    // placements this session already saved. A grid too small for the
-    // span, or a board with no free cell, leaves the tile to auto
-    // placement (no geometry in the save).
+    // tiles included), computed over the layout the screen last adopted
+    // from the server with the optimistic tile list applied. A grid too
+    // small for the span, or a board with no free cell, leaves the tile
+    // to auto placement (no geometry in the save).
     fun add() {
         val entityId = entity.trim()
         if (entityId.isEmpty() || haOff) return
         val id = nextHATileId(tiles)
-        val liveIds = tiles.map { it.id }.toSet()
         val nv = normalizeViews(views.copy(haTiles = tiles), grid)
         val cell = firstFreeCell(
             nv.order,
             nv.sizes,
-            nv.geometry + savedCells.filterKeys { it in liveIds },
+            nv.geometry,
             NEW_TILE_DEFAULT_SIZE.w,
             NEW_TILE_DEFAULT_SIZE.h,
             grid.cols,
@@ -641,8 +639,6 @@ private fun HASection(
                 kind = kind,
             ),
             cell?.let { mapOf(id to it) },
-            placedId = id,
-            placedCell = cell,
         )
     }
 

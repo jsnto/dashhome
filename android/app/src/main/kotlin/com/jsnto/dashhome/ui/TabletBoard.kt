@@ -547,7 +547,6 @@ fun TabletBoard(
         TileEditModal(
             id = id,
             views = views,
-            grid = grid,
             entities = haEntities,
             haOff = haOff,
             onBoard = { board ->

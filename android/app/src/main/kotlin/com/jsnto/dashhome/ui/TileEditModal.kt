@@ -42,7 +42,6 @@ import com.jsnto.dashhome.api.ApiException
 import com.jsnto.dashhome.api.Board
 import com.jsnto.dashhome.api.BoardViews
 import com.jsnto.dashhome.api.DashApi
-import com.jsnto.dashhome.api.GridDims
 import com.jsnto.dashhome.api.HABoardTile
 import com.jsnto.dashhome.api.HAEntity
 import com.jsnto.dashhome.ui.state.VIEW_IDS
@@ -59,16 +58,16 @@ private val SIZES = listOf("s", "m", "l", "xl")
  * board uses when it places the tile automatically), the Calendar
  * tile's view mode (its content), and a Home Assistant tile's entity,
  * kind and label (its HA mapping) - saved through the same board-views
- * path as the settings screen. Closes from the Close/Cancel button or
- * the system back (the web's Escape/backdrop close); a successful save
- * closes it too (the change is visible on the board itself).
+ * path as the settings screen. Closes from the Close/Cancel button, a
+ * tap on the scrim (the web's Escape/backdrop close; a tap on the card
+ * itself never closes it), or the system back; a successful save closes
+ * it too (the change is visible on the board itself).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TileEditModal(
     id: String,
     views: BoardViews,
-    grid: GridDims,
     entities: Map<String, HAEntity>,
     haOff: Boolean,
     onBoard: (Board) -> Unit,
@@ -164,12 +163,15 @@ Box(
     Surface(
         shape = MaterialTheme.shapes.medium,
         tonalElevation = 4.dp,
+        // The card absorbs taps itself: only a tap on the scrim, outside
+        // the card, closes the modal (the web's pressOnBackdrop guard).
         modifier = Modifier
             .align(Alignment.Center)
             .fillMaxWidth()
             .fillMaxHeight(0.8f)
             .padding(24.dp)
-            .testTag("tileEditModal"),
+            .testTag("tileEditModal")
+            .clickable(interactionSource = null, indication = null) {},
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Column(
