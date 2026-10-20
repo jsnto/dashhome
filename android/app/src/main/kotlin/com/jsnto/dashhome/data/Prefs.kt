@@ -3,15 +3,18 @@ package com.jsnto.dashhome.data
 import android.content.Context
 
 /**
- * The app's client-side persistence: the dashhome server URL. The
- * dashboard has no login, so the URL is the only client-side setting; it
- * lives in SharedPreferences and is restored into the API client on
- * startup (MainActivity) and when the app (re)connects.
+ * The app's client-side persistence: the dashhome server URL and the
+ * user's light/dark theme choice (the web persists it in
+ * localStorage['dashhome-theme']). The dashboard has no login, so these
+ * are the only client-side settings; they live in SharedPreferences and
+ * are restored into the app on startup (MainActivity) and when the app
+ * (re)connects.
  */
 object Prefs {
 
     private const val FILE = "dashhome"
     private const val KEY_BASE = "server_url"
+    private const val KEY_THEME = "theme"
 
     private fun store(context: Context) =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -29,5 +32,22 @@ object Prefs {
 
     fun clear(context: Context) {
         store(context).edit().remove(KEY_BASE).apply()
+    }
+
+    /**
+     * The user's explicit theme choice ("light" or "dark"), or null when
+     * the user never picked (the OS preference applies and is followed
+     * live) - the web's readStoredTheme.
+     */
+    fun theme(context: Context): String? {
+        val t = store(context).getString(KEY_THEME, null)
+        return if (t == "light" || t == "dark") t else null
+    }
+
+    /** Persist the user's theme choice (the web's storeTheme). */
+    fun setTheme(context: Context, theme: String) {
+        if (theme == "light" || theme == "dark") {
+            store(context).edit().putString(KEY_THEME, theme).apply()
+        }
     }
 }

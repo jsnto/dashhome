@@ -13,6 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.jsnto.dashhome.api.ApiException
 
@@ -44,7 +46,9 @@ fun ErrorNote(err: ApiException, modifier: Modifier = Modifier) {
 
 /**
  * A small tab chip (the web's `.tab` / `.tab on`), used for the calendar
- * tabs and the push-history tabs.
+ * tabs, the push-history tabs, and the settings section nav. Carries the
+ * selected state in semantics (the web's aria-pressed), so a screen
+ * reader - and the tests - can see the active tab.
  */
 @Composable
 fun TabChip(
@@ -53,13 +57,14 @@ fun TabChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val isSel = selected
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(8.dp),
-        color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary
+        color = if (isSel) MaterialTheme.colorScheme.primary else Color.Transparent,
+        contentColor = if (isSel) MaterialTheme.colorScheme.onPrimary
         else MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier,
+        modifier = modifier.semantics { this[SemanticsProperties.Selected] = isSel },
     ) {
         Text(
             text = label,

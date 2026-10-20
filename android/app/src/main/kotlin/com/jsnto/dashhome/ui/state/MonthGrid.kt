@@ -74,7 +74,7 @@ object MonthGrid {
 
     /** "10:30 AM" from an RFC3339 timestamp in [zone]. */
     fun fmtTime(iso: String, zone: ZoneId): String =
-        toInstant(iso)?.atZone(zone)?.toLocalTime()?.format(timeFmt) ?: ""
+        parseInstant(iso)?.atZone(zone)?.toLocalTime()?.format(timeFmt) ?: ""
 
     /** "Oct 5" from an RFC3339 timestamp in [zone] (day key also works). */
     fun fmtDate(iso: String, zone: ZoneId): String =
@@ -102,12 +102,13 @@ object MonthGrid {
     fun toLocalDate(iso: String, zone: ZoneId): LocalDate? =
         try {
             if (iso.length <= 10 && !iso.contains('T')) LocalDate.parse(iso)
-            else Instant.parse(iso).atZone(zone).toLocalDate()
+            else parseInstant(iso)?.atZone(zone)?.toLocalDate()
         } catch (e: Exception) {
             null
         }
 
-    private fun toInstant(iso: String): Instant? =
+    /** The instant an RFC3339 timestamp names, or null when unparseable. */
+    fun parseInstant(iso: String): Instant? =
         try {
             Instant.parse(iso)
         } catch (e: Exception) {

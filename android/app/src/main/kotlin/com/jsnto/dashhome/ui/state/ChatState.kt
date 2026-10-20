@@ -71,11 +71,18 @@ class ChatState {
      * - or an error note - is appended when it lands. A second send
      * supersedes the in-flight one: the old request is cancelled, so only
      * the newest reply lands.
+     *
+     * [fromVoice] marks a voice-originated message (the web's `fromVoice`
+     * flag on ChatPanel.sendText); for those, [onVoiceReply] is called with
+     * the reply when it lands (the web reads the reply aloud only for
+     * voice-originated messages).
      */
     fun send(
         text: String,
         scope: CoroutineScope,
         request: suspend (history: List<ChatMessage>) -> String,
+        fromVoice: Boolean = false,
+        onVoiceReply: (String) -> Unit = {},
     ) {
         if (text.isBlank()) return
         sendJob?.cancel()
@@ -84,7 +91,9 @@ class ChatState {
         busy = true
         val job = scope.launch {
             try {
-                addAssistantMessage(request(history))
+                val reply = request(history)
+                addAssistantMessage(reply)
+                if (fromVoice) onVoiceReply(reply)
             } catch (e: ApiException) {
                 addAssistantMessage(
                     if (e.detail.isNullOrBlank()) e.code else "${e.code} — ${e.detail}",

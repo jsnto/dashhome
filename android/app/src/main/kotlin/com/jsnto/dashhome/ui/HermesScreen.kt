@@ -1,7 +1,12 @@
 package com.jsnto.dashhome.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,17 +15,24 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -31,6 +43,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -41,6 +56,8 @@ import com.jsnto.dashhome.markdown.MarkdownText
 import com.jsnto.dashhome.ui.state.ChatState
 import com.jsnto.dashhome.ui.state.PushFeed
 import com.jsnto.dashhome.ui.state.TabletSectionState
+import com.jsnto.dashhome.ui.state.TtsSpeaker
+import com.jsnto.dashhome.ui.state.VoiceInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -51,7 +68,9 @@ import kotlinx.coroutines.launch
  *
  * [shared] is the tablet's shared section state: the board's push window
  * and this view's push pane then agree on the selected history tab. The
- * chat thread is already shared at the root via [chat].
+ * chat thread is already shared at the root via [chat]. [configVersion]
+ * is bumped when the settings screen closed, re-fetching the integration
+ * flags then.
  */
 @Composable
 fun HermesScreen(
@@ -59,12 +78,13 @@ fun HermesScreen(
     chatScope: CoroutineScope,
     wide: Boolean = false,
     shared: TabletSectionState? = null,
+    configVersion: Int = 0,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) } // 0 = chat, 1 = push
     // Integration flags from /api/config (drive friendly setup notes).
     var hermesChat by remember { mutableStateOf(true) }
     var hermesPush by remember { mutableStateOf(true) }
-    LaunchedEffect(DashApi.baseUrl) {
+    LaunchedEffect(DashApi.baseUrl, configVersion) {
         hermesChat = try { DashApi.getConfig().hermesChat } catch (e: ApiException) { true }
         hermesPush = try { DashApi.getConfig().hermesPush } catch (e: ApiException) { true }
     }
@@ -123,16 +143,74 @@ fun HermesScreen(
  * The chat pane: the conversation thread plus an input line. The whole
  * thread (oldest first) is sent as the `conversation` payload with each
  * message, same as the web.
+ *
+ * Voice input mirrors the web's useVoice: the platform's SpeechRecognizer
+ * fills the input line (interim results live, the final transcript sent
+ * through the same send path), and TextToSpeech reads a reply aloud only
+ * when the message that produced it was voice-originated. The mic
+ * degrades gracefully: no recognition service, or the microphone
+ * permission denied, shows the reason instead of the button working
+ * silently.
  */
 @Composable
 fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
     var input by remember { mutableStateOf("") }
+    // True when the message just submitted was voice-originated (the web's
+    // wasVoiceRef): its reply is the only one read aloud.
+    var wasVoice by remember { mutableStateOf(false) }
 
-    fun send() {
+    val context = LocalContext.current
+    val speaker = remember { TtsSpeaker(context) }
+
+    // True when the message just submitted was voice-originated (the web's
+    // wasVoiceRef): its reply is the only one read aloud.
+    fun submit() {
         val text = input.trim()
         if (text.isBlank()) return
         input = ""
-        state.send(text, scope) { history -> DashApi.chat(text, history) }
+        val v = wasVoice
+        wasVoice = false
+        state.send(text, scope, { history -> DashApi.chat(text, history) }, fromVoice = v, onVoiceReply = { reply -> speaker.speak(reply) })
+    }
+
+    val voice = remember {
+        VoiceInput(context) { text ->
+            input = text
+            wasVoice = true
+            submit()
+        }
+    }
+    DisposableEffect(voice, speaker) {
+        onDispose {
+            voice.destroy()
+            speaker.shutdown()
+        }
+    }
+
+    // The RECORD_AUDIO runtime permission (Android-only; the web's mic
+    // permission prompt is the platform analog).
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            voice.start()
+        } else {
+            voice.blocked = "Microphone access was denied - allow the mic in the app to use voice commands"
+        }
+    }
+
+    fun onMicTap() {
+        if (voice.listening) {
+            voice.stop()
+            return
+        }
+        if (voice.supported && voice.permissionGranted()) {
+            voice.start()
+        } else if (voice.supported) {
+            permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        } else {
+            voice.blocked = "Voice recognition is unavailable on this device"
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(top = 12.dp)) {
@@ -153,6 +231,9 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
         if (state.busy) {
             Note("thinking…")
         }
+        voice.blocked?.let {
+            Note(it, modifier = Modifier.padding(top = 6.dp))
+        }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -160,23 +241,46 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
                 .padding(top = 8.dp),
         ) {
             OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                placeholder = { Text("Message Hermes…") },
+                value = if (voice.listening) voice.interim else input,
+                onValueChange = { if (!voice.listening) input = it },
+                placeholder = {
+                    Text(if (voice.listening) "Listening…" else "Message Hermes…")
+                },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(
                     onSend = {
-                        send()
+                        submit()
                         defaultKeyboardAction(ImeAction.Send)
                     }
                 ),
-                enabled = !state.busy,
+                enabled = !state.busy && !voice.listening,
                 modifier = Modifier.weight(1f),
             )
+            // The mic (the web's mic button): tap to start/stop listening;
+            // the final transcript is sent through the shared send path.
+            Box(
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(if (voice.listening) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable(
+                        onClick = { onMicTap() },
+                        onClickLabel = if (voice.listening) "Stop listening" else "Voice input",
+                    )
+                    .testTag("chatMic"),
+            ) {
+                Icon(
+                    imageVector = if (voice.listening) Icons.Filled.Stop else Icons.Filled.Mic,
+                    contentDescription = if (voice.listening) "Stop listening" else "Voice input",
+                    modifier = Modifier.align(Alignment.Center),
+                    tint = if (voice.listening) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Button(
-                onClick = { send() },
-                enabled = state.canSend(input),
+                onClick = { submit() },
+                enabled = state.canSend(if (voice.listening) voice.interim else input),
                 modifier = Modifier.padding(start = 8.dp),
             ) {
                 Text("Send")

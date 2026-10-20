@@ -79,7 +79,82 @@ object Parsers {
         haEmbedUrlPath = b?.optJSONObject("ha_embed")
             ?.let { if (it.isNull("url_path")) null else it.optString("url_path", "").ifEmpty { null } },
         haEmbedTokenUrl = b?.optJSONObject("ha_embed")?.optBoolean("token_url", false) ?: false,
+        grid = b?.optJSONObject("grid")?.let { g ->
+            val cols = optIntIfInt(g, "cols")
+            val rows = optIntIfInt(g, "rows")
+            if (cols != null && rows != null) GridDims(cols, rows) else null
+        },
+        views = b?.optJSONObject("views")?.let { v ->
+            BoardViews(
+                order = v.optJSONArray("order")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { arr.opt(it) as? String }
+                } ?: emptyList(),
+                hidden = v.optJSONArray("hidden")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { arr.opt(it) as? String }
+                } ?: emptyList(),
+                calendarMode = v.optString("calendar_mode", "month"),
+                sizes = v.optJSONObject("sizes")?.let { o ->
+                    buildMap { for (k in o.keys()) { val s = o.optString(k, ""); if (s.isNotEmpty()) put(k, s) } }
+                } ?: emptyMap(),
+                geometry = v.optJSONObject("geometry")?.let { o ->
+                    buildMap {
+                        for (k in o.keys()) {
+                            val cell = cellFrom(o.optJSONObject(k)) ?: continue
+                            put(k, cell)
+                        }
+                    }
+                } ?: emptyMap(),
+                haTiles = v.optJSONArray("ha_tiles")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { haTileFrom(arr.optJSONObject(it)) }
+                } ?: emptyList(),
+            )
+        },
     )
+
+    /**
+     * One explicit grid placement: an object with integer x/y/w/h (the
+     * board file is freehand-editable, so anything else is dropped).
+     */
+    private fun cellFrom(c: JSONObject?): TileGeometry? {
+        if (c == null) return null
+        val x = optIntIfInt(c, "x") ?: return null
+        val y = optIntIfInt(c, "y") ?: return null
+        val w = optIntIfInt(c, "w") ?: return null
+        val h = optIntIfInt(c, "h") ?: return null
+        return TileGeometry(x, y, w, h)
+    }
+
+    /**
+     * One Home Assistant board tile entry: string id/entity/kind plus an
+     * optional string label (a malformed entry is dropped, never
+     * crashed on - the board file is freehand-editable).
+     */
+    private fun haTileFrom(t: JSONObject?): HABoardTile? {
+        if (t == null) return null
+        val id = t.optString("id", "")
+        val entity = t.optString("entity", "")
+        val kind = t.optString("kind", "")
+        if (id.isEmpty() || entity.isEmpty() || kind.isEmpty()) return null
+        val label = t.optString("label", "").ifEmpty { null }
+        return HABoardTile(id, entity, label, kind)
+    }
+
+    /**
+     * An integer-valued JSON number as an Int, or null: the board file is
+     * freehand-editable, so a missing field, a string, or a fractional
+     * number is not an integer (mirrors the web's Number.isInteger
+     * checks).
+     */
+    private fun optIntIfInt(o: JSONObject, key: String): Int? {
+        return when (val v = o.opt(key)) {
+            is Int -> v
+            is Long -> v.takeIf { it in Int.MIN_VALUE..Int.MAX_VALUE }?.toInt()
+            is Double ->
+                v.takeIf { it == it.toLong().toDouble() }?.toLong()
+                    ?.takeIf { it in Int.MIN_VALUE..Int.MAX_VALUE }?.toInt()
+            else -> null
+        }
+    }
 
     /** GET /api/calendars → the calendars list. */
     fun calendars(body: String): List<CalendarInfo> = parse("calendars") {
@@ -119,6 +194,36 @@ object Parsers {
         val url = JSONObject(body).getString("url")
         if (url.isBlank()) throw Exception("empty url")
         url
+    }
+
+    /** GET /api/ha/entities → the entity state list. */
+    fun haEntities(body: String): List<HAEntity> = parse("ha_entities") {
+        val arr = JSONObject(body).getJSONArray("entities")
+        (0 until arr.length()).map {
+            val e = arr.getJSONObject(it)
+            HAEntity(
+                entityId = e.getString("entity_id"),
+                label = e.optString("label"),
+                friendly = e.optString("friendly"),
+                state = e.optString("state"),
+                lastUpdated = e.optString("last_updated", "").ifEmpty { null },
+                lastChanged = e.optString("last_changed", "").ifEmpty { null },
+            )
+        }
+    }
+
+    /** POST /api/ha/service → the allowlisted action result. */
+    fun haService(body: String): HAServiceResult = parse("ha_service") {
+        val j = JSONObject(body)
+        val result = j.optJSONObject("result")?.let { o ->
+            buildMap { for (k in o.keys()) put(k, o.opt(k)) }
+        }
+        HAServiceResult(
+            ok = j.optBoolean("ok", false),
+            entityId = j.optString("entity_id"),
+            action = j.optString("action"),
+            result = result,
+        )
     }
 
     /** POST /api/hermes/chat → the reply text. */
