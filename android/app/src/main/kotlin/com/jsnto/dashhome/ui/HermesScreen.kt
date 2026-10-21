@@ -286,7 +286,7 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
             }
             Button(
                 onClick = { submit() },
-                enabled = state.canSend(if (voice.listening) voice.interim else input),
+                enabled = state.canSend(input),
                 modifier = Modifier.padding(start = 8.dp),
             ) {
                 Text("Send")
