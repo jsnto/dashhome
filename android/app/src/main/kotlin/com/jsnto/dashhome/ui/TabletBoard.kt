@@ -39,7 +39,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -671,6 +673,13 @@ private fun BoardTile(
 ) {
     val density = LocalDensity.current
     val gap = BOARD_GAP
+    // Each handle's live position in the root space, shared between the
+    // layout callback and the pointer blocks (pointerInput keyed on Unit
+    // keeps its attach-time closures): the pointer travel is measured in
+    // this stable space (the web's client coordinates) - the handle's
+    // own local space moves with the tile being dragged.
+    val gripPos = remember { object { var pos = Offset.Zero } }
+    val resizePos = remember { object { var pos = Offset.Zero } }
     val wDp = maxOf(unitW * cell.w + gap * (cell.w - 1), 1.dp)
     val hDp = maxOf(unitH * cell.h + gap * (cell.h - 1), 1.dp)
     val xPx = with(density) { ((cell.x - 1) * (unitW + gap)).roundToPx() }
@@ -745,15 +754,16 @@ private fun BoardTile(
                                     color = MaterialTheme.colorScheme.surfaceVariant,
                                     shape = RoundedCornerShape(6.dp),
                                 )
+                                .onGloballyPositioned { c -> gripPos.pos = c.positionInRoot() }
                                 .pointerInput(Unit) {
                                     var down: Offset? = null
                                     detectDragGestures(
                                         onDragStart = { o ->
-                                            down = o
-                                            onGripDown(o)
+                                            down = o + gripPos.pos
+                                            onGripDown(down!!)
                                         },
                                         onDrag = { change, _ ->
-                                            down?.let { onGripDrag(it, change.position) }
+                                            down?.let { onGripDrag(it, change.position + gripPos.pos) }
                                         },
                                         onDragEnd = onGripEnd,
                                         onDragCancel = onGripCancel,
@@ -804,15 +814,16 @@ private fun BoardTile(
                             .align(Alignment.BottomEnd)
                             .padding(end = 6.dp, bottom = 6.dp)
                             .size(18.dp)
+                            .onGloballyPositioned { c -> resizePos.pos = c.positionInRoot() }
                             .pointerInput(Unit) {
                                 var down: Offset? = null
                                 detectDragGestures(
                                     onDragStart = { o ->
-                                        down = o
-                                        onResizeDown(o)
+                                        down = o + resizePos.pos
+                                        onResizeDown(down!!)
                                     },
                                     onDrag = { change, _ ->
-                                        down?.let { onResizeDrag(it, change.position) }
+                                        down?.let { onResizeDrag(it, change.position + resizePos.pos) }
                                     },
                                     onDragEnd = onResizeEnd,
                                     onDragCancel = onResizeCancel,

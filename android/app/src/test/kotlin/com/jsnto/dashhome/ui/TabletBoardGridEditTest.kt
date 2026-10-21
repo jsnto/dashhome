@@ -5,6 +5,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import com.jsnto.dashhome.api.DashApi
@@ -28,9 +29,11 @@ import org.robolectric.annotation.Config
  * /api/config/views, adopting the server's answer. The tests run
  * against the in-test FakeDashServer, which records the writes.
  *
- * The performTouchInput coordinate space is the target node's own local
- * system, so a drag starts at the node's own center (the pattern the
- * previous column-split suite used).
+ * The drag helper dispatches its touch on the root node, so the
+ * synthesized finger holds its root-space position while the preview
+ * moves the tile (a real finger's travel, the web's client coordinates);
+ * a drag in the handle's own local space would ride the moving tile and
+ * double its own travel.
  */
 @RunWith(RobolectricTestRunner::class)
 class TabletBoardGridEditTest {
@@ -89,16 +92,18 @@ class TabletBoardGridEditTest {
     }
 
     /**
-     * Drag [tag] (its own center) by (dx, dy) px, in small steps.
+     * Drag [tag] (its own center) by (dx, dy) px, in small steps, in the
+     * root coordinate space (the touch rides the root node): the finger
+     * holds its root position as the preview moves the tile.
      */
     private fun drag(tag: String, dx: Float, dy: Float) {
-        val s = size(tag)
-        val start = Offset(s.width / 2f, s.height / 2f)
+        val node = composeRule.onNodeWithTag(tag).fetchSemanticsNode()
+        val start = node.positionInRoot + Offset(node.size.width / 2f, node.size.height / 2f)
         val steps = 20
-        composeRule.onNodeWithTag(tag).performTouchInput {
+        composeRule.onRoot().performTouchInput {
             down(start)
             for (i in 1..steps) {
-                moveTo(Offset(start.x + dx * i / steps, start.y + dy * i / steps))
+                moveTo(start + Offset(dx * i / steps, dy * i / steps))
             }
             up()
         }
