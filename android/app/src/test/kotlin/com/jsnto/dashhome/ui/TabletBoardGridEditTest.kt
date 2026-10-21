@@ -179,6 +179,41 @@ class TabletBoardGridEditTest {
         assertEquals(beforeY + 2 * pitchY(), rootY("boardWin-calendar"), 4f)
     }
 
+    // --- a second drag in the same session uses the adopted layout ---------
+
+    @Config(sdk = [35], qualifiers = "w1200dp-h1000dp")
+    @Test
+    fun secondDragInSameSessionUsesTheAdoptedLayout() {
+        startApp()
+
+        composeRule.onNodeWithText("Edit tiles").performClick()
+        composeRule.waitForIdle()
+        val beforeY = rootY("boardWin-push")
+
+        // First drag: push (7,2,6,1) down two rows to (7,4,6,1). The save is
+        // adopted, so the board re-derives its layout from the new answer.
+        drag("boardGrip-push", 0f, 2f * pitchY())
+        composeRule.waitUntil(15_000) {
+            rootY("boardWin-push") > beforeY + 1.5f * pitchY()
+        }
+
+        // Second drag, same edit session: push down one more row. Its pointer
+        // math must read the ADOPTED layout (push now at (7,4)) - not the
+        // stale edit-entry layout (push at (7,2)), which would save (7,3).
+        val savesBefore = server.requestsTo("/api/config/views").size
+        drag("boardGrip-push", 0f, pitchY())
+        composeRule.waitUntil(15_000) {
+            server.requestsTo("/api/config/views").size > savesBefore
+        }
+
+        val cell = JSONObject(server.lastBodyTo("/api/config/views")!!)
+            .getJSONObject("geometry").getJSONObject("push")
+        assertEquals(7, cell.getInt("x"))
+        assertEquals(5, cell.getInt("y"))
+        assertEquals(6, cell.getInt("w"))
+        assertEquals(1, cell.getInt("h"))
+    }
+
     // --- a refused drop snaps back without a save ---------------------------
 
     @Config(sdk = [35], qualifiers = "w1200dp-h1000dp")

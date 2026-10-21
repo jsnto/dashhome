@@ -53,6 +53,7 @@ import com.jsnto.dashhome.api.ApiException
 import com.jsnto.dashhome.api.Board
 import com.jsnto.dashhome.api.BoardViews
 import com.jsnto.dashhome.api.DashApi
+import com.jsnto.dashhome.api.GridDims
 import com.jsnto.dashhome.api.HABoardTile
 import com.jsnto.dashhome.api.HAEntity
 import com.jsnto.dashhome.api.TileGeometry
@@ -126,6 +127,21 @@ private class DragSession(
     val cols: Int,
     val rows: Int,
     var moved: Boolean,
+)
+
+/** The board state the drag/resize pointer math reads from: the current
+ *  effective layout, the normalized views, the visible order, the grid, and
+ *  the rendered row count. It is refreshed on the drag holder every
+ *  composition, because the grip/resize pointer blocks (pointerInput keyed
+ *  on Unit) run once and keep their attach-time closures - so the math
+ *  reads the live values here rather than the captured vals (the web holds
+ *  this by re-attaching its window listeners per composition). */
+private class DragContext(
+    val layout: Map<String, TileGeometry>,
+    val views: BoardViews,
+    val visible: List<String>,
+    val grid: GridDims,
+    val rows: Int,
 )
 
 /**
@@ -273,7 +289,16 @@ fun TabletBoard(
 
 
     // The live drag data (the web's dragRef, kept out of composition).
-    val dragHolder = remember { object { var session: DragSession? = null } }
+    // [ctx] carries the board state the pointer math reads from, refreshed
+    // every composition so the attach-time drag closures always compute from
+    // the current layout, not the first composition's.
+    val dragHolder = remember {
+        object {
+            var session: DragSession? = null
+            var ctx = DragContext(layout, views, visible, grid, rows)
+        }
+    }
+    dragHolder.ctx = DragContext(layout, views, visible, grid, rows)
 
     // A board-views patch through the guarded write path (the same
     // PUT /api/config/views save the geometry changes go through); the
@@ -347,28 +372,30 @@ fun TabletBoard(
 
     fun beginDrag(id: String, mode: DragMode, start: Offset) {
         if (!editMode || boardSize == IntSize.Zero) return
+        val ctx = dragHolder.ctx
         val metrics = gridMetrics(
             boardWidthPx = boardSize.width.toFloat(),
             boardHeightPx = boardSize.height.toFloat(),
-            rows = rows,
-            cols = grid.cols,
+            rows = ctx.rows,
+            cols = ctx.grid.cols,
             gapPx = gapPx.toFloat(),
         ) ?: return
-        val origin = layout[id] ?: return
+        val origin = ctx.layout[id] ?: return
         dragHolder.session = DragSession(
             mode = mode,
             id = id,
             origin = origin,
             start = start,
             metrics = metrics,
-            cols = grid.cols,
-            rows = grid.rows,
+            cols = ctx.grid.cols,
+            rows = ctx.grid.rows,
             moved = mode == DragMode.RESIZE, // a resize press is intentional
         )
     }
 
     fun onDragMove(current: Offset) {
         val d = dragHolder.session ?: return
+        val ctx = dragHolder.ctx
         val dxPx = (current.x - d.start.x).toFloat()
         val dyPx = (current.y - d.start.y).toFloat()
         if (!d.moved && d.mode == DragMode.MOVE && hypot(dxPx, dyPx) < DRAG_MIN_PX) return
@@ -377,9 +404,9 @@ fun TabletBoard(
         val refused = dropRefused(
             d.id,
             cell,
-            visible,
-            views.sizes,
-            views.geometry,
+            ctx.visible,
+            ctx.views.sizes,
+            ctx.views.geometry,
             d.cols,
             d.rows,
         )
@@ -398,7 +425,7 @@ fun TabletBoard(
             preview = null // refused (or unchanged): snap back to the stored placement
             return
         }
-        val cur = layout[d.id] ?: return
+        val cur = dragHolder.ctx.layout[d.id] ?: return
         if (pv.cell == cur) {
             preview = null
             return
