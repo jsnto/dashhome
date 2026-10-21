@@ -35,6 +35,10 @@ class FakeDashServer {
     @Volatile
     var haEntitiesJson: String? = null
 
+    /** The calendars list (the array content of "calendars"). */
+    @Volatile
+    var calendarsJson: String = "[]"
+
     val requests = Collections.synchronizedList(mutableListOf<Request>())
     private val socket = ServerSocket(0)
     private var running = true
@@ -118,7 +122,7 @@ class FakeDashServer {
                 200 to """{"board": ${b.toString()}, "integrations": {"homeassistant": false, "google": {"configured": true, "login_required": false}, "hermes_chat": true, "hermes_push": true}}"""
 
             method == "GET" && path == "/api/calendars" ->
-                200 to """{"calendars": []}"""
+                200 to """{"calendars": $calendarsJson}"""
 
             method == "GET" && path.startsWith("/api/events") ->
                 200 to """{"events": []}"""
