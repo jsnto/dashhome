@@ -15,6 +15,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleRegistry
 import com.jsnto.dashhome.api.DashApi
 import com.jsnto.dashhome.data.Prefs
 import org.json.JSONObject
@@ -344,6 +346,63 @@ class TabletBoardSettingsFlowTest {
         composeRule.onNodeWithTag("boardWin-ha-2").assertExists()
         composeRule.onNodeWithContentDescription("Kitchen tile").assertExists()
         composeRule.onNodeWithContentDescription("Bedroom tile").assertExists()
+    }
+
+    // --- the HA entity poll refreshes on foregrounding -----------------------
+
+    @Config(sdk = [35], qualifiers = "w1200dp-h1000dp")
+    @Test
+    fun haEntitiesRefreshWhenTheAppRegainsVisibility() {
+        server = FakeDashServer().also {
+            it.haEntitiesJson = """
+                [
+                  {"entity_id": "light.kitchen", "label": "Kitchen", "friendly": "Kitchen Light", "state": "off"}
+                ]
+            """.trimIndent()
+        }
+        DashApi.baseUrl = server.baseUrl
+        Prefs.setBase(composeRule.activity, server.baseUrl)
+        composeRule.setContent {
+            DashhomeRoot()
+        }
+        composeRule.waitForIdle()
+        waitForBoardLoad()
+
+        // Settings → Home Assistant: add a tile so an HA tile is visible
+        // (the poll's active gate).
+        openSettings()
+        composeRule.onNodeWithText("Home Assistant").performClick()
+        composeRule.waitForIdle()
+        composeRule.waitUntil(10_000) {
+            composeRule.onAllNodesWithText("Kitchen").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onAllNodesWithText("Kitchen").onFirst().performClick()
+        composeRule.onNodeWithText("Add tile").performClick()
+        composeRule.waitUntil(15_000) {
+            val b = lastBody("/api/config/views") ?: return@waitUntil false
+            b.optJSONArray("ha_tiles")?.optJSONObject(0)?.optString("entity") == "light.kitchen"
+        }
+        tapBack()
+        composeRule.onNodeWithTag("boardWin-ha-1").assertExists()
+
+        // The board has polled the entity states (the adopt load).
+        composeRule.waitUntil(10_000) {
+            server.requestsTo("/api/ha/entities").isNotEmpty()
+        }
+        val pollsBefore = server.requestsTo("/api/ha/entities").size
+
+        // The app backgrounds and regains visibility: the entity states
+        // refresh immediately, not on the next 10 s tick (the web's
+        // visibilitychange reload).
+        val registry = composeRule.activity.lifecycle as LifecycleRegistry
+        if (registry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        }
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        composeRule.waitUntil(5_000) {
+            server.requestsTo("/api/ha/entities").size > pollsBefore
+        }
     }
 
     // --- the board grid dimensions --------------------------------------------

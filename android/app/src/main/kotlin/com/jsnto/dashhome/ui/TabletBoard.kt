@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +44,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -51,6 +53,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.times
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.jsnto.dashhome.api.ApiException
 import com.jsnto.dashhome.api.Board
 import com.jsnto.dashhome.api.BoardViews
@@ -273,6 +277,22 @@ fun TabletBoard(
         while (true) {
             delay(HA_POLL_MS)
             haLoad()
+        }
+    }
+
+    // A refresh the moment the app regains visibility (the web's
+    // visibilitychange reload): the 10 s poll alone would leave a
+    // visual tile's state up to a full tick stale after a background.
+    // The listener lives only while an HA tile is visible (the web's
+    // `active` gate), so a board without HA tiles fetches nothing.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    if (haKey.isNotEmpty()) {
+        DisposableEffect(lifecycleOwner, haKey) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_START) haLoad()
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
     }
 

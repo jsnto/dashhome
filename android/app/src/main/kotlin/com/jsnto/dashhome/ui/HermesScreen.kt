@@ -43,6 +43,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -201,14 +202,20 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
             voice.stop()
             return
         }
-        if (voice.supported && voice.permissionGranted()) {
+        if (voice.permissionGranted()) {
             voice.start()
-        } else if (voice.supported) {
-            permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
         } else {
-            voice.blocked = "Voice recognition is unavailable on this device"
+            permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
         }
     }
+
+    // The mic's disabled state and reason (the web's micDisabled and
+    // micTitle): unsupported, blocked (denied or no device), or a
+    // reply in flight. The button is inert and dimmed while one holds,
+    // and the reason shows instead of the button working silently.
+    val micBlockedReason = voice.blocked
+        ?: if (voice.supported) null else "Voice recognition is unavailable on this device"
+    val micDisabled = micBlockedReason != null || state.busy
 
     Column(modifier = Modifier.fillMaxSize().padding(top = 12.dp)) {
         if (!configured) {
@@ -228,7 +235,7 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
         if (state.busy) {
             Note("thinking…")
         }
-        voice.blocked?.let {
+        micBlockedReason?.let {
             Note(it, modifier = Modifier.padding(top = 6.dp))
         }
         Row(
@@ -262,7 +269,9 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
                     .size(40.dp)
                     .clip(RoundedCornerShape(20.dp))
                     .background(if (voice.listening) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                    .alpha(if (micDisabled) 0.5f else 1f)
                     .clickable(
+                        enabled = !micDisabled,
                         onClick = { onMicTap() },
                         onClickLabel = if (voice.listening) "Stop listening" else "Voice input",
                     )
