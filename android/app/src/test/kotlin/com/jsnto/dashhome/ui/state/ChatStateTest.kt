@@ -87,11 +87,11 @@ class ChatStateTest {
 
             val gate = CompletableDeferred<Unit>()
             var sent: List<String>? = null
-            s.send("second", this) {
+            s.send("second", this, {
                 sent = it.map { m -> m.content }
                 gate.await()
                 "reply two"
-            }
+            })
             advanceUntilIdle() // the request starts, captures the thread, suspends on the gate
             // The captured conversation excludes the new user turn (web
             // parity); the turn itself is already in the thread.
@@ -117,19 +117,19 @@ class ChatStateTest {
         val gate = CompletableDeferred<Unit>()
         var started = 0
 
-        s.send("one", this) {
+        s.send("one", this, {
             started++
             entered.complete(Unit)
             gate.await()
             "reply one"
-        }
+        })
         entered.await()
         assertTrue(s.busy)
 
-        s.send("two", this) {
+        s.send("two", this, {
             started++
             "reply two"
-        }
+        })
         gate.complete(Unit)
         advanceUntilIdle()
 
@@ -152,7 +152,7 @@ class ChatStateTest {
     @Test
     fun `a failed request appends an error note and clears busy`() = runTest {
         val s = ChatState()
-        s.send("hi", this) { throw ApiException(502, "hermes_unavailable", "no hermes") }
+        s.send("hi", this, { throw ApiException(502, "hermes_unavailable", "no hermes") })
         advanceUntilIdle()
 
         assertFalse(s.busy)
@@ -166,11 +166,30 @@ class ChatStateTest {
     @Test
     fun `blank text is a no-op`() = runTest {
         val s = ChatState()
-        s.send("   ", this) { "reply" }
+        s.send("   ", this, { "reply" })
         advanceUntilIdle()
 
         assertTrue(s.messages.isEmpty())
         assertFalse(s.busy)
         assertTrue(s.canSend("hi"))
+    }
+
+    @Test
+    fun `a voice-originated reply fires onVoiceReply and a typed one does not`() = runTest {
+        val s = ChatState()
+        var spoken = mutableListOf<String>()
+
+        // Typed message: the reply lands but nothing is spoken.
+        s.send("typed", this, { "typed reply" })
+        advanceUntilIdle()
+        assertTrue(spoken.isEmpty())
+
+        // Voice-originated message (the web's fromVoice flag): the reply is
+        // read aloud through the hook when it lands.
+        s.send("voiced", this, { "voiced reply" }, fromVoice = true, onVoiceReply = { spoken += it })
+        advanceUntilIdle()
+
+        assertEquals(listOf("voiced reply"), spoken)
+        assertEquals("voiced reply", s.messages.last().content)
     }
 }

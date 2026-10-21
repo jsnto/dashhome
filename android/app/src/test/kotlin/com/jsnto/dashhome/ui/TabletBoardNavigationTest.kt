@@ -1,6 +1,7 @@
 package com.jsnto.dashhome.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -8,9 +9,9 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import com.jsnto.dashhome.api.DashApi
 import com.jsnto.dashhome.data.Prefs
-import com.jsnto.dashhome.ui.theme.DashhomeTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -23,30 +24,31 @@ import java.time.format.DateTimeFormatter
  * Navigation-structure pins for the tablet one-page board:
  *
  *  - a wide display (screenWidthDp >= 600) shows the one-page board as a
- *    single screen of live content windows - the web dashboard's
- *    composition: Calendar over the Hermes chat panel in the main column,
- *    the Home/HA embed over the Hermes push panel in the side column -
- *    with every window's real section view rendered inline (no
- *    placeholder cards) and Settings reachable from the top bar;
- *  - tapping a window's title (the maximize affordance, like the web's
+ *    single screen of live content tiles on the unit grid - the web
+ *    dashboard's composition: the four live windows (Calendar, Hermes
+ *    chat, Home, Hermes push) auto-flowed into the grid - with every
+ *    tile's real section view rendered inline (no placeholder cards) and
+ *    Settings reachable from the top bar;
+ *  - tapping a tile's title (the maximize affordance, like the web's
  *    card-head title) opens that section's existing full-screen view
  *    (the wide Calendar layout, the Home embed view, the wide Hermes
- *    layout, or the Settings screen); the push window's title resolves to
+ *    layout, or the Settings screen); the push tile's title resolves to
  *    the existing Hermes full-screen view, which carries the push feed;
  *    back returns to the board;
  *  - the board stays composed while a drill-down is open (it sits under
- *    the drill-down), so the board's live windows - the HA WebView, the
+ *    the drill-down), so the board's live tiles - the HA WebView, the
  *    push poll, the calendar's month - survive the round trip without
  *    reload or re-prompt;
- *  - the drill-down opens on exactly the state the tapped board window
- *    was showing (the shared section state the board and the drill-down
- *    both read and write);
- *  - the phone layout keeps its bottom navigation bar and never shows the
- *    board.
+ *  - the board and the drill-down share the section's live state: a
+ *    month navigated in the full-screen calendar is what the board's
+ *    calendar tile shows when you return (and the drill-down opens on
+ *    the month the tile was showing);
+ *  - the phone layout keeps its bottom navigation bar and never shows
+ *    the board.
  *
- * The tests point the app at an unreachable test server, so every section
- * settles into its deterministic offline state - no live dashhome stack is
- * needed.
+ * The tests point the app at an unreachable test server, so every
+ * section settles into its deterministic offline state - no live
+ * dashhome stack is needed.
  */
 @RunWith(RobolectricTestRunner::class)
 class TabletBoardNavigationTest {
@@ -62,9 +64,7 @@ class TabletBoardNavigationTest {
 
     private fun startApp() {
         composeRule.setContent {
-            DashhomeTheme {
-                DashhomeRoot()
-            }
+            DashhomeRoot()
         }
         composeRule.waitForIdle()
     }
@@ -74,7 +74,29 @@ class TabletBoardNavigationTest {
         composeRule.waitForIdle()
     }
 
-    // --- the one-page board of live content windows -----------------------
+    /**
+     * Clicks the drill-down's month-advance "›": the still-mounted board
+     * tile renders the same "›" too (a zero-height sliver in its
+     * one-row-tall tile), so the tall one is the drill-down's. The touch
+     * is dispatched through the drill-down surface's own interaction in
+     * its local coordinate space (the performTouchInput coordinate space
+     * is the target node's local system, mapped to the root by the
+     * runtime).
+     */
+    private fun clickDrillDownNextMonth() {
+        val arrow = composeRule.onAllNodesWithText("›").fetchSemanticsNodes()
+            .first { it.size.height > 0 }
+        val cx = arrow.positionInRoot.x + arrow.size.width / 2f
+        val cy = arrow.positionInRoot.y + arrow.size.height / 2f
+        val surf = composeRule.onNodeWithTag("drilldown-calendar").fetchSemanticsNode()
+        composeRule.onNodeWithTag("drilldown-calendar").performTouchInput {
+            down(Offset(cx - surf.positionInRoot.x, cy - surf.positionInRoot.y))
+            up()
+        }
+        composeRule.waitForIdle()
+    }
+
+    // --- the one-page board of live content tiles -------------------------
 
     @Config(sdk = [35], qualifiers = "w800dp-h500dp")
     @Test
@@ -82,26 +104,26 @@ class TabletBoardNavigationTest {
         connectServer()
         startApp()
 
-        // The web board's four windows, composed in two columns: main =
-        // Calendar over the Hermes chat panel, side = Home over the
-        // Hermes push panel.
+        // The web board's four live tiles, auto-flowed into the unit
+        // grid (calendar/chat on row 1, home/push on row 2 by default).
         composeRule.onNodeWithTag("boardWin-calendar").assertExists()
-        composeRule.onNodeWithTag("boardWin-hermes").assertExists()
+        composeRule.onNodeWithTag("boardWin-chat").assertExists()
         composeRule.onNodeWithTag("boardWin-home").assertExists()
         composeRule.onNodeWithTag("boardWin-push").assertExists()
 
-        // Each window carries its card-head title (the maximize
+        // Each tile carries its card-head title (the maximize
         // affordance, mirroring the web's clickable h2).
         composeRule.onNodeWithText("Calendar").assertExists()
-        composeRule.onNodeWithText("Hermes").assertExists()
+        composeRule.onNodeWithText("Hermes chat").assertExists()
         composeRule.onNodeWithText("Home").assertExists()
         composeRule.onNodeWithText("Hermes push").assertExists()
 
         // Settings is reachable from the board's top bar (the web header
-        // carries its Settings button the same way).
+        // carries its Settings button the same way), as is edit mode.
         composeRule.onNodeWithContentDescription("Settings").assertExists()
+        composeRule.onNodeWithText("Edit tiles").assertExists()
 
-        // The windows render the real live section content, not
+        // The tiles render the real live section content, not
         // placeholder cards: the chat pane shows its real thread note,
         // and the calendar/home/push sections settle on their error
         // notes against the unreachable test server.
@@ -115,7 +137,7 @@ class TabletBoardNavigationTest {
                 .size >= 3
         }
 
-        // No drill-down view is open until a window title is tapped.
+        // No drill-down view is open until a tile title is tapped.
         composeRule.onNodeWithTag("drilldown-calendar").assertDoesNotExist()
         composeRule.onNodeWithTag("drilldown-home").assertDoesNotExist()
         composeRule.onNodeWithTag("drilldown-hermes").assertDoesNotExist()
@@ -135,13 +157,13 @@ class TabletBoardNavigationTest {
 
         // The drill-down wraps the existing full-screen calendar view:
         // back app bar title plus the month navigation row. The section
-        // title is visible twice - the (still mounted) board window and
+        // title is visible twice - the (still mounted) board tile and
         // the drill-down's back bar - as is the Today button.
         composeRule.onNodeWithTag("drilldown-calendar").assertExists()
         composeRule.onAllNodesWithText("Calendar").assertCountEquals(2)
         composeRule.onAllNodesWithText("Today").assertCountEquals(2)
         // The board stays composed under the drill-down, so its live
-        // windows survive the round trip.
+        // tiles survive the round trip.
         composeRule.onNodeWithTag("boardWin-calendar").assertExists()
         composeRule.onNodeWithTag("boardWin-home").assertExists()
         // The test server is unreachable; the view settles on its error
@@ -168,16 +190,16 @@ class TabletBoardNavigationTest {
         // The drill-down wraps the existing full-screen Home view (the
         // WebView embed section), with the title in the back app bar
         // instead of the content row - so "Home" is visible in the still
-        // mounted board window and the back bar.
+        // mounted board tile and the back bar.
         composeRule.onNodeWithTag("drilldown-home").assertExists()
         composeRule.onAllNodesWithText("Home").assertCountEquals(2)
         // The board stays composed under the drill-down, so the board's
-        // own Home window (and its live WebView on a reachable server)
+        // own Home tile (and its live WebView on a reachable server)
         // survives the round trip without reload.
         composeRule.onNodeWithTag("boardWin-home").assertExists()
         composeRule.onNodeWithTag("boardWin-calendar").assertExists()
-        // The embed fetch runs against the unreachable test server and the
-        // view settles on its error note.
+        // The embed fetch runs against the unreachable test server and
+        // the view settles on its error note.
         composeRule.waitUntil(15_000) {
             composeRule.onAllNodesWithText("network", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
@@ -190,34 +212,35 @@ class TabletBoardNavigationTest {
 
     @Config(sdk = [35], qualifiers = "w800dp-h500dp")
     @Test
-    fun tappingTheHermesTitleOpensTheFullScreenHermesViewAndBackReturnsToTheBoard() {
+    fun tappingTheChatTitleOpensTheFullScreenHermesViewAndBackReturnsToTheBoard() {
         connectServer()
         startApp()
 
-        composeRule.onNodeWithTag("boardTitle-hermes").performClick()
+        composeRule.onNodeWithTag("boardTitle-chat").performClick()
         composeRule.waitForIdle()
 
         // The drill-down wraps the existing wide Hermes view: the back
-        // app bar title plus the chat and push panes side by side; the
-        // title is visible in the still mounted board window too.
+        // app bar title plus the chat and push panes side by side. The
+        // back bar's "Hermes" title is the only exact "Hermes" node
+        // (the board tiles are titled "Hermes chat" / "Hermes push").
         composeRule.onNodeWithTag("drilldown-hermes").assertExists()
-        composeRule.onAllNodesWithText("Hermes").assertCountEquals(2)
+        composeRule.onAllNodesWithText("Hermes").assertCountEquals(1)
         composeRule.onNodeWithText("Chat").assertExists()
         composeRule.onNodeWithText("Push feed").assertExists()
         // The board stays composed under the drill-down.
-        composeRule.onNodeWithTag("boardWin-hermes").assertExists()
+        composeRule.onNodeWithTag("boardWin-chat").assertExists()
         composeRule.onNodeWithTag("boardWin-push").assertExists()
         composeRule.onNodeWithTag("boardWin-calendar").assertExists()
-        // The chat thread note shows in both the still mounted board chat
-        // window and the drill-down's chat pane (the thread is shared at
-        // the root).
+        // The chat thread note shows in both the still mounted board
+        // chat tile and the drill-down's chat pane (the thread is shared
+        // at the root).
         composeRule
             .onAllNodesWithText("Say hi to Hermes — the conversation thread stays on this page.")
             .assertCountEquals(2)
 
         tapBack()
 
-        composeRule.onNodeWithTag("boardWin-hermes").assertExists()
+        composeRule.onNodeWithTag("boardWin-chat").assertExists()
         composeRule.onNodeWithTag("drilldown-hermes").assertDoesNotExist()
     }
 
@@ -227,9 +250,9 @@ class TabletBoardNavigationTest {
         connectServer()
         startApp()
 
-        // The push window's content is the push feed; its existing
+        // The push tile's content is the push feed; its existing
         // full-screen view is the Hermes section (chat + push side by
-        // side), so the push window's title resolves to it.
+        // side), so the push tile's title resolves to it.
         composeRule.onNodeWithTag("boardTitle-push").performClick()
         composeRule.waitForIdle()
 
@@ -266,37 +289,46 @@ class TabletBoardNavigationTest {
         composeRule.onNodeWithTag("drilldown-settings").assertDoesNotExist()
     }
 
-    // --- shared state: the drill-down opens where the window was -----------
+    // --- shared state: the board and the drill-down share the live section -
 
     @Config(sdk = [35], qualifiers = "w800dp-h500dp")
     @Test
-    fun theDrillDownOpensOnTheMonthTheBoardWindowWasShowing() {
-        connectServer()
-        startApp()
+    fun theBoardTileFollowsTheMonthNavigatedInTheDrillDown() {
+        // A reachable in-test server: the calendar settles on a clean
+        // (empty) month instead of its error note.
+        val server = FakeDashServer()
+        try {
+            DashApi.baseUrl = server.baseUrl
+            Prefs.setBase(composeRule.activity, server.baseUrl)
+            composeRule.setContent { DashhomeRoot() }
+            composeRule.waitForIdle()
 
-        // Advance the board's calendar window to the next month (its
-        // month-navigation row is live in the window), then maximize it.
-        composeRule.onNodeWithText("›").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("boardTitle-calendar").performClick()
-        composeRule.waitForIdle()
+            val nextMonth = LocalDate.now().plusMonths(1)
+                .format(DateTimeFormatter.ofPattern("MMMM yyyy"))
 
-        // The drill-down opens over the still-mounted board, and both
-        // show the same month: the full-screen view opens exactly where
-        // the tapped window was showing, not on the default current
-        // month.
-        val nextMonth = LocalDate.now().plusMonths(1)
-            .format(DateTimeFormatter.ofPattern("MMMM yyyy"))
-        composeRule.onNodeWithTag("drilldown-calendar").assertExists()
-        composeRule.onNodeWithTag("boardWin-calendar").assertExists()
-        composeRule.onAllNodesWithText(nextMonth).assertCountEquals(2)
+            // Open the calendar drill-down and advance it to the next
+            // month with the full-screen view's own month navigation
+            // (the board tile's own › is a sliver in the one-row-tall
+            // tile, like the web's zero-height card-scroll; the shared
+            // state is the point).
+            composeRule.onNodeWithTag("boardTitle-calendar").performClick()
+            composeRule.waitForIdle()
+            clickDrillDownNextMonth()
 
-        tapBack()
+            // Both the still-mounted board tile and the drill-down show
+            // the advanced month: the section state they share moved.
+            composeRule.onNodeWithTag("drilldown-calendar").assertExists()
+            composeRule.onAllNodesWithText(nextMonth).assertCountEquals(2)
 
-        // Back returns to the board, still on that month.
-        composeRule.onNodeWithTag("boardWin-calendar").assertExists()
-        composeRule.onNodeWithText(nextMonth).assertExists()
-        composeRule.onNodeWithTag("drilldown-calendar").assertDoesNotExist()
+            tapBack()
+
+            // Back returns to the board, still on that month.
+            composeRule.onNodeWithTag("boardWin-calendar").assertExists()
+            composeRule.onNodeWithText(nextMonth).assertExists()
+            composeRule.onNodeWithTag("drilldown-calendar").assertDoesNotExist()
+        } finally {
+            server.stop()
+        }
     }
 
     // --- the phone layout is untouched --------------------------------------
@@ -307,8 +339,8 @@ class TabletBoardNavigationTest {
         connectServer()
         startApp()
 
-        // Phone routing is unchanged: the bottom navigation bar carries the
-        // three sections and the top bar carries the settings icon.
+        // Phone routing is unchanged: the bottom navigation bar carries
+        // the three sections and the top bar carries the settings icon.
         composeRule.onNodeWithText("Calendar").assertExists()
         composeRule.onNodeWithText("Home").assertExists()
         composeRule.onNodeWithText("Hermes").assertExists()
@@ -317,7 +349,7 @@ class TabletBoardNavigationTest {
         // The tablet board does not leak into the phone layout.
         composeRule.onNodeWithTag("boardWin-calendar").assertDoesNotExist()
         composeRule.onNodeWithTag("boardWin-home").assertDoesNotExist()
-        composeRule.onNodeWithTag("boardWin-hermes").assertDoesNotExist()
+        composeRule.onNodeWithTag("boardWin-chat").assertDoesNotExist()
         composeRule.onNodeWithTag("boardWin-push").assertDoesNotExist()
     }
 }

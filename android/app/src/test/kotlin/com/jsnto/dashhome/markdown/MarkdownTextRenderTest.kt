@@ -61,7 +61,7 @@ class MarkdownTextRenderTest {
     @Test
     fun markdownBodyIsVisibleWithThemeTextColor() {
         composeRule.setContent {
-            DashhomeTheme {
+            DashhomeTheme(dark = true) {
                 MarkdownText(
                     "**Morning standup** in 30 min.\n\n" +
                         "- Review PR #14\n" +
@@ -75,7 +75,7 @@ class MarkdownTextRenderTest {
 
         val tv = findMarkdownView()
         val text = tv.text
-        val expected = Color(0xFFDCE7F5).toArgb()
+        val expected = Color(0xFFE6EBF5).toArgb()
 
         println("MarkdownTextRender: text=<${text}>")
         println("MarkdownTextRender: currentTextColor=0x${Integer.toHexString(tv.currentTextColor)}")
@@ -111,7 +111,7 @@ class MarkdownTextRenderTest {
     @Test
     fun markdownLinkIsTheGuardedClickableSpanNotARawUrlSpan() {
         composeRule.setContent {
-            DashhomeTheme {
+            DashhomeTheme(dark = false) {
                 MarkdownText("Morning standup\n\n[open the tracker](mailto:ops@example.com)")
             }
         }
@@ -141,7 +141,7 @@ class MarkdownTextRenderTest {
     @Test
     fun linkTapFiresTheGuardedViewIntent() {
         composeRule.setContent {
-            DashhomeTheme {
+            DashhomeTheme(dark = false) {
                 MarkdownText("Morning standup\n\n[open the tracker](mailto:ops@example.com)")
             }
         }

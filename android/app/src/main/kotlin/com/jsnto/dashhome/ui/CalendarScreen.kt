@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -36,6 +37,7 @@ import com.jsnto.dashhome.api.CalendarInfo
 import com.jsnto.dashhome.api.DashApi
 import com.jsnto.dashhome.ui.state.MonthGrid
 import com.jsnto.dashhome.ui.state.Palette
+import com.jsnto.dashhome.ui.state.Schedule
 import com.jsnto.dashhome.ui.state.SUMMARY
 import com.jsnto.dashhome.ui.state.TabletSectionState
 import com.jsnto.dashhome.ui.state.shortLabel
@@ -49,18 +51,27 @@ private const val WEEKS = 6
 
 /**
  * The Calendar section: the same tabs/summary the web dashboard shows -
- * a Summary tab combining every calendar plus one tab per calendar,
- * over a month grid with day detail. On wide displays the
- * month grid and the selected day's events sit side by side instead of
- * stacked.
+ * a Summary tab combining every calendar plus one tab per calendar, over
+ * the render the board's `calendar_mode` picks: the month grid with day
+ * detail ("month", the default), or the schedule summary ("schedule") -
+ * a chronological list of the loaded range's upcoming events.
+ * On wide displays the month grid and the selected day's events sit
+ * side by side instead of stacked.
  *
  * [shared] is the tablet's shared section state: the board window and the
  * full-screen drill-down both read and write it, so the drill-down opens
  * on exactly the state the board's window was showing. When absent the
  * screen owns its own saveable state.
+ * [calendarMode], when the tablet board supplies it, is the board's live
+ * server value (adopted after every board write) and is used directly -
+ * the tile then renders exactly the mode the board's views carry.
  */
 @Composable
-fun CalendarScreen(wide: Boolean = false, shared: TabletSectionState? = null) {
+fun CalendarScreen(
+    wide: Boolean = false,
+    shared: TabletSectionState? = null,
+    calendarMode: String? = null,
+) {
     val zone = remember { ZoneId.systemDefault() }
     val today = remember { LocalDate.now(zone) }
 
@@ -92,6 +103,30 @@ fun CalendarScreen(wide: Boolean = false, shared: TabletSectionState? = null) {
     val firstDay = LocalDate.of(section.year, section.month, 1)
     val startDay = MonthGrid.dayKey(firstDay)
     val endDay = MonthGrid.dayKey(firstDay.withDayOfMonth(firstDay.lengthOfMonth()))
+
+    // The board's calendar_mode (the web's CalendarSection fetches it from
+    // the config and honors it on every form factor where the calendar
+    // renders). When the board supplies its live value (a board tile) that
+    // is the source of truth - it updates as board writes are adopted, so
+    // a mode change saved anywhere is reflected in the tile without a
+    // restart; otherwise (the phone section) it is fetched from the
+    // config.
+    var calMode by remember {
+        mutableStateOf(if (calendarMode == "schedule") "schedule" else "month")
+    }
+    LaunchedEffect(DashApi.baseUrl, calendarMode) {
+        if (calendarMode != null) {
+            calMode = if (calendarMode == "schedule") "schedule" else "month"
+            return@LaunchedEffect
+        }
+        try {
+            val v = DashApi.getConfig().board.views
+            calMode = if (v?.calendarMode == "schedule") "schedule" else "month"
+        } catch (e: ApiException) {
+            // A config that cannot be fetched renders the month grid.
+        }
+    }
+
     var events by remember { mutableStateOf<List<ApiEvent>?>(null) }
     var eventsErr by remember { mutableStateOf<ApiException?>(null) }
     var loading by remember { mutableStateOf(false) }
@@ -187,7 +222,23 @@ fun CalendarScreen(wide: Boolean = false, shared: TabletSectionState? = null) {
             LoadingRow()
         }
 
-        if (wide) {
+        if (calMode == "schedule") {
+            // The board's schedule summary in place of the month grid:
+            // the tabs and month navigation above still work, and the
+            // list shows the loaded range's events that are still
+            // upcoming (the web's ScheduleList).
+            if (eventsErr != null) {
+                ErrorNote(eventsErr!!)
+            } else {
+                ScheduleListBody(
+                    events = events ?: emptyList(),
+                    rangeStart = firstDay,
+                    rangeEnd = firstDay.withDayOfMonth(firstDay.lengthOfMonth()),
+                    today = today,
+                    zone = zone,
+                )
+            }
+        } else if (wide) {
             // Two-pane tablet layout: month grid left, selected day right.
             Row(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
                 Column(
@@ -484,3 +535,63 @@ private fun EventDetailRow(
 
 private fun monthTitle(year: Int, month: Int): String =
     LocalDate.of(year, month, 1).format(DateTimeFormatter.ofPattern("MMMM yyyy"))
+
+/**
+ * The schedule summary (the web's `ScheduleList`): the loaded range's
+ * upcoming events, grouped by day in the viewer's zone - a day header
+ * and the day's rows (when-line, title, and the event's calendar label
+ * when it has one), chronological.
+ */
+@Composable
+private fun ScheduleListBody(
+    events: List<ApiEvent>,
+    rangeStart: LocalDate,
+    rangeEnd: LocalDate,
+    today: LocalDate,
+    zone: ZoneId,
+) {
+    val days = remember(events, rangeStart, rangeEnd, zone) {
+        Schedule.days(Schedule.upcoming(events, rangeStart, rangeEnd, today, zone), zone)
+    }
+    if (days.isEmpty()) {
+        Note("No upcoming events in this range.")
+        return
+    }
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
+        days.forEach { day ->
+            item {
+                Text(
+                    text = day.label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+                day.items.forEach { e ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = Schedule.whenText(e, zone),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.widthIn(min = 108.dp),
+                        )
+                        Text(
+                            text = if (e.summary.isBlank()) "(no title)" else e.summary,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f).padding(start = 8.dp),
+                        )
+                        if (e.calendarLabel.isNotBlank()) {
+                            Text(
+                                text = e.calendarLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+}

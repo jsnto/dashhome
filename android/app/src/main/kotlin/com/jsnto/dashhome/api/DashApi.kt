@@ -127,5 +127,89 @@ object DashApi {
     suspend fun setRefreshSeconds(seconds: Int): Board =
         Parsers.board(put("/api/config/refresh", JSONObject().put("refresh_seconds", seconds)).toString())
 
+    /**
+     * Persist the board's tile grid dimensions (board.grid, cols x rows
+     * units) server-side → the updated board.
+     */
+    suspend fun setGrid(cols: Int, rows: Int): Board =
+        Parsers.board(
+            put(
+                "/api/config/grid",
+                JSONObject().put("cols", cols).put("rows", rows),
+            ).toString(),
+        )
+
+    /**
+     * Persist part of the tile layout (board.views) server-side:
+     * [order] the board order of the tiles, [hidden] which are hidden,
+     * [calendarMode] how the Calendar tile renders, [sizes] the per-tile
+     * size steps (tiles omitted keep their current size), [geometry] the
+     * per-tile grid placements (a null entry clears that tile's
+     * placement, restoring automatic placement), and [haTiles] the Home
+     * Assistant tiles (the full list, a replacement). Omitted (null)
+     * fields keep their current server-side value. Returns the updated
+     * board (adopt it).
+     */
+    suspend fun setViews(
+        order: List<String>? = null,
+        hidden: List<String>? = null,
+        calendarMode: String? = null,
+        sizes: Map<String, String>? = null,
+        geometry: Map<String, TileGeometry?>? = null,
+        haTiles: List<HABoardTile>? = null,
+    ): Board {
+        val body = JSONObject()
+        if (order != null) {
+            body.put("order", JSONArray().apply { order.forEach { put(it) } })
+        }
+        if (hidden != null) {
+            body.put("hidden", JSONArray().apply { hidden.forEach { put(it) } })
+        }
+        if (calendarMode != null) {
+            body.put("calendar_mode", calendarMode)
+        }
+        if (sizes != null) {
+            body.put("sizes", JSONObject().apply { sizes.forEach { (k, v) -> put(k, v) } })
+        }
+        if (geometry != null) {
+            body.put("geometry", JSONObject().apply {
+                geometry.forEach { (k, v) ->
+                    put(
+                        k,
+                        v?.let { JSONObject().put("x", it.x).put("y", it.y).put("w", it.w).put("h", it.h) }
+                            ?: JSONObject.NULL,
+                    )
+                }
+            })
+        }
+        if (haTiles != null) {
+            body.put("ha_tiles", JSONArray().apply {
+                haTiles.forEach { t ->
+                    val o = JSONObject().put("id", t.id).put("entity", t.entity).put("kind", t.kind)
+                    if (!t.label.isNullOrBlank()) o.put("label", t.label)
+                    put(o)
+                }
+            })
+        }
+        return Parsers.board(put("/api/config/views", body).toString())
+    }
+
+    /** Home Assistant entities (GET /api/ha/entities). */
+    suspend fun getHAEntities(): List<HAEntity> =
+        Parsers.haEntities(get("/api/ha/entities").toString())
+
+    /**
+     * Fire an allowlisted service action on one entity (the board's
+     * button tiles). The backend accepts only the fixed
+     * toggle/turn_on/turn_off actions - never a free-form service.
+     */
+    suspend fun callHAService(entityId: String, action: String): HAServiceResult =
+        Parsers.haService(
+            post(
+                "/api/ha/service",
+                JSONObject().put("entity_id", entityId).put("action", action),
+            ).toString(),
+        )
+
     private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 }
