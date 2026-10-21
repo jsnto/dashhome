@@ -130,10 +130,6 @@ private fun DashhomeShell(
     // the open [TabletItem]. Saved so rotation/process death keeps the
     // opened full-screen view.
     var openItem by rememberSaveable { mutableIntStateOf(-1) }
-    // Bumped when the settings screen closes: the sections re-fetch their
-    // server data then (the web re-fetches the config when the settings
-    // panel closes, so a layout change made in settings lands on return).
-    var configVersion by remember { mutableIntStateOf(0) }
 
     // The chat thread and its send scope live at the root, not in the
     // Hermes section, so an in-flight reply lands even when the section
@@ -145,7 +141,6 @@ private fun DashhomeShell(
         SettingsScreen(
             onBack = {
                 showSettings = false
-                configVersion++
             },
             onClearServer = {
                 Prefs.clear(context)
@@ -260,7 +255,6 @@ private fun DashhomeShell(
                     chat,
                     chatScope,
                     wide = false,
-                    configVersion = configVersion,
                 )
             }
         }
@@ -274,17 +268,15 @@ private fun SectionContent(
     chat: ChatState,
     chatScope: CoroutineScope,
     wide: Boolean,
-    configVersion: Int,
 ) {
     when (Section.values()[section]) {
-        Section.CALENDAR -> CalendarScreen(wide = wide, configVersion = configVersion)
+        Section.CALENDAR -> CalendarScreen(wide = wide)
         Section.HOME -> HomeScreen()
         Section.HERMES ->
             HermesScreen(
                 chat = chat,
                 chatScope = chatScope,
                 wide = wide,
-                configVersion = configVersion,
             )
     }
 }

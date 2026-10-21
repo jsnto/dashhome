@@ -65,8 +65,7 @@ private const val WEEKS = 6
  * [shared] is the tablet's shared section state: the board window and the
  * full-screen drill-down both read and write it, so the drill-down opens
  * on exactly the state the board's window was showing. When absent the
- * screen owns its own saveable state. [configVersion] is bumped when the
- * settings screen closes, re-fetching the board's calendar_mode then.
+ * screen owns its own saveable state.
  * [calendarMode], when the tablet board supplies it, is the board's live
  * server value (adopted after every board write) and is used directly -
  * the tile then renders exactly the mode the board's views carry.
@@ -75,7 +74,6 @@ private const val WEEKS = 6
 fun CalendarScreen(
     wide: Boolean = false,
     shared: TabletSectionState? = null,
-    configVersion: Int = 0,
     calendarMode: String? = null,
 ) {
     val zone = remember { ZoneId.systemDefault() }
@@ -116,11 +114,11 @@ fun CalendarScreen(
     // is the source of truth - it updates as board writes are adopted, so
     // a mode change saved anywhere is reflected in the tile without a
     // restart; otherwise (the phone section) it is fetched from the
-    // config, re-fetched when the settings screen closed (configVersion).
+    // config.
     var calMode by remember {
         mutableStateOf(if (calendarMode == "schedule") "schedule" else "month")
     }
-    LaunchedEffect(DashApi.baseUrl, configVersion, calendarMode) {
+    LaunchedEffect(DashApi.baseUrl, calendarMode) {
         if (calendarMode != null) {
             calMode = if (calendarMode == "schedule") "schedule" else "month"
             return@LaunchedEffect

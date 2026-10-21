@@ -222,7 +222,8 @@ fun TabletBoard(
     // A layout save that failed (shown above the board, cleared on the
     // next attempt, like the web's board-err note).
     var layoutErr by remember { mutableStateOf<ApiException?>(null) }
-    // One in-flight board write at a time (the web's savingSize).
+    // A board write in flight (the web's savingSize): the remove control is
+    // disabled and removeTile is gated while one runs.
     var saving by remember { mutableStateOf(false) }
     // The live drag/resize preview (null while no drag is in flight).
     var preview by remember { mutableStateOf<DragPreview?>(null) }
@@ -285,7 +286,6 @@ fun TabletBoard(
         haTiles: List<HABoardTile>? = null,
         geometry: Map<String, TileGeometry?>? = null,
     ) {
-        if (saving) return
         saving = true
         layoutErr = null
         scope.launch {

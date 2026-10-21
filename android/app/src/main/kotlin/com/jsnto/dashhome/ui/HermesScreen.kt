@@ -68,9 +68,7 @@ import kotlinx.coroutines.launch
  *
  * [shared] is the tablet's shared section state: the board's push window
  * and this view's push pane then agree on the selected history tab. The
- * chat thread is already shared at the root via [chat]. [configVersion]
- * is bumped when the settings screen closed, re-fetching the integration
- * flags then.
+ * chat thread is already shared at the root via [chat].
  */
 @Composable
 fun HermesScreen(
@@ -78,13 +76,12 @@ fun HermesScreen(
     chatScope: CoroutineScope,
     wide: Boolean = false,
     shared: TabletSectionState? = null,
-    configVersion: Int = 0,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) } // 0 = chat, 1 = push
     // Integration flags from /api/config (drive friendly setup notes).
     var hermesChat by remember { mutableStateOf(true) }
     var hermesPush by remember { mutableStateOf(true) }
-    LaunchedEffect(DashApi.baseUrl, configVersion) {
+    LaunchedEffect(DashApi.baseUrl) {
         hermesChat = try { DashApi.getConfig().hermesChat } catch (e: ApiException) { true }
         hermesPush = try { DashApi.getConfig().hermesPush } catch (e: ApiException) { true }
     }
