@@ -111,7 +111,7 @@ class ChatPaneSendTest {
         composeRule.waitForIdle()
         // The send stops the live session (the web's sendText stops any
         // listening session) and sends the typed draft: the field is
-        // back to its idle placeholder, not the listening one.
+        // back to its idle placeholder.
         composeRule.onNodeWithText("Send").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Message Hermes…").assertExists()
@@ -119,5 +119,34 @@ class ChatPaneSendTest {
         // is gone, so it cannot send a second user message.
         fireFinal("turn on the kitchen light")
         assertEquals(1, chat.messages.count { it.role == ChatState.Role.USER })
+    }
+
+    @Config(sdk = [35], shadows = [FakeSpeechRecognizer::class])
+    @Test
+    fun voiceFinalSendsTheTranscriptAndKeepsTheTypedDraft() {
+        val chat = startPane()
+        // A typed draft, then a live session over it (the web keeps the
+        // draft in the input while listening).
+        composeRule
+            .onNodeWithText("Message Hermes…")
+            .performTextInput("remind me about the 3pm meeting")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("chatMic").performClick()
+        composeRule.waitForIdle()
+        // While listening the field keeps the draft, not the interim;
+        // the interim shows in the note (the web's card-head note).
+        interim("turn on the")
+        composeRule
+            .onNodeWithText("remind me about the 3pm meeting")
+            .assertExists()
+        composeRule.onNodeWithText("Listening — turn on the").assertExists()
+        // The final transcript is sent through the shared send path
+        // without overwriting the input line: the transcript lands in
+        // the thread and the draft remains in the field.
+        fireFinal("turn on the kitchen light")
+        assertEquals(1, chat.messages.count { it.content == "turn on the kitchen light" })
+        composeRule
+            .onNodeWithText("remind me about the 3pm meeting")
+            .assertExists()
     }
 }

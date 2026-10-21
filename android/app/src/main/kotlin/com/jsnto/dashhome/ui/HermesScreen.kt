@@ -143,8 +143,8 @@ fun HermesScreen(
  * message, same as the web.
  *
  * Voice input mirrors the web's useVoice: the platform's SpeechRecognizer
- * fills the input line (interim results live, the final transcript sent
- * through the same send path), and TextToSpeech reads a reply aloud only
+ * feeds the same send path without touching the input line (interim
+ * results show live in a note), and TextToSpeech reads a reply aloud only
  * when the message that produced it was voice-originated. The mic
  * degrades gracefully: no recognition service, or the microphone
  * permission denied, shows the reason instead of the button working
@@ -153,30 +153,27 @@ fun HermesScreen(
 @Composable
 fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
     var input by remember { mutableStateOf("") }
-    // True when the message just submitted was voice-originated (the web's
-    // wasVoiceRef): its reply is the only one read aloud.
-    var wasVoice by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val speaker = remember { TtsSpeaker(context) }
 
     val voiceRef = remember { object { var v: VoiceInput? = null } }
 
+    fun sendText(text: String, fromVoice: Boolean) {
+        voiceRef.v?.stop()
+        state.send(text, scope, { history -> DashApi.chat(text, history) }, fromVoice = fromVoice, onVoiceReply = { reply -> speaker.speak(reply) })
+    }
+
     fun submit() {
         val text = input.trim()
         if (text.isBlank()) return
-        voiceRef.v?.stop()
         input = ""
-        val v = wasVoice
-        wasVoice = false
-        state.send(text, scope, { history -> DashApi.chat(text, history) }, fromVoice = v, onVoiceReply = { reply -> speaker.speak(reply) })
+        sendText(text, false)
     }
 
     val voice = remember {
         VoiceInput(context) { text ->
-            input = text
-            wasVoice = true
-            submit()
+            sendText(text, true)
         }
     }
     voiceRef.v = voice
@@ -234,6 +231,9 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
             items(state.messages) { m -> ChatRow(m) }
             item { Spacer(Modifier.height(8.dp)) }
         }
+        if (voice.listening) {
+            Note(if (voice.interim.isNotBlank()) "Listening — ${voice.interim}" else "Listening…")
+        }
         if (state.busy) {
             Note("thinking…")
         }
@@ -247,10 +247,10 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
                 .padding(top = 8.dp),
         ) {
             OutlinedTextField(
-                value = if (voice.listening) voice.interim else input,
-                onValueChange = { if (!voice.listening) input = it },
+                value = input,
+                onValueChange = { input = it },
                 placeholder = {
-                    Text(if (voice.listening) "Listening…" else "Message Hermes…")
+                    Text("Message Hermes…")
                 },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -260,7 +260,7 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
                         defaultKeyboardAction(ImeAction.Send)
                     }
                 ),
-                enabled = !state.busy && !voice.listening,
+                enabled = !state.busy,
                 modifier = Modifier.weight(1f),
             )
             // The mic (the web's mic button): tap to start/stop listening;
