@@ -160,11 +160,12 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
     val context = LocalContext.current
     val speaker = remember { TtsSpeaker(context) }
 
-    // True when the message just submitted was voice-originated (the web's
-    // wasVoiceRef): its reply is the only one read aloud.
+    val voiceRef = remember { object { var v: VoiceInput? = null } }
+
     fun submit() {
         val text = input.trim()
         if (text.isBlank()) return
+        voiceRef.v?.stop()
         input = ""
         val v = wasVoice
         wasVoice = false
@@ -178,6 +179,7 @@ fun ChatPane(state: ChatState, scope: CoroutineScope, configured: Boolean) {
             submit()
         }
     }
+    voiceRef.v = voice
     DisposableEffect(voice, speaker) {
         onDispose {
             voice.destroy()

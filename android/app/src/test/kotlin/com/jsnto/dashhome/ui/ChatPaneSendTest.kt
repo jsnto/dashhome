@@ -15,6 +15,7 @@ import com.jsnto.dashhome.api.DashApi
 import com.jsnto.dashhome.ui.state.ChatState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -35,17 +36,16 @@ class ChatPaneSendTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
 
-    private fun startPane() {
+    private fun startPane(): ChatState {
         DashApi.baseUrl = "http://127.0.0.1:1"
         val chat = ChatState()
         composeRule.setContent {
             ChatPane(state = chat, scope = CoroutineScope(Dispatchers.Main), configured = true)
         }
         composeRule.waitForIdle()
-        // Robolectric denies manifest permissions by default; the pane's
-        // mic needs RECORD_AUDIO to start a session.
         Shadows.shadowOf(composeRule.activity)
             .grantPermissions(Manifest.permission.RECORD_AUDIO)
+        return chat
     }
 
     /** Fires an interim transcript through the pane's live session. */
@@ -53,6 +53,14 @@ class ChatPaneSendTest {
         val bundle = Bundle()
         bundle.putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, ArrayList(listOf(text)))
         FakeSpeechRecognizer.listener.onPartialResults(bundle)
+        composeRule.waitForIdle()
+    }
+
+    /** Fires the final transcript through the pane's live session. */
+    private fun fireFinal(text: String) {
+        val bundle = Bundle()
+        bundle.putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, ArrayList(listOf(text)))
+        FakeSpeechRecognizer.listener.onResults(bundle)
         composeRule.waitForIdle()
     }
 
@@ -87,5 +95,29 @@ class ChatPaneSendTest {
         composeRule.waitForIdle()
         interim("hello there")
         composeRule.onNodeWithText("Send").assertIsEnabled()
+    }
+
+    @Config(sdk = [35], shadows = [FakeSpeechRecognizer::class])
+    @Test
+    fun sendStopsALiveVoiceSession() {
+        val chat = startPane()
+        // A typed draft plus a live session: the Send button is enabled
+        // in this state, so the send is reachable.
+        composeRule
+            .onNodeWithText("Message Hermes…")
+            .performTextInput("remind me about the 3pm meeting")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("chatMic").performClick()
+        composeRule.waitForIdle()
+        // The send stops the live session (the web's sendText stops any
+        // listening session) and sends the typed draft: the field is
+        // back to its idle placeholder, not the listening one.
+        composeRule.onNodeWithText("Send").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Message Hermes…").assertExists()
+        // A transcript finalizing after the send is dropped: the session
+        // is gone, so it cannot send a second user message.
+        fireFinal("turn on the kitchen light")
+        assertEquals(1, chat.messages.count { it.role == ChatState.Role.USER })
     }
 }
