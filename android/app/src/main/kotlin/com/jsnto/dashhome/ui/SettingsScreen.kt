@@ -686,7 +686,7 @@ private fun HASection(
 
     if (haOff) {
         Note(
-            text = "Home Assistant is not configured. Set the Home Assistant URL and token in Settings → Services to add tiles.",
+            text = "Home Assistant is not configured. Set the Home Assistant URL and token in the web dashboard's Settings - Services to add tiles.",
             modifier = Modifier.padding(top = 8.dp),
         )
     } else {

@@ -130,7 +130,7 @@ fun HATileView(
         }
         if (haOff) {
             Note(
-                text = "Home Assistant is not configured. Set the Home Assistant URL and token in Settings → Services.",
+                text = "Home Assistant is not configured. Set the Home Assistant URL and token in the web dashboard's Settings - Services.",
                 modifier = Modifier.padding(top = 8.dp),
             )
         }

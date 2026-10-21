@@ -348,6 +348,48 @@ class TabletBoardSettingsFlowTest {
         composeRule.onNodeWithContentDescription("Bedroom tile").assertExists()
     }
 
+    @Config(sdk = [35], qualifiers = "w1200dp-h1000dp")
+    @Test
+    fun haNotConfiguredNotePointsAtTheWebDashboard() {
+        // An HA tile on the board while HA answers 503 (unconfigured):
+        // the friendly note must point at the real configuration path -
+        // the web dashboard, since this app has no Services section.
+        server = FakeDashServer().also {
+            val views = it.boardJson.getJSONObject("views")
+            views.getJSONArray("ha_tiles").put(
+                JSONObject()
+                    .put("id", "ha-1")
+                    .put("entity", "light.kitchen")
+                    .put("kind", "visual"),
+            )
+        }
+        DashApi.baseUrl = server.baseUrl
+        Prefs.setBase(composeRule.activity, server.baseUrl)
+        composeRule.setContent {
+            DashhomeRoot()
+        }
+        composeRule.waitForIdle()
+        waitForBoardLoad()
+
+        composeRule.waitUntil(10_000) {
+            composeRule
+                .onAllNodesWithText(
+                    "Home Assistant is not configured. Set the Home Assistant URL and token in the web dashboard's Settings - Services.",
+                )
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        // The same pointer in Settings -> Home Assistant's 503 note.
+        openSettings()
+        composeRule.onNodeWithText("Home Assistant").performClick()
+        composeRule.waitUntil(10_000) {
+            composeRule
+                .onAllNodesWithText(
+                    "Home Assistant is not configured. Set the Home Assistant URL and token in the web dashboard's Settings - Services to add tiles.",
+                )
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
     // --- the HA entity poll refreshes on foregrounding -----------------------
 
     @Config(sdk = [35], qualifiers = "w1200dp-h1000dp")
