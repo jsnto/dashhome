@@ -96,7 +96,7 @@ fun DashhomeRoot() {
     }
 
     DashhomeTheme(dark = dark) {
-        dashhomeRoot(
+        DashhomeShell(
             context = context,
             wide = wide,
             themeName = themeName,
@@ -107,7 +107,7 @@ fun DashhomeRoot() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun dashhomeRoot(
+private fun DashhomeShell(
     context: android.content.Context,
     wide: Boolean,
     themeName: String,

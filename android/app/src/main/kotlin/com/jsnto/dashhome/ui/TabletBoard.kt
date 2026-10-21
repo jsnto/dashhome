@@ -474,7 +474,7 @@ fun TabletBoard(
                             editMode = false,
                             onTitleClick = { maximized = null },
                         ) {
-                            haContent(maxId, views, haEntities, haOff, haLoad, dark)
+                            HaContent(maxId, views, haEntities, haOff, haLoad, dark)
                         }
                     } else {
                         visible.forEach { id ->
@@ -508,7 +508,7 @@ fun TabletBoard(
                                 onResizeEnd = { endDrag(true) },
                                 onResizeCancel = { endDrag(false) },
                             ) {
-                                tileContent(
+                                TileContent(
                                     id,
                                     views,
                                     chat,
@@ -560,7 +560,7 @@ fun TabletBoard(
 
 /** The content of one board tile (the web's winNode). */
 @Composable
-private fun tileContent(
+private fun TileContent(
     id: String,
     views: BoardViews,
     chat: ChatState,
@@ -582,13 +582,13 @@ private fun tileContent(
         "chat" -> ChatPane(state = chat, scope = chatScope, configured = hermesChat)
         "home" -> HomeScreen(showTitle = false)
         "push" -> PushPane(configured = hermesPush, shared = sections)
-        else -> haContent(id, views, haEntities, haOff, haLoad, dark)
+        else -> HaContent(id, views, haEntities, haOff, haLoad, dark)
     }
 }
 
 /** The content of a Home Assistant board tile (the web's HATile). */
 @Composable
-private fun haContent(
+private fun HaContent(
     id: String,
     views: BoardViews,
     haEntities: Map<String, HAEntity>,
