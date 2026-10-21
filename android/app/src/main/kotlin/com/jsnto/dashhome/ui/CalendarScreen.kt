@@ -545,7 +545,8 @@ private fun monthTitle(year: Int, month: Int): String =
 /**
  * The schedule summary (the web's `ScheduleList`): the loaded range's
  * upcoming events, grouped by day in the viewer's zone - a day header
- * and the day's rows (calendar dot, title, when-line), chronological.
+ * and the day's rows (calendar dot, title, when-line, and the event's
+ * calendar label when it has one), chronological.
  */
 @Composable
 private fun ScheduleListBody(
@@ -593,6 +594,14 @@ private fun ScheduleListBody(
                                     if (e.location.isNullOrBlank()) "" else " @ ${e.location}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (e.calendarLabel.isNotBlank()) {
+                            Text(
+                                text = e.calendarLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 8.dp),
                             )
                         }
                     }

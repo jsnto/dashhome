@@ -39,6 +39,10 @@ class FakeDashServer {
     @Volatile
     var calendarsJson: String = "[]"
 
+    /** The events list (the array content of "events"). */
+    @Volatile
+    var eventsJson: String = "[]"
+
     /** When true, a GET /api/config connection is accepted but never
      *  answered (the board stays pre-load, apiConfig null) until stop().
      *  Exercises the pre-load board-write window. */
@@ -164,7 +168,7 @@ class FakeDashServer {
                 200 to """{"calendars": $calendarsJson}"""
 
             method == "GET" && path.startsWith("/api/events") ->
-                200 to """{"events": []}"""
+                200 to """{"events": $eventsJson}"""
 
             method == "GET" && path.startsWith("/api/hermes/pushes") ->
                 if (path.endsWith("/latest")) 404 to """{"error": "not_found"}"""
