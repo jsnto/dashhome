@@ -1,10 +1,8 @@
 package com.jsnto.dashhome.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,11 +11,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -31,7 +28,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -239,8 +235,6 @@ fun CalendarScreen(
                     rangeStart = firstDay,
                     rangeEnd = firstDay.withDayOfMonth(firstDay.lengthOfMonth()),
                     today = today,
-                    multi = section.calendarTab == SUMMARY,
-                    order = order,
                     zone = zone,
                 )
             }
@@ -545,8 +539,8 @@ private fun monthTitle(year: Int, month: Int): String =
 /**
  * The schedule summary (the web's `ScheduleList`): the loaded range's
  * upcoming events, grouped by day in the viewer's zone - a day header
- * and the day's rows (calendar dot, title, when-line, and the event's
- * calendar label when it has one), chronological.
+ * and the day's rows (when-line, title, and the event's calendar label
+ * when it has one), chronological.
  */
 @Composable
 private fun ScheduleListBody(
@@ -554,8 +548,6 @@ private fun ScheduleListBody(
     rangeStart: LocalDate,
     rangeEnd: LocalDate,
     today: LocalDate,
-    multi: Boolean,
-    order: List<String>,
     zone: ZoneId,
 ) {
     val days = remember(events, rangeStart, rangeEnd, zone) {
@@ -576,26 +568,18 @@ private fun ScheduleListBody(
                 )
                 day.items.forEach { e ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .padding(end = 8.dp)
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(Color(Palette.colorFor(e.calendarId, order))),
+                        Text(
+                            text = Schedule.whenText(e, zone),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.widthIn(min = 108.dp),
                         )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (e.summary.isBlank()) "(no title)" else e.summary,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Text(
-                                text = Schedule.whenText(e, zone) +
-                                    if (e.location.isNullOrBlank()) "" else " @ ${e.location}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        Text(
+                            text = if (e.summary.isBlank()) "(no title)" else e.summary,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f).padding(start = 8.dp),
+                        )
                         if (e.calendarLabel.isNotBlank()) {
                             Text(
                                 text = e.calendarLabel,
