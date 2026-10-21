@@ -311,6 +311,7 @@ fun TabletBoard(
         haTiles: List<HABoardTile>? = null,
         geometry: Map<String, TileGeometry?>? = null,
     ) {
+        if (state.apiConfig == null) return
         saving = true
         layoutErr = null
         scope.launch {

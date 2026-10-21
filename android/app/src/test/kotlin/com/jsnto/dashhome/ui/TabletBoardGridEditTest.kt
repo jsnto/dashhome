@@ -214,6 +214,55 @@ class TabletBoardGridEditTest {
         assertEquals(1, cell.getInt("h"))
     }
 
+    // --- a board write attempted before the first config is a no-op --------
+
+    @Config(sdk = [35], qualifiers = "w1200dp-h1000dp")
+    @Test
+    fun preloadBoardWriteIsANoOp() {
+        // Hold the first GET /api/config so the board stays pre-load
+        // (apiConfig null) while the UI is interactive: the config load
+        // runs on Dispatchers.IO, so the main looper is free to process a
+        // drop during the (unanswered) round-trip.
+        server = FakeDashServer()
+        server.holdConfig = true
+        DashApi.baseUrl = server.baseUrl
+        Prefs.setBase(composeRule.activity, server.baseUrl)
+        composeRule.setContent {
+            DashhomeRoot()
+        }
+        composeRule.waitForIdle()
+
+        // The board renders its default layout pre-load; edit mode is
+        // reachable during the startup load window.
+        composeRule.onNodeWithText("Edit tiles").performClick()
+        composeRule.waitForIdle()
+
+        // A drop attempted while the first config is still outstanding is a
+        // no-op (the web's `if (!cfg) return` in commitViews): no board
+        // write goes out at all. The pre-load grid is the 12-row default.
+        val density = composeRule.activity.resources.displayMetrics.density
+        val gap = 16f * density
+        val unitH = (size("boardLayout").height - 11f * gap) / 12f
+        drag("boardGrip-calendar", 0f, 2f * (unitH + gap))
+
+        // An unguarded save goes out on Dispatchers.IO, so give any write a
+        // bounded window to reach the server; with the guard none is issued,
+        // so the window elapses with nothing recorded.
+        var writeIssued = false
+        try {
+            composeRule.waitUntil(1500) {
+                server.requestsTo("/api/config/views").isNotEmpty()
+            }
+            writeIssued = true
+        } catch (e: androidx.compose.ui.test.ComposeTimeoutException) {
+            writeIssued = false
+        }
+        org.junit.Assert.assertFalse(
+            "a board write attempted before the first config must be a no-op",
+            writeIssued,
+        )
+    }
+
     // --- a refused drop snaps back without a save ---------------------------
 
     @Config(sdk = [35], qualifiers = "w1200dp-h1000dp")

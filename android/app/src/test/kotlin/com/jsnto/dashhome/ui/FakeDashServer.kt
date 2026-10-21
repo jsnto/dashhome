@@ -39,6 +39,12 @@ class FakeDashServer {
     @Volatile
     var calendarsJson: String = "[]"
 
+    /** When true, a GET /api/config connection is accepted but never
+     *  answered (the board stays pre-load, apiConfig null) until stop().
+     *  Exercises the pre-load board-write window. */
+    @Volatile
+    var holdConfig: Boolean = false
+
     val requests = Collections.synchronizedList(mutableListOf<Request>())
     private val socket = ServerSocket(0)
     private var running = true
@@ -68,12 +74,35 @@ class FakeDashServer {
 
     private fun serve() {
         while (running) {
-            try {
-                socket.accept().use { handle(it) }
+            val conn = try {
+                socket.accept()
             } catch (e: Exception) {
                 if (running) {
                     e.printStackTrace()
                 }
+                continue
+            }
+            // One thread per connection: a held /api/config (see holdConfig)
+            // must not block the server from serving the writes it records.
+            Thread(
+                {
+                    try {
+                        handle(conn)
+                    } catch (e: Exception) {
+                        if (running) {
+                            e.printStackTrace()
+                        }
+                    } finally {
+                        try {
+                            conn.close()
+                        } catch (_: Exception) {
+                        }
+                    }
+                },
+                "fake-dash-conn",
+            ).apply {
+                isDaemon = true
+                start()
             }
         }
     }
@@ -104,6 +133,16 @@ class FakeDashServer {
             buf.decodeToString()
         } else ""
         requests.add(Request(method, path, body))
+        if (method == "GET" && path == "/api/config" && holdConfig) {
+            while (running) {
+                try {
+                    Thread.sleep(50)
+                } catch (e: InterruptedException) {
+                    break
+                }
+            }
+            return
+        }
         val (status, payload) = route(method, path, body)
         val payloadBytes = payload.toByteArray()
         val out = s.getOutputStream()
