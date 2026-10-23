@@ -2,11 +2,11 @@
 // (frontend/test-fixtures/board-layout/): the same
 // input/expected-output pairs the Go (backend/config/board_vectors_test.go)
 // and Android (BoardVectorTest.kt) suites assert against the same domain.
-// The fixtures live at the repository root, outside this package's build
-// context; they are only imported from this test file (never from app
-// code), so the app bundle never contains them. (See the fixture
-// directory's README for the per-file contract and which suite asserts
-// which group.)
+// The fixtures live inside this package (the web image build's context)
+// so that build's type-check resolves this test's imports; this test is
+// their only importer (never app code), so the app bundle never contains
+// them. (See the fixture directory's README for the per-file contract
+// and which suite asserts which group.)
 import autoLayoutJson from '../test-fixtures/board-layout/auto-layout.json'
 import geometryJson from '../test-fixtures/board-layout/geometry.json'
 import gridJson from '../test-fixtures/board-layout/grid.json'

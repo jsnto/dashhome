@@ -107,13 +107,15 @@ language, not here.
 
 `steps` pins the vocabulary every language agrees on: the step IDs,
 their documented fraction of the grid width, and the human label
-(`TILE_SIZE_LABELS`). `widths` pins `stepWidth` (the column span an
+(`TILE_SIZE_LABELS`). `rejects` pins the out-of-vocabulary step IDs:
+the Go suite asserts the server rejects each one (`isViewSize` over the
+`viewSizes` set — the accepted step set `checkViewSizes` validates
+against) and the web and Android suites assert each carries no
+`TILE_SIZE_LABELS` entry. `widths` pins `stepWidth` (the column span an
 auto-placed tile takes at each step on a `cols`-column grid, rounded to
-whole units and clamped into the grid). The Go suite asserts the
-server's side of the vocabulary (the accepted step set via
-`checkViewSizes`); the web and Android suites assert the labels and the
-widths. The server does not compute step widths or auto placement —
-those are client rendering rules.
+whole units and clamped into the grid). The web and Android suites
+assert the labels and the widths; the server does not compute step
+widths or auto placement — those are client rendering rules.
 
 ### `auto-layout.json` — the auto-flow placement (`autoLayout`)
 

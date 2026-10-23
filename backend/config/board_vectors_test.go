@@ -54,8 +54,8 @@ func loadVector(t *testing.T, name string, into any) {
 func TestBoardVectorGrid(t *testing.T) {
 	var f struct {
 		Vectors []struct {
-			Name     string `json:"name"`
-			Input    *struct {
+			Name  string `json:"name"`
+			Input *struct {
 				Cols int `json:"cols"`
 				Rows int `json:"rows"`
 			} `json:"input"`
@@ -136,8 +136,8 @@ func TestBoardVectorGeometry(t *testing.T) {
 func TestBoardVectorViews(t *testing.T) {
 	var f struct {
 		Vectors []struct {
-			Name     string  `json:"name"`
-			Input    Board   `json:"input"`
+			Name     string `json:"name"`
+			Input    Board  `json:"input"`
 			Expected struct {
 				Grid  BoardGrid `json:"grid"`
 				Views Views     `json:"views"`
@@ -252,9 +252,9 @@ func TestBoardVectorServerLabelFallback(t *testing.T) {
 // widths from the same file).
 func TestBoardVectorStepVocabulary(t *testing.T) {
 	var f struct {
-		Steps   []struct {
-			Step   string `json:"step"`
-			Label  string `json:"label"`
+		Steps []struct {
+			Step  string `json:"step"`
+			Label string `json:"label"`
 		} `json:"steps"`
 		Rejects []string `json:"rejects"`
 	}
