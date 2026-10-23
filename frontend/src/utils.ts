@@ -8,7 +8,7 @@ import type {
   TileSize,
   ViewId,
 } from './types'
-import { VIEW_IDS } from './types'
+import { VIEW_IDS, isViewId } from './types'
 
 /** The human labels for the four built-in views. */
 export const VIEW_LABELS: Record<ViewId, string> = {
@@ -167,7 +167,7 @@ export function haTileLabel(tile: HABoardTile, entity: { label?: string } | null
  *  that trimmed blank labels diverged from that source of truth. The
  *  convergence is pinned by frontend/test-fixtures/board-layout/ha-tiles.json. */
 export function tileName(id: string, views: BoardViews): string {
-  if ((VIEW_IDS as readonly string[]).includes(id)) return VIEW_LABELS[id as keyof typeof VIEW_LABELS]
+  if (isViewId(id)) return VIEW_LABELS[id]
   const t = views.ha_tiles?.find((x) => x.id === id)
   return t ? (t.label || t.entity) : id
 }

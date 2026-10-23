@@ -1,15 +1,12 @@
 import type { CSSProperties, PointerEvent, ReactNode } from 'react'
 import type { HAEntity } from '../api'
-import type { NormalizedViews, ViewId } from '../types'
-import { VIEW_IDS } from '../types'
+import type { NormalizedViews } from '../types'
+import { isViewId } from '../types'
 import CalendarSection from './CalendarSection'
 import ChatPanel, { type UiMsg } from './ChatPanel'
 import HAPanel from './HAPanel'
 import HATile from './HATile'
 import PushPanel from './PushPanel'
-
-const isViewId = (id: string): id is ViewId =>
-  (VIEW_IDS as readonly string[]).includes(id)
 
 /**
  * The content of one board tile (the web's winNode): the view's live

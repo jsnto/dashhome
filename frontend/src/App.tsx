@@ -7,9 +7,8 @@ import type {
   HABoardTile,
   NormalizedViews,
   TileGeometry,
-  ViewId,
 } from './types'
-import { VIEW_IDS } from './types'
+import { isViewId } from './types'
 import { useTheme } from './useTheme'
 import { useHAEntities } from './useHAEntities'
 import { normalizeGrid, normalizeViews, tileName, visibleOrder } from './utils'
@@ -61,9 +60,6 @@ function useNarrow(): boolean {
   }, [])
   return narrow
 }
-
-const isViewId = (id: string): id is ViewId =>
-  (VIEW_IDS as readonly string[]).includes(id)
 
 /** The rows the board actually renders: the auto flow is open on rows, so
  *  a layout that overflows the grid's rows stretches the board with 1fr

@@ -12,6 +12,10 @@ export const VIEW_IDS = ['calendar', 'chat', 'home', 'push'] as const
 
 export type ViewId = (typeof VIEW_IDS)[number]
 
+/** Whether a tile ID is one of the four view IDs (as opposed to an HA tile ID). */
+export const isViewId = (id: string): id is ViewId =>
+  (VIEW_IDS as readonly string[]).includes(id)
+
 /** How the Calendar view renders. */
 export type CalendarMode = 'month' | 'schedule'
 
