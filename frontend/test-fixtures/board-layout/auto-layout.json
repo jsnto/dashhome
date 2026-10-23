@@ -1,0 +1,109 @@
+{
+  "description": "The auto-flow placement (autoLayout): the deterministic sparse auto flow every auto-placed tile lands in, given the grid width, the board order, the per-tile size steps, and the stored (fixed) placements. Stored placements act as obstacles without advancing the cursor; the cursor only moves forward; gaps left behind the cursor are never backfilled. (Asserted by the web and Android suites - the two implementations of the cursor; the server persists placements but never computes the rendered auto flow.)",
+  "vectors": [
+    {
+      "name": "the default board flows as two rows of medium tiles",
+      "cols": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "sizes": {},
+      "fixed": {},
+      "expected": {
+        "calendar": { "x": 1, "y": 1, "w": 6, "h": 1 },
+        "chat": { "x": 7, "y": 1, "w": 6, "h": 1 },
+        "home": { "x": 1, "y": 2, "w": 6, "h": 1 },
+        "push": { "x": 7, "y": 2, "w": 6, "h": 1 }
+      }
+    },
+    {
+      "name": "a full-width tile starts a new row and the packer keeps flowing around it",
+      "cols": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "sizes": { "chat": "xl" },
+      "fixed": {},
+      "expected": {
+        "calendar": { "x": 1, "y": 1, "w": 6, "h": 1 },
+        "chat": { "x": 1, "y": 2, "w": 12, "h": 1 },
+        "home": { "x": 1, "y": 3, "w": 6, "h": 1 },
+        "push": { "x": 7, "y": 3, "w": 6, "h": 1 }
+      }
+    },
+    {
+      "name": "gaps behind the cursor are never backfilled",
+      "cols": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "sizes": { "calendar": "l", "push": "s" },
+      "fixed": {},
+      "expected": {
+        "calendar": { "x": 1, "y": 1, "w": 8, "h": 1 },
+        "chat": { "x": 1, "y": 2, "w": 6, "h": 1 },
+        "home": { "x": 7, "y": 2, "w": 6, "h": 1 },
+        "push": { "x": 1, "y": 3, "w": 4, "h": 1 }
+      }
+    },
+    {
+      "name": "the board order drives the auto cells",
+      "cols": 12,
+      "order": ["push", "home", "chat", "calendar"],
+      "sizes": {},
+      "fixed": {},
+      "expected": {
+        "push": { "x": 1, "y": 1, "w": 6, "h": 1 },
+        "home": { "x": 7, "y": 1, "w": 6, "h": 1 },
+        "chat": { "x": 1, "y": 2, "w": 6, "h": 1 },
+        "calendar": { "x": 7, "y": 2, "w": 6, "h": 1 }
+      }
+    },
+    {
+      "name": "a stored placement is an obstacle; the rest flows around it",
+      "cols": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "sizes": {},
+      "fixed": { "calendar": { "x": 1, "y": 1, "w": 8, "h": 1 } },
+      "expected": {
+        "calendar": { "x": 1, "y": 1, "w": 8, "h": 1 },
+        "chat": { "x": 1, "y": 2, "w": 6, "h": 1 },
+        "home": { "x": 7, "y": 2, "w": 6, "h": 1 },
+        "push": { "x": 1, "y": 3, "w": 6, "h": 1 }
+      }
+    },
+    {
+      "name": "a stored entry later in board order still acts as an obstacle",
+      "cols": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "sizes": {},
+      "fixed": { "home": { "x": 4, "y": 1, "w": 3, "h": 1 } },
+      "expected": {
+        "home": { "x": 4, "y": 1, "w": 3, "h": 1 },
+        "calendar": { "x": 7, "y": 1, "w": 6, "h": 1 },
+        "chat": { "x": 1, "y": 2, "w": 6, "h": 1 },
+        "push": { "x": 7, "y": 2, "w": 6, "h": 1 }
+      }
+    },
+    {
+      "name": "the flow scales to a configured grid",
+      "cols": 6,
+      "order": ["calendar", "chat", "home", "push"],
+      "sizes": {},
+      "fixed": {},
+      "expected": {
+        "calendar": { "x": 1, "y": 1, "w": 3, "h": 1 },
+        "chat": { "x": 4, "y": 1, "w": 3, "h": 1 },
+        "home": { "x": 1, "y": 2, "w": 3, "h": 1 },
+        "push": { "x": 4, "y": 2, "w": 3, "h": 1 }
+      }
+    },
+    {
+      "name": "a stored entry that fills the row pushes the flow down",
+      "cols": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "sizes": {},
+      "fixed": { "calendar": { "x": 1, "y": 1, "w": 12, "h": 1 } },
+      "expected": {
+        "calendar": { "x": 1, "y": 1, "w": 12, "h": 1 },
+        "chat": { "x": 1, "y": 2, "w": 6, "h": 1 },
+        "home": { "x": 7, "y": 2, "w": 6, "h": 1 },
+        "push": { "x": 1, "y": 3, "w": 6, "h": 1 }
+      }
+    }
+  ]
+}

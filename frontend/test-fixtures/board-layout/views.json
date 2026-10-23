@@ -1,0 +1,138 @@
+{
+  "description": "normalizeViews over a raw board file: the freehand-editable surface repaired to the effective layout the server answers with (boardJSON -> ViewConfig). Inputs are type-well-formed but semantically malformed; the expected output is the server's normalized views plus the repaired grid.",
+  "vectors": [
+    {
+      "name": "an absent board defaults to the default layout",
+      "input": {},
+      "expected": {
+        "grid": { "cols": 12, "rows": 12 },
+        "views": {
+          "order": ["calendar", "chat", "home", "push"],
+          "hidden": [],
+          "calendar_mode": "month",
+          "sizes": { "calendar": "m", "chat": "m", "home": "m", "push": "m" },
+          "geometry": {},
+          "ha_tiles": []
+        }
+      }
+    },
+    {
+      "name": "repairs a malformed section (order, hidden, mode, sizes, geometry, ha_tiles)",
+      "input": {
+        "grid": { "cols": 8, "rows": 6 },
+        "views": {
+          "order": ["chat", "bogus", "chat", "home"],
+          "hidden": ["home", "home", "nope"],
+          "calendar_mode": "sideways",
+          "sizes": { "chat": "gigantic", "home": "s" },
+          "geometry": {
+            "chat": { "x": 1, "y": 1, "w": 3, "h": 1 },
+            "home": { "x": 1, "y": 1, "w": 3, "h": 1 }
+          },
+          "ha_tiles": [
+            { "id": "ha-livingroom", "entity": "light.x", "kind": "button" }
+          ]
+        }
+      },
+      "expected": {
+        "grid": { "cols": 8, "rows": 6 },
+        "views": {
+          "order": ["chat", "home", "calendar", "push", "ha-livingroom"],
+          "hidden": ["home"],
+          "calendar_mode": "month",
+          "sizes": { "chat": "m", "home": "s", "calendar": "m", "push": "m", "ha-livingroom": "m" },
+          "geometry": { "chat": { "x": 1, "y": 1, "w": 3, "h": 1 } },
+          "ha_tiles": [
+            { "id": "ha-livingroom", "entity": "light.x", "kind": "button" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "repairs the ha_tiles list and keeps a valid HA-tile geometry",
+      "input": {
+        "views": {
+          "order": ["calendar", "ha-1", "chat", "home", "push", "ha-2"],
+          "hidden": ["ha-1"],
+          "calendar_mode": "schedule",
+          "sizes": { "ha-1": "l", "ha-2": "xl" },
+          "geometry": {
+            "ha-1": { "x": 1, "y": 3, "w": 2, "h": 2 },
+            "ha-2": { "x": 99, "y": 1, "w": 2, "h": 1 }
+          },
+          "ha_tiles": [
+            { "id": "ha-1", "entity": "light.kitchen", "label": "Kitchen", "kind": "button" },
+            { "id": "ha-2", "entity": "sensor.ambient", "kind": "visual" },
+            { "id": "ha-2", "entity": "sensor.dup", "kind": "button" },
+            { "id": "nope", "entity": "light.x", "kind": "button" },
+            { "id": "ha-3", "entity": "", "kind": "button" },
+            { "id": "ha-4", "entity": "light.y", "kind": "toggle" }
+          ]
+        }
+      },
+      "expected": {
+        "grid": { "cols": 12, "rows": 12 },
+        "views": {
+          "order": ["calendar", "ha-1", "chat", "home", "push", "ha-2"],
+          "hidden": ["ha-1"],
+          "calendar_mode": "schedule",
+          "sizes": { "calendar": "m", "chat": "m", "home": "m", "push": "m", "ha-1": "l", "ha-2": "xl" },
+          "geometry": { "ha-1": { "x": 1, "y": 3, "w": 2, "h": 2 } },
+          "ha_tiles": [
+            { "id": "ha-1", "entity": "light.kitchen", "label": "Kitchen", "kind": "button" },
+            { "id": "ha-2", "entity": "sensor.ambient", "kind": "visual" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a grid change repairs the stored placements that no longer fit",
+      "input": {
+        "grid": { "cols": 6, "rows": 4 },
+        "views": {
+          "order": ["calendar", "chat", "home", "push"],
+          "sizes": { "calendar": "xl" },
+          "geometry": {
+            "calendar": { "x": 1, "y": 1, "w": 12, "h": 1 },
+            "chat": { "x": 1, "y": 2, "w": 3, "h": 1 },
+            "home": { "x": 4, "y": 2, "w": 3, "h": 1 }
+          }
+        }
+      },
+      "expected": {
+        "grid": { "cols": 6, "rows": 4 },
+        "views": {
+          "order": ["calendar", "chat", "home", "push"],
+          "hidden": [],
+          "calendar_mode": "month",
+          "sizes": { "calendar": "xl", "chat": "m", "home": "m", "push": "m" },
+          "geometry": {
+            "chat": { "x": 1, "y": 2, "w": 3, "h": 1 },
+            "home": { "x": 4, "y": 2, "w": 3, "h": 1 }
+          },
+          "ha_tiles": []
+        }
+      }
+    },
+    {
+      "name": "unknown size steps and sizes for unknown tiles fall back",
+      "input": {
+        "views": {
+          "order": ["chat", "home", "calendar", "push"],
+          "sizes": { "calendar": "xxl", "ha-gone": "s", "chat": "l" }
+        }
+      },
+      "expected": {
+        "grid": { "cols": 12, "rows": 12 },
+        "views": {
+          "order": ["chat", "home", "calendar", "push"],
+          "hidden": [],
+          "calendar_mode": "month",
+          "sizes": { "chat": "l", "home": "m", "calendar": "m", "push": "m" },
+          "geometry": {},
+          "ha_tiles": []
+        }
+      }
+    }
+  ]
+}

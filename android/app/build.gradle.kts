@@ -48,6 +48,16 @@ android {
         unitTests.isIncludeAndroidResources = true
     }
 
+    sourceSets {
+        getByName("test") {
+            // The shared board-layout golden vectors
+            // (frontend/test-fixtures/board-layout) ride the unit-test
+            // classpath: BoardVectorTest reads the very files the Go and
+            // web suites assert against.
+            resources.srcDir("../../frontend/test-fixtures")
+        }
+    }
+
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }

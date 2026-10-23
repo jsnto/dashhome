@@ -12,13 +12,10 @@ import type {
 import { VIEW_IDS } from './types'
 import { useTheme } from './useTheme'
 import { useHAEntities } from './useHAEntities'
-import { normalizeGrid, normalizeViews, VIEW_LABELS, visibleOrder } from './utils'
-import CalendarSection from './components/CalendarSection'
-import ChatPanel, { type UiMsg } from './components/ChatPanel'
+import { normalizeGrid, normalizeViews, tileName, visibleOrder } from './utils'
+import { type UiMsg } from './components/ChatPanel'
+import BoardTile, { BoardTileContent } from './components/BoardTile'
 import FullscreenButton from './components/FullscreenButton'
-import HAPanel from './components/HAPanel'
-import HATile from './components/HATile'
-import PushPanel from './components/PushPanel'
 import SettingsPanel from './components/SettingsPanel'
 import TileEditModal from './components/TileEditModal'
 import {
@@ -364,39 +361,8 @@ export default function App() {
     setMaximized((m) => (m === raw ? null : raw))
   }
 
-  const tileName = (id: string) => {
-    if (isViewId(id)) return VIEW_LABELS[id]
-    const ht = views.ha_tiles.find((t) => t.id === id)
-    return ht ? ht.label || ht.entity : id
-  }
-
   // One dashboard tile: the component is mounted only while the view is
   // visible, so hidden views neither render nor poll for data.
-  const winNode = (id: string) => {
-    if (isViewId(id)) {
-      switch (id) {
-        case 'calendar':
-          return <CalendarSection mode={views.calendar_mode} />
-        case 'chat':
-          return <ChatPanel msgs={chatMsgs} onAppend={appendChatMsg} />
-        case 'home':
-          return <HAPanel />
-        default:
-          return <PushPanel />
-      }
-    }
-    const ht = views.ha_tiles.find((t) => t.id === id)
-    if (!ht) return null
-    return (
-      <HATile
-        tile={ht}
-        entity={entities[ht.entity] ?? null}
-        haOff={haOff}
-        onService={refreshHA}
-      />
-    )
-  }
-
   return (
     <div className="app">
       <header className="top">
@@ -460,66 +426,32 @@ export default function App() {
             gridRow: `${cell.y} / span ${cell.h}`,
           }
           return (
-            <div
+            <BoardTile
               key={id}
-              className={[
-                'tile',
-                maxed ? 'maxed' : '',
-                dragging ? 'dragging' : '',
-                dragging && pv?.refused ? 'preview-invalid' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              data-win={id}
-              data-size={views.sizes[id]}
+              id={id}
+              name={tileName(id, views)}
+              maxed={maxed}
+              dragging={dragging}
+              refused={pv?.refused === true}
+              size={views.sizes[id]}
               style={maxed || narrow ? undefined : placedStyle}
+              editMode={editMode}
+              savingSize={savingSize}
+              onGripDown={(e) => beginDrag(id, 'move', e)}
+              onResizeDown={(e) => beginDrag(id, 'resize', e)}
+              onEdit={() => setEditingTile(id)}
+              onRemove={() => removeTile(id)}
             >
-              {editMode && (
-                <div
-                  className="tile-edit"
-                  role="group"
-                  aria-label={`${tileName(id)} tile controls`}
-                >
-                  <span className="tile-edit-label">Move</span>
-                  <span
-                    className="tile-grip"
-                    title="Drag to move this tile"
-                    onPointerDown={(e) => beginDrag(id, 'move', e)}
-                  >
-                    ⠿
-                  </span>
-                  <button
-                    type="button"
-                    className="tile-edit-open"
-                    title={`Edit ${tileName(id)} settings`}
-                    aria-label={`Edit ${tileName(id)} tile settings`}
-                    onClick={() => setEditingTile(id)}
-                  >
-                    ✎
-                  </button>
-                  <button
-                    type="button"
-                    className="tile-remove"
-                    title="Remove this tile from the board"
-                    aria-label={`Remove ${tileName(id)} tile`}
-                    disabled={savingSize}
-                    onClick={() => removeTile(id)}
-                  >
-                    ✕
-                  </button>
-                </div>
-              )}
-              {winNode(id)}
-              {editMode && (
-                <button
-                  type="button"
-                  className="tile-resize"
-                  title="Drag to resize (width and height)"
-                  aria-label={`resize ${tileName(id)}`}
-                  onPointerDown={(e) => beginDrag(id, 'resize', e)}
-                />
-              )}
-            </div>
+              <BoardTileContent
+                id={id}
+                views={views}
+                chatMsgs={chatMsgs}
+                onAppendChat={appendChatMsg}
+                entities={entities}
+                haOff={haOff}
+                onService={refreshHA}
+              />
+            </BoardTile>
           )
         })}
         {visible.length === 0 && (

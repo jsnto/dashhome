@@ -1,0 +1,182 @@
+{
+  "description": "The Home Assistant tile-ID rules: the ID shape (isHATileID), the stored-tile repair (normalizeHATiles), the next-free-ID rule (nextHATileId), the board-tile display name (tileName, the web/Android copies), and the server's label fallback rule (HAEntityLabel, the no-trim source of truth the tileName copies converge on).",
+  "id_shape": [
+    { "id": "ha-1", "valid": true },
+    { "id": "ha-a1", "valid": true },
+    { "id": "ha-1a2", "valid": true },
+    { "id": "ha-livingroom", "valid": true },
+    { "id": "ha-abcdefghijklmnop", "valid": true },
+    { "id": "ha-abcdefghijklmnopq", "valid": false },
+    { "id": "ha-", "valid": false },
+    { "id": "HA-1", "valid": false },
+    { "id": "ha-1 ", "valid": false },
+    { "id": "home", "valid": false },
+    { "id": "ha-living_room", "valid": false }
+  ],
+  "normalize": [
+    {
+      "name": "keeps the valid tiles, drops the malformed entries, dedupes (first wins)",
+      "input": [
+        { "id": "ha-livingroom", "entity": "light.living_room", "kind": "button" },
+        { "id": "ha-temp", "entity": "sensor.living_room_temperature", "label": "Temp", "kind": "visual" },
+        { "id": "nope", "entity": "light.x", "kind": "button" },
+        { "id": "ha-a", "entity": "", "kind": "button" },
+        { "id": "ha-b", "entity": "light.x", "kind": "explode" },
+        { "id": "ha-c", "entity": "light.x" },
+        { "id": "ha-livingroom", "entity": "light.other", "kind": "visual" }
+      ],
+      "expected": [
+        { "id": "ha-livingroom", "entity": "light.living_room", "kind": "button" },
+        { "id": "ha-temp", "entity": "sensor.living_room_temperature", "label": "Temp", "kind": "visual" }
+      ]
+    },
+    {
+      "name": "an empty label is dropped from the output (the entity's own label stands in)",
+      "input": [
+        { "id": "ha-1", "entity": "light.x", "label": "", "kind": "button" }
+      ],
+      "expected": [
+        { "id": "ha-1", "entity": "light.x", "kind": "button" }
+      ]
+    },
+    {
+      "name": "a whitespace-only label is kept as stored (normalization does not trim)",
+      "input": [
+        { "id": "ha-1", "entity": "light.x", "label": "  ", "kind": "button" }
+      ],
+      "expected": [
+        { "id": "ha-1", "entity": "light.x", "label": "  ", "kind": "button" }
+      ]
+    }
+  ],
+  "next_id": [
+    { "name": "no tiles yet", "tiles": [], "expected": "ha-1" },
+    {
+      "name": "the next integer after the used ones",
+      "tiles": [ { "id": "ha-1", "entity": "light.x", "kind": "button" } ],
+      "expected": "ha-2"
+    },
+    {
+      "name": "a gap is filled",
+      "tiles": [
+        { "id": "ha-1", "entity": "light.x", "kind": "button" },
+        { "id": "ha-3", "entity": "light.y", "kind": "visual" }
+      ],
+      "expected": "ha-2"
+    },
+    {
+      "name": "a run of used ids",
+      "tiles": [
+        { "id": "ha-1", "entity": "light.a", "kind": "button" },
+        { "id": "ha-2", "entity": "light.b", "kind": "button" },
+        { "id": "ha-3", "entity": "light.c", "kind": "button" },
+        { "id": "ha-4", "entity": "light.d", "kind": "button" },
+        { "id": "ha-5", "entity": "light.e", "kind": "button" }
+      ],
+      "expected": "ha-6"
+    },
+    {
+      "name": "ha-1 is free when only ha-2 is used",
+      "tiles": [ { "id": "ha-2", "entity": "light.b", "kind": "button" } ],
+      "expected": "ha-1"
+    },
+    {
+      "name": "non-numeric suffixes do not advance the scan",
+      "tiles": [
+        { "id": "ha-abc", "entity": "light.a", "kind": "button" },
+        { "id": "ha-1", "entity": "light.b", "kind": "button" }
+      ],
+      "expected": "ha-2"
+    },
+    {
+      "name": "a full run up to ha-16",
+      "tiles": [
+        { "id": "ha-1", "entity": "e.1", "kind": "button" },
+        { "id": "ha-2", "entity": "e.2", "kind": "button" },
+        { "id": "ha-3", "entity": "e.3", "kind": "button" },
+        { "id": "ha-4", "entity": "e.4", "kind": "button" },
+        { "id": "ha-5", "entity": "e.5", "kind": "button" },
+        { "id": "ha-6", "entity": "e.6", "kind": "button" },
+        { "id": "ha-7", "entity": "e.7", "kind": "button" },
+        { "id": "ha-8", "entity": "e.8", "kind": "button" },
+        { "id": "ha-9", "entity": "e.9", "kind": "button" },
+        { "id": "ha-10", "entity": "e.10", "kind": "button" },
+        { "id": "ha-11", "entity": "e.11", "kind": "button" },
+        { "id": "ha-12", "entity": "e.12", "kind": "button" },
+        { "id": "ha-13", "entity": "e.13", "kind": "button" },
+        { "id": "ha-14", "entity": "e.14", "kind": "button" },
+        { "id": "ha-15", "entity": "e.15", "kind": "button" },
+        { "id": "ha-16", "entity": "e.16", "kind": "button" }
+      ],
+      "expected": "ha-17"
+    }
+  ],
+  "display_names": [
+    {
+      "name": "a built-in view wears its view label",
+      "id": "calendar",
+      "tile": null,
+      "expected": "Calendar"
+    },
+    {
+      "name": "an HA tile wears its stored label",
+      "id": "ha-1",
+      "tile": { "id": "ha-1", "entity": "light.kitchen", "label": "Kitchen", "kind": "button" },
+      "expected": "Kitchen"
+    },
+    {
+      "name": "an HA tile without a label wears the entity id",
+      "id": "ha-2",
+      "tile": { "id": "ha-2", "entity": "sensor.ambient", "kind": "visual" },
+      "expected": "sensor.ambient"
+    },
+    {
+      "name": "an empty label falls back to the entity id",
+      "id": "ha-3",
+      "tile": { "id": "ha-3", "entity": "light.y", "label": "", "kind": "button" },
+      "expected": "light.y"
+    },
+    {
+      "name": "a blank label is shown as stored (no trim - the copies converge on the server's rule)",
+      "id": "ha-4",
+      "tile": { "id": "ha-4", "entity": "light.z", "label": "  ", "kind": "button" },
+      "expected": "  "
+    },
+    {
+      "name": "an unknown id wears the id",
+      "id": "mystery",
+      "tile": null,
+      "expected": "mystery"
+    }
+  ],
+  "server_label_fallback": [
+    {
+      "name": "the stored label wins",
+      "entity_id": "light.x",
+      "label": "Ceiling",
+      "friendly": "Ceiling light",
+      "expected": "Ceiling"
+    },
+    {
+      "name": "a blank label is kept as stored (the server does not trim - the source of truth for the tileName convergence)",
+      "entity_id": "light.x",
+      "label": "  ",
+      "friendly": "Ceiling light",
+      "expected": "  "
+    },
+    {
+      "name": "an empty label falls back to the friendly name",
+      "entity_id": "light.x",
+      "label": "",
+      "friendly": "Ceiling light",
+      "expected": "Ceiling light"
+    },
+    {
+      "name": "no label falls back to the entity id",
+      "entity_id": "light.x",
+      "label": "",
+      "friendly": "",
+      "expected": "light.x"
+    }
+  ]
+}

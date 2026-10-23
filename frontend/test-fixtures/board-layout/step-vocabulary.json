@@ -1,0 +1,29 @@
+{
+  "description": "The size-step vocabulary (the step IDs, their documented fraction of the grid width, and the human label) and the step width: the column span an auto-placed tile takes at each step on a cols-column grid (the fraction rounded to whole units, clamped into the grid). The Go suite asserts the server's accepted step set; the web and Android suites assert the labels and the widths (the server does not compute step widths - client rendering rules).",
+  "steps": [
+    { "step": "s", "label": "Small tile", "fraction": { "num": 1, "den": 3 } },
+    { "step": "m", "label": "Medium tile", "fraction": { "num": 1, "den": 2 } },
+    { "step": "l", "label": "Large tile", "fraction": { "num": 2, "den": 3 } },
+    { "step": "xl", "label": "Full width tile", "fraction": { "num": 1, "den": 1 } }
+  ],
+  "rejects": ["", "gigantic", "M", "xl2", "s "],
+  "widths": [
+    { "name": "the default 12-column grid", "size": "s", "cols": 12, "expected": 4 },
+    { "size": "m", "cols": 12, "expected": 6 },
+    { "size": "l", "cols": 12, "expected": 8 },
+    { "size": "xl", "cols": 12, "expected": 12 },
+    { "name": "an unknown step takes the default (medium) width", "size": "bogus", "cols": 12, "expected": 6 },
+    { "name": "a missing size takes the default (medium) width", "size": null, "cols": 12, "expected": 6 },
+    { "size": "s", "cols": 6, "expected": 2 },
+    { "size": "m", "cols": 6, "expected": 3 },
+    { "size": "l", "cols": 6, "expected": 4 },
+    { "size": "xl", "cols": 6, "expected": 6 },
+    { "size": "s", "cols": 3, "expected": 1 },
+    { "name": "a half unit rounds up", "size": "m", "cols": 3, "expected": 2 },
+    { "size": "l", "cols": 3, "expected": 2 },
+    { "size": "xl", "cols": 3, "expected": 3 },
+    { "name": "the width never exceeds the grid", "size": "xl", "cols": 5, "expected": 5 },
+    { "name": "rounding to whole units on a 10-column grid", "size": "s", "cols": 10, "expected": 3 },
+    { "size": "l", "cols": 10, "expected": 7 }
+  ]
+}
