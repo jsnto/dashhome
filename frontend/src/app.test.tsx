@@ -150,7 +150,7 @@ function stubBoardServer(
       if (body.sizes) Object.assign(sizes, body.sizes)
       // Geometry merges per tile (a null entry clears that tile's placement,
       // restoring automatic placement), mirroring the backend.
-      let geometry = { ...(cur.geometry ?? {}) } as Record<string, unknown>
+      const geometry = { ...(cur.geometry ?? {}) } as Record<string, unknown>
       if (body.geometry) {
         for (const [id, cell] of Object.entries(body.geometry as Record<string, unknown>)) {
           if (cell === null) delete geometry[id]

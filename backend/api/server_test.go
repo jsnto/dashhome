@@ -123,12 +123,6 @@ func (f *fakeDash) record(call string) {
 	f.mu.Unlock()
 }
 
-func (f *fakeDash) callCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.calls)
-}
-
 type fakeHermes struct {
 	reply   string
 	err     error
@@ -1107,9 +1101,6 @@ func TestHAServiceCallUpstreamError(t *testing.T) {
 }
 
 // --- calendars / events ------------------------------------------------------
-
-var testMonthStart = testTime("2026-03-01T00:00:00Z")
-var testMonthEnd = testTime("2026-03-31T23:59:59Z")
 
 func eventCal(id, calID, summary string, start, end string, allDay bool) calendar.Event {
 	return calendar.Event{

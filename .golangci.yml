@@ -1,0 +1,47 @@
+# golangci-lint configuration (v2 schema), pinned to v2.15.0.
+#
+# Runs inside the golang:1.26-alpine container (the repo's Docker Go
+# toolchain; see the Makefile `test` target / .no-mistakes.yaml baseline),
+# not on the host.
+#
+# Policy: the standard default linter set, nothing more. The gate stays
+# minimal and defensible: errcheck, govet, ineffassign, staticcheck, unused.
+# No noisy/subjective linters (stylecheck, gocritic, revive, gosec, dupl,
+# cyclop, ...) are enabled.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # standard = the default set (errcheck, govet, ineffassign, staticcheck,
+  # unused); stated explicitly so a golangci-lint upgrade that changes the
+  # defaults shows up in review instead of silently re-gating the repo.
+  default: standard
+
+  # The grandfathered baseline: every exclusion below pre-dates the gate
+  # landing and its reason is documented beside it. New code must lint
+  # clean under the defaults.
+  exclusions:
+    rules:
+      # Test code: the fakes write into httptest.ResponseRecorder (which
+      # never fails) and decode response bodies; error handling in test
+      # fixtures is not a production concern.
+      - path: "_test\\.go"
+        linters: [errcheck]
+      # Deferred Close/Remove cleanup idiom (response bodies, sockets, temp
+      # files): the error is not actionable at the defer site.
+      - text: "Error return value of .*\\.(Close|Remove)"
+        linters: [errcheck]
+      # nhooyr.io/websocket is deprecated upstream (the library moved to
+      # coder/websocket); migrating the HA WebSocket client is a product
+      # change, tracked separately from the lint gate.
+      - path: "backend/ha/"
+        text: "SA1019"
+      # google.CredentialsFromJSONWithParams is deprecated (upstream wants
+      # credential-config validation added); tracked separately.
+      - path: "backend/calendar/"
+        text: "SA1019"
+      # QF1002 is a style quickfix hint (prefer tagged switch), not a defect.
+      - text: "QF1002"
+        linters: [staticcheck]

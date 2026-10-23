@@ -5,8 +5,10 @@
 no_ci: true
 
 # Deterministic Test-step baseline: the pipeline's Test step runs this command
-# before its agent turn. It covers the backend (Go unit tests), the frontend
-# (typecheck/build + unit tests - the `make test` recipe lines inlined, since
+# before its agent turn. It covers the backend (Go unit tests + golangci-lint
+# with the conservative standard linter set), the frontend
+# (typecheck/build + unit tests + eslint/prettier - the `make test` recipe
+# lines inlined, since
 # the host has no `make` or Go toolchain, so the Go leg runs inside the
 # golang:1.26-alpine image; npm ci for fresh run worktrees, pinned to Node 22
 # via nvm since this non-interactive shell resolves the host's default Node
@@ -15,12 +17,13 @@ no_ci: true
 # host has no Android SDK. The Android app's on-device validation was performed
 # separately; its screenshots are committed under android/docs/screenshots/.
 commands:
-  test: '. "$HOME/.nvm/nvm.sh" --no-use >/dev/null 2>&1 && nvm use 22 --silent >/dev/null && cd frontend && npm ci && cd .. && docker run --rm -v "$PWD":/src -w /src golang:1.26-alpine sh -c "go test ./..." && cd frontend && npm run build && npm test && cd .. && docker run --rm -v android_gradle-cache:/home/gradle/.gradle -v "$PWD":/src dashhome-apk-builder:1 bash -c "cd /src/android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest --no-daemon"'
+  test: '. "$HOME/.nvm/nvm.sh" --no-use >/dev/null 2>&1 && nvm use 22 --silent >/dev/null && cd frontend && npm ci && cd .. && docker run --rm -v "$PWD":/src -w /src golang:1.26-alpine sh -c "go test ./..." && docker run --rm -v "$PWD":/src -w /src golang:1.26-alpine sh -c "wget -qO /tmp/gcl.tgz https://github.com/golangci/golangci-lint/releases/download/v2.15.0/golangci-lint-2.15.0-linux-amd64.tar.gz && tar -xzf /tmp/gcl.tgz -C /tmp && /tmp/golangci-lint-2.15.0-linux-amd64/golangci-lint run" && cd frontend && npm run build && npm test && npm run lint && cd .. && docker run --rm -v android_gradle-cache:/home/gradle/.gradle -v "$PWD":/src dashhome-apk-builder:1 bash -c "cd /src/android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest --no-daemon"'
 
 test:
   instructions: |
     The configured baseline (commands.test) already runs the deterministic
-    suites: Go unit tests, frontend typecheck/build/unit tests (the inlined
+    suites: Go unit tests + golangci-lint (Docker Go image), frontend
+    typecheck/build/unit tests + eslint/prettier (the inlined
     `make test` recipe), and the Android app unit tests including the
     Robolectric markdown render test (Docker builder image). Do not probe for, pair with, or drive ADB devices
     (phones or tablets): the Android app's on-device validation was performed
