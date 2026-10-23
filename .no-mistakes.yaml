@@ -20,9 +20,9 @@ commands:
 test:
   instructions: |
     The configured baseline (commands.test) already runs the deterministic
-    suites: Go unit tests, frontend typecheck/build/unit tests (make test), and
-    the Android app unit tests including the Robolectric markdown render test
-    (Docker builder image). Do not probe for, pair with, or drive ADB devices
+    suites: Go unit tests, frontend typecheck/build/unit tests (the inlined
+    `make test` recipe), and the Android app unit tests including the
+    Robolectric markdown render test (Docker builder image). Do not probe for, pair with, or drive ADB devices
     (phones or tablets): the Android app's on-device validation was performed
     separately and its screenshots are committed under android/docs/screenshots/.
     If the baseline passes, confirm nothing else is needed for the changed paths
