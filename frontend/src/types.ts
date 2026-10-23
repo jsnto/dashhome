@@ -27,9 +27,6 @@ export const TILE_SIZES = ['s', 'm', 'l', 'xl'] as const
 
 export type TileSize = (typeof TILE_SIZES)[number]
 
-/** The default tile size: half the board's width (four of them form the default 2x2 board). */
-export const DEFAULT_TILE_SIZE: TileSize = 'm'
-
 /** The board's tile layout (the optional `views` object of the board file).
  *  The tile IDs are the four view IDs plus any `views.ha_tiles` ids. */
 export interface BoardViews {

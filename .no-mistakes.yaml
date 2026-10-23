@@ -12,7 +12,7 @@ no_ci: true
 # host has no Android SDK. The Android app's on-device validation was performed
 # separately; its screenshots are committed under android/docs/screenshots/.
 commands:
-  test: 'cd frontend && npm ci && cd .. && make test && docker run --rm -v dashhome-gradle-cache:/home/gradle/.gradle -v "$PWD":/src dashhome-apk-builder:1 bash -c "cd /src/android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest --no-daemon"'
+  test: 'cd frontend && npm ci && cd .. && make test && docker run --rm -v android_gradle-cache:/home/gradle/.gradle -v "$PWD":/src dashhome-apk-builder:1 bash -c "cd /src/android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest --no-daemon"'
 
 test:
   instructions: |

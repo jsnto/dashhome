@@ -19,6 +19,9 @@ android/.kotlin/
 # the Kotlin source package named `data` is code, not runtime state
 !android/app/src/main/kotlin/com/jsnto/dashhome/data/
 
+# python bytecode cache
+__pycache__/
+
 # editor
 .vscode/
 .idea/
