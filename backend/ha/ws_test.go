@@ -180,8 +180,6 @@ func unknownCommand(id json.Number) map[string]any {
 	return result(id, false, nil, "unknown_command", "Unknown command.")
 }
 
-func sp(s string) *string { return &s }
-
 // --- tests -----------------------------------------------------------------
 
 func TestDashListDashboardsModern(t *testing.T) {

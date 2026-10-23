@@ -520,7 +520,7 @@ into friendly setup notes.
 ## Development
 
 ```sh
-make test   # go test ./...  +  frontend typecheck & build  +  vitest
+make test   # go test ./...  +  golangci-lint (Docker Go image)  +  frontend typecheck & build  +  vitest  +  eslint/prettier
 ```
 
 - The frontend legs require Node 22 (pinned in `frontend/.nvmrc` and the

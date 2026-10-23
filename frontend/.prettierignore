@@ -1,0 +1,52 @@
+# Prettier gate ignores.
+
+# Build output / generated files.
+node_modules
+dist
+package-lock.json
+
+# Shared board-layout golden vectors (frontend/test-fixtures/board-layout):
+# byte-exact data consumed by the Go, Android, and web test suites -
+# formatting is not code style and reformatting is out of scope.
+test-fixtures
+
+# Grandfathered at lint-gate landing (2026-10-23): the files below carry
+# pre-existing formatting the gate must not force-reformat (no giant
+# diff). New files are fully checked. To re-enable the gate on a file,
+# run `npx prettier --write <file>` and remove it from this list.
+index.html
+src/api.test.ts
+src/api.ts
+src/app.test.tsx
+src/App.tsx
+src/boardVectors.test.ts
+src/components/CalendarSection.tsx
+src/components/ChatPanel.test.tsx
+src/components/ChatPanel.tsx
+src/components/FullscreenButton.tsx
+src/components/HAFullPanel.test.tsx
+src/components/HAPanel.test.tsx
+src/components/HAPanel.tsx
+src/components/HATile.test.tsx
+src/components/HATile.tsx
+src/components/MonthGrid.tsx
+src/components/Note.tsx
+src/components/PushPanel.tsx
+src/components/SettingsHASection.tsx
+src/components/SettingsPanel.tsx
+src/components/SettingsServicesSection.tsx
+src/components/SettingsTilesSection.tsx
+src/components/SettingsUpdatesSection.tsx
+src/components/TileEditModal.tsx
+src/index.css
+src/refreshBus.ts
+src/services.test.tsx
+src/settings.test.tsx
+src/theme.test.ts
+src/theme.ts
+src/tileGrid.test.ts
+src/tileGrid.ts
+src/useHAEntities.ts
+src/useTheme.ts
+src/utils.test.ts
+src/utils.ts

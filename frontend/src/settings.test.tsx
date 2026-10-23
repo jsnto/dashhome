@@ -117,7 +117,7 @@ function stubViewsApi(board: ApiBoard, haEntities: unknown[] = []) {
         sizes: { ...defaultSizes },
       }
       // Geometry merges per tile; a null entry clears that tile's placement.
-      let geometry = { ...(views.geometry ?? {}) }
+      const geometry = { ...(views.geometry ?? {}) }
       if (body.geometry) {
         for (const [id, cell] of Object.entries(body.geometry as Record<string, unknown>)) {
           if (cell === null) delete geometry[id]
