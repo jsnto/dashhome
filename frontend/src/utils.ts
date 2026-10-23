@@ -8,7 +8,7 @@ import type {
   TileSize,
   ViewId,
 } from './types'
-import { VIEW_IDS } from './types'
+import { VIEW_IDS, isViewId } from './types'
 
 /** The human labels for the four built-in views. */
 export const VIEW_LABELS: Record<ViewId, string> = {
@@ -158,6 +158,29 @@ export function haTileLabel(tile: HABoardTile, entity: { label?: string } | null
   if (tile.label && tile.label.trim() !== '') return tile.label.trim()
   if (entity?.label) return entity.label
   return tile.entity
+}
+
+/** The display name of any board tile (a built-in view or an HA tile).
+ *  The single web copy (the board shell and the settings panel share it);
+ *  the label is used as stored, no trim - the server's label rule
+ *  (config.HAEntityLabel) only rejects the empty label, and the copies
+ *  that trimmed blank labels diverged from that source of truth. The
+ *  convergence is pinned by frontend/test-fixtures/board-layout/ha-tiles.json. */
+export function tileName(id: string, views: BoardViews): string {
+  if (isViewId(id)) return VIEW_LABELS[id]
+  const t = views.ha_tiles?.find((x) => x.id === id)
+  return t ? (t.label || t.entity) : id
+}
+
+/** The next free Home Assistant tile id (ha-1, ha-2, …): the smallest
+ *  "ha-" + n not already in the list. The server side is
+ *  config.nextHATileID (pinned by frontend/test-fixtures/board-layout/ha-tiles.json). */
+export function nextHATileId(tiles: HABoardTile[]): string {
+  const used = new Set(tiles.map((t) => t.id))
+  for (let n = 1; ; n++) {
+    const id = `ha-${n}`
+    if (!used.has(id)) return id
+  }
 }
 
 /** The human state for an HA tile: ON/OFF when that is the vocabulary, else the raw state. */

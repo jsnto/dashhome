@@ -427,12 +427,16 @@ fun nextHATileId(tiles: List<HABoardTile>): String {
     return "ha-$n"
 }
 
-/** The display name of any board tile (a built-in view or an HA tile). */
+/** The display name of any board tile (a built-in view or an HA tile).
+ *  The label is used as stored, no trim - the server's label rule
+ *  (config.HAEntityLabel) only rejects the empty label, and the copies
+ *  that trimmed blank labels diverged from that source of truth. The
+ *  convergence is pinned by frontend/test-fixtures/board-layout/ha-tiles.json. */
 fun tileName(id: String, views: BoardViews): String {
     VIEW_LABELS[id]?.let { return it }
     val t = views.haTiles.firstOrNull { it.id == id }
     if (t != null) {
-        return t.label?.takeIf { it.trim().isNotEmpty() } ?: t.entity
+        return t.label?.takeIf { it.isNotEmpty() } ?: t.entity
     }
     return id
 }

@@ -1,0 +1,45 @@
+{
+  "description": "normalizeGrid / BoardGrid.effective: a stored grid repaired to valid dimensions (per-axis fallback to the 12x12 default).",
+  "vectors": [
+    {
+      "name": "an absent grid defaults to 12x12",
+      "input": null,
+      "expected": { "cols": 12, "rows": 12 }
+    },
+    {
+      "name": "the default stored grid is kept",
+      "input": { "cols": 12, "rows": 12 },
+      "expected": { "cols": 12, "rows": 12 }
+    },
+    {
+      "name": "a stored grid within the usable range is kept",
+      "input": { "cols": 8, "rows": 5 },
+      "expected": { "cols": 8, "rows": 5 }
+    },
+    {
+      "name": "the usable bounds (1..24) are kept",
+      "input": { "cols": 1, "rows": 24 },
+      "expected": { "cols": 1, "rows": 24 }
+    },
+    {
+      "name": "an out-of-range dimension falls back per axis",
+      "input": { "cols": 99, "rows": 4 },
+      "expected": { "cols": 12, "rows": 4 }
+    },
+    {
+      "name": "a zero dimension falls back per axis",
+      "input": { "cols": 6, "rows": 0 },
+      "expected": { "cols": 6, "rows": 12 }
+    },
+    {
+      "name": "two out-of-range dimensions fall back to the default",
+      "input": { "cols": 25, "rows": 25 },
+      "expected": { "cols": 12, "rows": 12 }
+    },
+    {
+      "name": "negative dimensions fall back to the default",
+      "input": { "cols": -3, "rows": -4 },
+      "expected": { "cols": 12, "rows": 12 }
+    }
+  ]
+}

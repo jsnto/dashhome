@@ -1027,6 +1027,23 @@ func isHATileKind(kind string) bool {
 	return kind == HATileButton || kind == HATileVisual
 }
 
+// nextHATileID returns the next free Home Assistant tile ID (ha-1, ha-2,
+// ...): the smallest "ha-" + n not already in the list. The same
+// first-free rule the clients use when adding a tile (pinned by the
+// shared board-layout vectors in frontend/test-fixtures/board-layout/ha-tiles.json).
+func nextHATileID(tiles []HABoardTile) string {
+	used := make(map[string]bool, len(tiles))
+	for _, t := range tiles {
+		used[t.ID] = true
+	}
+	for n := 1; ; n++ {
+		id := HATileIDPrefix + strconv.Itoa(n)
+		if !used[id] {
+			return id
+		}
+	}
+}
+
 func isValidHATile(t HABoardTile) bool {
 	return isHATileID(t.ID) && t.Entity != "" && isHATileKind(t.Kind)
 }

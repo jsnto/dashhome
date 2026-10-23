@@ -7,9 +7,8 @@ import type {
   HAKind,
   NormalizedViews,
   TileSize,
-  ViewId,
 } from '../types'
-import { VIEW_IDS } from '../types'
+import { isViewId } from '../types'
 import { haTileLabel, isHATileId, TILE_SIZE_LABELS, VIEW_LABELS } from '../utils'
 
 interface Props {
@@ -27,7 +26,6 @@ interface Props {
   onBoard: (board: ApiBoard) => void
 }
 
-const isViewId = (id: string): id is ViewId => (VIEW_IDS as readonly string[]).includes(id)
 const SIZES: TileSize[] = ['s', 'm', 'l', 'xl']
 
 /**

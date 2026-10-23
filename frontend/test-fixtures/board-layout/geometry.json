@@ -1,0 +1,111 @@
+{
+  "description": "normalizeGeometry: stored placements repaired to in-bounds, overlap-free entries (processed in board order; the first tile in board order wins an overlap; unknown IDs and unknown units are dropped).",
+  "vectors": [
+    {
+      "name": "keeps the valid in-bounds entries",
+      "cols": 12,
+      "rows": 12,
+      "order": ["calendar", "chat", "home", "push", "ha-1"],
+      "ids": ["calendar", "chat", "home", "push", "ha-1"],
+      "raw": {
+        "calendar": { "x": 1, "y": 1, "w": 3, "h": 1 },
+        "home": { "x": 7, "y": 1, "w": 3, "h": 1 },
+        "ha-1": { "x": 1, "y": 12, "w": 2, "h": 1 }
+      },
+      "expected": {
+        "calendar": { "x": 1, "y": 1, "w": 3, "h": 1 },
+        "home": { "x": 7, "y": 1, "w": 3, "h": 1 },
+        "ha-1": { "x": 1, "y": 12, "w": 2, "h": 1 }
+      }
+    },
+    {
+      "name": "the first tile in board order wins an overlap",
+      "cols": 12,
+      "rows": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "ids": ["calendar", "chat", "home", "push"],
+      "raw": {
+        "calendar": { "x": 1, "y": 1, "w": 3, "h": 1 },
+        "chat": { "x": 2, "y": 1, "w": 3, "h": 1 }
+      },
+      "expected": {
+        "calendar": { "x": 1, "y": 1, "w": 3, "h": 1 }
+      }
+    },
+    {
+      "name": "drops out-of-bounds entries (past the edges, too wide, zero span)",
+      "cols": 12,
+      "rows": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "ids": ["calendar", "chat", "home", "push"],
+      "raw": {
+        "calendar": { "x": 13, "y": 1, "w": 1, "h": 1 },
+        "chat": { "x": 1, "y": 13, "w": 1, "h": 1 },
+        "home": { "x": 1, "y": 1, "w": 13, "h": 1 },
+        "push": { "x": 1, "y": 1, "w": 1, "h": 0 }
+      },
+      "expected": {}
+    },
+    {
+      "name": "repairs against the configured grid dimensions",
+      "cols": 6,
+      "rows": 4,
+      "order": ["calendar", "chat", "home", "push"],
+      "ids": ["calendar", "chat", "home", "push"],
+      "raw": {
+        "calendar": { "x": 1, "y": 1, "w": 6, "h": 4 },
+        "chat": { "x": 6, "y": 1, "w": 2, "h": 1 },
+        "home": { "x": 1, "y": 5, "w": 1, "h": 1 }
+      },
+      "expected": {
+        "calendar": { "x": 1, "y": 1, "w": 6, "h": 4 }
+      }
+    },
+    {
+      "name": "drops unknown-unit and unknown-id entries (the tile falls back to auto placement)",
+      "cols": 12,
+      "rows": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "ids": ["calendar", "chat", "home", "push"],
+      "raw": {
+        "calendar": "wide",
+        "chat": { "x": 1, "y": 1, "w": 1, "h": 1 },
+        "home": { "x": 3, "y": 1, "w": 1, "h": 1 },
+        "ha-99": { "x": 1, "y": 1, "w": 1, "h": 1 }
+      },
+      "expected": {
+        "chat": { "x": 1, "y": 1, "w": 1, "h": 1 },
+        "home": { "x": 3, "y": 1, "w": 1, "h": 1 }
+      }
+    },
+    {
+      "name": "edge-to-edge placements do not overlap",
+      "cols": 12,
+      "rows": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "ids": ["calendar", "chat", "home", "push"],
+      "raw": {
+        "calendar": { "x": 1, "y": 1, "w": 3, "h": 1 },
+        "chat": { "x": 4, "y": 1, "w": 3, "h": 1 }
+      },
+      "expected": {
+        "calendar": { "x": 1, "y": 1, "w": 3, "h": 1 },
+        "chat": { "x": 4, "y": 1, "w": 3, "h": 1 }
+      }
+    },
+    {
+      "name": "board order, not ID order, decides the overlap winner",
+      "cols": 12,
+      "rows": 12,
+      "order": ["calendar", "chat", "home", "push"],
+      "ids": ["calendar", "chat", "home", "push"],
+      "raw": {
+        "push": { "x": 1, "y": 1, "w": 2, "h": 1 },
+        "calendar": { "x": 2, "y": 1, "w": 2, "h": 1 }
+      },
+      "expected": {
+        "calendar": { "x": 2, "y": 1, "w": 2, "h": 1 }
+      }
+    }
+  ]
+}

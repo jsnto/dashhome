@@ -1,33 +1,20 @@
 package com.jsnto.dashhome.ui
 
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,30 +23,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.times
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import com.jsnto.dashhome.api.ApiException
-import com.jsnto.dashhome.api.Board
-import com.jsnto.dashhome.api.BoardViews
 import com.jsnto.dashhome.api.DashApi
-import com.jsnto.dashhome.api.GridDims
 import com.jsnto.dashhome.api.HABoardTile
 import com.jsnto.dashhome.api.HAEntity
 import com.jsnto.dashhome.api.TileGeometry
@@ -82,73 +53,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.hypot
-
-/**
- * The sections the tablet board can drill down into: the three dashboard
- * sections plus Settings (what the previous navigation rail showed).
- * Every built-in board tile maps to one of these existing full-screen
- * views - no new sections.
- */
-enum class TabletItem(val title: String) {
-    CALENDAR("Calendar"),
-    HOME("Home"),
-    HERMES("Hermes"),
-    SETTINGS("Settings"),
-}
-
-/** The section a built-in view tile's title opens (the web's maximize
- *  affordance resolves to the section's full-screen view; the chat and
- *  push tiles both resolve to the Hermes section, like the previous
- *  board's windows). */
-private fun itemForView(id: String): TabletItem = when (id) {
-    "calendar" -> TabletItem.CALENDAR
-    "home" -> TabletItem.HOME
-    else -> TabletItem.HERMES
-}
-
-/** The board's window gap: the web's 16px grid gap. */
-private val BOARD_GAP = 16.dp
-
-/** How often the board polls Home Assistant entity states (the web's
- *  POLL_MS: 10 s while any HA tile is visible). */
-private const val HA_POLL_MS = 10_000L
-
-/** The web's drag threshold: below this the press is a click, not a drag. */
-private const val DRAG_MIN_PX = 4f
-
-/** A live drag/resize preview (the web's {id, cell, refused} preview). */
-private data class DragPreview(
-    val id: String,
-    val cell: TileGeometry,
-    val refused: Boolean,
-)
-
-/** One drag/resize session (the web's dragRef: the live drag data). */
-private class DragSession(
-    val mode: DragMode,
-    val id: String,
-    val origin: TileGeometry,
-    val start: Offset,
-    val metrics: com.jsnto.dashhome.ui.state.GridMetrics,
-    val cols: Int,
-    val rows: Int,
-    var moved: Boolean,
-)
-
-/** The board state the drag/resize pointer math reads from: the current
- *  effective layout, the normalized views, the visible order, the grid, and
- *  the rendered row count. It is refreshed on the drag holder every
- *  composition, because the grip/resize pointer blocks (pointerInput keyed
- *  on Unit) run once and keep their attach-time closures - so the math
- *  reads the live values here rather than the captured vals (the web holds
- *  this by re-attaching its window listeners per composition). */
-private class DragContext(
-    val layout: Map<String, TileGeometry>,
-    val views: BoardViews,
-    val visible: List<String>,
-    val grid: GridDims,
-    val rows: Int,
-)
 
 /**
  * The tablet one-page board - the Android counterpart of the web
@@ -250,51 +154,10 @@ fun TabletBoard(
     // The live drag/resize preview (null while no drag is in flight).
     var preview by remember { mutableStateOf<DragPreview?>(null) }
 
-    // Home Assistant entity states: polled while any HA tile is visible
-    // (the web's useHAEntities: on mount, on a 10 s timer; the 503
-    // "not configured" is reported via haOff rather than an error, and a
-    // transient 502 keeps the last good states).
-    val haVisible = remember(visible) { visible.filter { it !in VIEW_IDS } }
-    var haEntities by remember { mutableStateOf<Map<String, HAEntity>>(emptyMap()) }
-    var haOff by remember { mutableStateOf(false) }
-    val haKey = haVisible.joinToString(",")
-
-    val haLoad: () -> Unit = remember {
-        {
-            scope.launch {
-                try {
-                    haEntities = DashApi.getHAEntities().associateBy { it.entityId }
-                    haOff = false
-                } catch (e: ApiException) {
-                    if (e.code == "homeassistant_not_configured") haOff = true
-                }
-            }
-        }
-    }
-    LaunchedEffect(DashApi.baseUrl, haKey) {
-        if (haKey.isEmpty()) return@LaunchedEffect
-        haLoad()
-        while (true) {
-            delay(HA_POLL_MS)
-            haLoad()
-        }
-    }
-
-    // A refresh the moment the app regains visibility (the web's
-    // visibilitychange reload): the 10 s poll alone would leave a
-    // visual tile's state up to a full tick stale after a background.
-    // The listener lives only while an HA tile is visible (the web's
-    // `active` gate), so a board without HA tiles fetches nothing.
-    val lifecycleOwner = LocalLifecycleOwner.current
-    if (haKey.isNotEmpty()) {
-        DisposableEffect(lifecycleOwner, haKey) {
-            val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_START) haLoad()
-            }
-            lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-        }
-    }
+    // Home Assistant entity states (TabletBoardHa.kt): the entity data
+    // the tiles read, the honest "not configured" flag, and the on-demand
+    // refresh (the web's useHAEntities).
+    val ha = boardHaEntities(visible, scope)
 
     // A board tile's display name: a Home Assistant tile wears the
     // entity's friendly label (the web's HATile card head: the tile's
@@ -303,7 +166,7 @@ fun TabletBoard(
     fun displayName(id: String): String {
         val ht = views.haTiles.firstOrNull { it.id == id }
         return if (ht != null) {
-            haTileLabel(ht, haEntities[ht.entity])
+            haTileLabel(ht, ha.entities[ht.entity])
         } else {
             tileName(id, views)
         }
@@ -524,7 +387,7 @@ fun TabletBoard(
                             editMode = false,
                             onTitleClick = { maximized = null },
                         ) {
-                            HaContent(maxId, views, haEntities, haOff, haLoad, dark)
+                            HaContent(maxId, views, ha.entities, ha.off, ha.load, dark)
                         }
                     } else {
                         visible.forEach { id ->
@@ -564,9 +427,9 @@ fun TabletBoard(
                                     chat,
                                     chatScope,
                                     sections,
-                                    haEntities,
-                                    haOff,
-                                    haLoad,
+                                    ha.entities,
+                                    ha.off,
+                                    ha.load,
                                     hermesChat,
                                     hermesPush,
                                     dark,
@@ -597,328 +460,13 @@ fun TabletBoard(
         TileEditModal(
             id = id,
             views = views,
-            entities = haEntities,
-            haOff = haOff,
+            entities = ha.entities,
+            haOff = ha.off,
             onBoard = { board ->
                 state.adopt(board)
                 editingTile = null
             },
             onClose = { editingTile = null },
         )
-    }
-}
-
-/** The content of one board tile (the web's winNode). */
-@Composable
-private fun TileContent(
-    id: String,
-    views: BoardViews,
-    chat: ChatState,
-    chatScope: CoroutineScope,
-    sections: TabletSectionState,
-    haEntities: Map<String, HAEntity>,
-    haOff: Boolean,
-    haLoad: () -> Unit,
-    hermesChat: Boolean,
-    hermesPush: Boolean,
-    dark: Boolean,
-) {
-    when (id) {
-        "calendar" -> CalendarScreen(
-            wide = true,
-            shared = sections,
-            calendarMode = views.calendarMode,
-        )
-        "chat" -> ChatPane(state = chat, scope = chatScope, configured = hermesChat)
-        "home" -> HomeScreen(showTitle = false)
-        "push" -> PushPane(configured = hermesPush, shared = sections)
-        else -> HaContent(id, views, haEntities, haOff, haLoad, dark)
-    }
-}
-
-/** The content of a Home Assistant board tile (the web's HATile). */
-@Composable
-private fun HaContent(
-    id: String,
-    views: BoardViews,
-    haEntities: Map<String, HAEntity>,
-    haOff: Boolean,
-    haLoad: () -> Unit,
-    dark: Boolean,
-) {
-    val tile = views.haTiles.firstOrNull { it.id == id } ?: return
-    HATileView(
-        tile = tile,
-        entity = haEntities[tile.entity],
-        haOff = haOff,
-        onService = haLoad,
-        dark = dark,
-    )
-}
-
-/**
- * One board tile: the web's `.tile`/`.card` - a card placed on the grid
- * by its effective cell (the stored placement or the auto flow, the
- * live preview cell while a drag is in flight), filled with the section's
- * live content under a title bar (the web's card-head title; the maximize
- * affordance there). A drag preview renders the tile at the candidate
- * cell at 0.9 opacity, with the danger outline when the drop would be
- * refused (the web's `.tile.dragging` / `.tile.preview-invalid`). In edit
- * mode the tile carries the web's tile-edit row (the move label, the drag
- * grip, the settings and remove buttons) and the corner resize handle.
- */
-@Composable
-private fun BoardTile(
-    id: String,
-    name: String,
-    cell: TileGeometry,
-    unitW: androidx.compose.ui.unit.Dp,
-    unitH: androidx.compose.ui.unit.Dp,
-    editMode: Boolean,
-    saving: Boolean = false,
-    dragging: Boolean = false,
-    refused: Boolean = false,
-    onTitleClick: () -> Unit,
-    onEdit: () -> Unit = {},
-    onRemove: () -> Unit = {},
-    onGripDown: (Offset) -> Unit = {},
-    onGripDrag: (Offset, Offset) -> Unit = { _, _ -> },
-    onGripEnd: () -> Unit = {},
-    onGripCancel: () -> Unit = {},
-    onResizeDown: (Offset) -> Unit = {},
-    onResizeDrag: (Offset, Offset) -> Unit = { _, _ -> },
-    onResizeEnd: () -> Unit = {},
-    onResizeCancel: () -> Unit = {},
-    content: @Composable () -> Unit,
-) {
-    val density = LocalDensity.current
-    val gap = BOARD_GAP
-    // Each handle's live position in the root space, shared between the
-    // layout callback and the pointer blocks (pointerInput keyed on Unit
-    // keeps its attach-time closures): the pointer travel is measured in
-    // this stable space (the web's client coordinates) - the handle's
-    // own local space moves with the tile being dragged.
-    val gripPos = remember { object { var pos = Offset.Zero } }
-    val resizePos = remember { object { var pos = Offset.Zero } }
-    val wDp = maxOf(unitW * cell.w + gap * (cell.w - 1), 1.dp)
-    val hDp = maxOf(unitH * cell.h + gap * (cell.h - 1), 1.dp)
-    val xPx = with(density) { ((cell.x - 1) * (unitW + gap)).roundToPx() }
-    val yPx = with(density) { ((cell.y - 1) * (unitH + gap)).roundToPx() }
-    MaterialTheme(
-        colorScheme = MaterialTheme.colorScheme.copy(surface = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Surface(
-            shape = MaterialTheme.shapes.medium,
-            tonalElevation = 0.dp,
-            modifier = Modifier
-                .offset { IntOffset(xPx, yPx) }
-                .size(width = wDp, height = hDp)
-                .then(
-                    if (dragging && refused) {
-                        // The refused drop's danger outline (the web's
-                        // .preview-invalid).
-                        Modifier.border(
-                            2.dp,
-                            Color(0xFFE5534B),
-                            shape = MaterialTheme.shapes.medium,
-                        )
-                    } else Modifier,
-                )
-                .testTag("boardWin-$id")
-                .semantics { contentDescription = "$name tile" }
-                .then(if (dragging) Modifier.alpha(0.9f) else Modifier),
-        ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = !editMode, onClick = onTitleClick)
-                        .testTag("boardTitle-$id")
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                ) {
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Icon(
-                        imageVector = Icons.Filled.ChevronRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                if (editMode) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
-                            .testTag("boardEditRow-$id"),
-                    ) {
-                        Text(
-                            text = "Move",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(end = 6.dp),
-                        )
-                        // The move grip (the web's .tile-grip): drag it to
-                        // move the tile; the pointer math snaps to the
-                        // grid's cells.
-                        Box(
-                            modifier = Modifier
-                                .size(26.dp)
-                                .background(
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    shape = RoundedCornerShape(6.dp),
-                                )
-                                .onGloballyPositioned { c -> gripPos.pos = c.positionInRoot() }
-                                .pointerInput(Unit) {
-                                    var down: Offset? = null
-                                    detectDragGestures(
-                                        onDragStart = { o ->
-                                            down = o + gripPos.pos
-                                            onGripDown(down!!)
-                                        },
-                                        onDrag = { change, _ ->
-                                            down?.let { onGripDrag(it, change.position + gripPos.pos) }
-                                        },
-                                        onDragEnd = onGripEnd,
-                                        onDragCancel = onGripCancel,
-                                    )
-                                }
-                                .testTag("boardGrip-$id")
-                                .semantics { contentDescription = "Drag to move this tile" },
-                        ) {
-                            Text(
-                                text = "⠿",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.align(Alignment.Center),
-                            )
-                        }
-                        TextButton(
-                            onClick = onEdit,
-                            modifier = Modifier
-                                .testTag("boardEdit-$id")
-                                .semantics { contentDescription = "Edit tile settings" },
-                        ) {
-                            Text("✎")
-                        }
-                        TextButton(
-                            onClick = onRemove,
-                            enabled = !saving,
-                            modifier = Modifier
-                                .testTag("boardRemove-$id")
-                                .semantics { contentDescription = "Remove tile from the board" },
-                        ) {
-                            Text("✕")
-                        }
-                    }
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                ) {
-                    content()
-                }
-                }
-                if (editMode) {
-                    // The corner resize handle (the web's .tile-resize,
-                    // bottom-right): drag it to resize width + height.
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = 6.dp, bottom = 6.dp)
-                            .size(18.dp)
-                            .onGloballyPositioned { c -> resizePos.pos = c.positionInRoot() }
-                            .pointerInput(Unit) {
-                                var down: Offset? = null
-                                detectDragGestures(
-                                    onDragStart = { o ->
-                                        down = o + resizePos.pos
-                                        onResizeDown(down!!)
-                                    },
-                                    onDrag = { change, _ ->
-                                        down?.let { onResizeDrag(it, change.position + resizePos.pos) }
-                                    },
-                                    onDragEnd = onResizeEnd,
-                                    onDragCancel = onResizeCancel,
-                                )
-                            }
-                            .background(
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RoundedCornerShape(bottomEnd = 8.dp),
-                            )
-                            .testTag("boardResize-$id")
-                            .semantics { contentDescription = "Drag to resize this tile" },
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * The full-screen drill-down for a tapped board window: the same view the
- * app has today - the Calendar's wide two-pane layout, the Home WebView,
- * the Hermes wide layout, or the Settings screen - now with a back
- * button (and system back) that returns to the board. It composes over
- * the still-mounted board and reads the shared [sections], so it opens
- * on the state the tapped window was showing, and the board's live
- * windows survive the round trip.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun TabletDrillDown(
-    item: TabletItem,
-    chat: ChatState,
-    chatScope: CoroutineScope,
-    sections: TabletSectionState,
-    theme: String,
-    onThemePick: (String) -> Unit,
-    onBoard: (Board) -> Unit,
-    onBack: () -> Unit,
-    onClearServer: () -> Unit,
-) {
-    if (item == TabletItem.SETTINGS) {
-        // Settings brings its own Scaffold, BackAppBar, and BackHandler.
-        Box(modifier = Modifier.fillMaxSize().testTag("drilldown-settings")) {
-            SettingsScreen(
-                onBack = onBack,
-                onClearServer = onClearServer,
-                theme = theme,
-                onThemePick = onThemePick,
-                onBoard = onBoard,
-            )
-        }
-        return
-    }
-
-    BackHandler(onBack = onBack)
-    Scaffold(
-        topBar = { BackAppBar(title = item.title, onBack = onBack) },
-    ) { padding ->
-        Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .testTag("drilldown-${item.name.lowercase()}"),
-        ) {
-            when (item) {
-                TabletItem.CALENDAR -> CalendarScreen(wide = true, shared = sections)
-                TabletItem.HOME -> HomeScreen(showTitle = false)
-                TabletItem.HERMES -> HermesScreen(
-                    chat = chat,
-                    chatScope = chatScope,
-                    wide = true,
-                    shared = sections,
-                )
-                TabletItem.SETTINGS -> Unit
-            }
-        }
     }
 }
