@@ -6,20 +6,23 @@ no_ci: true
 
 # Deterministic Test-step baseline: the pipeline's Test step runs this command
 # before its agent turn. It covers the backend (Go unit tests), the frontend
-# (typecheck/build + unit tests via the canonical Makefile target, with npm ci
-# for fresh run worktrees), and the Android app unit tests (including the
+# (typecheck/build + unit tests - the `make test` recipe lines inlined, since
+# the host has no `make` or Go toolchain, so the Go leg runs inside the
+# golang:1.26-alpine image; npm ci for fresh run worktrees, pinned to Node 22
+# via nvm since this non-interactive shell resolves the host's default Node
+# rather than frontend/.nvmrc), and the Android app unit tests (including the
 # Robolectric markdown render test) through the Docker builder image, since the
 # host has no Android SDK. The Android app's on-device validation was performed
 # separately; its screenshots are committed under android/docs/screenshots/.
 commands:
-  test: 'cd frontend && npm ci && cd .. && make test && docker run --rm -v dashhome-gradle-cache:/home/gradle/.gradle -v "$PWD":/src dashhome-apk-builder:1 bash -c "cd /src/android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest --no-daemon"'
+  test: '. "$HOME/.nvm/nvm.sh" --no-use >/dev/null 2>&1 && nvm use 22 --silent >/dev/null && cd frontend && npm ci && cd .. && docker run --rm -v "$PWD":/src -w /src golang:1.26-alpine sh -c "go test ./..." && cd frontend && npm run build && npm test && cd .. && docker run --rm -v android_gradle-cache:/home/gradle/.gradle -v "$PWD":/src dashhome-apk-builder:1 bash -c "cd /src/android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest --no-daemon"'
 
 test:
   instructions: |
     The configured baseline (commands.test) already runs the deterministic
-    suites: Go unit tests, frontend typecheck/build/unit tests (make test), and
-    the Android app unit tests including the Robolectric markdown render test
-    (Docker builder image). Do not probe for, pair with, or drive ADB devices
+    suites: Go unit tests, frontend typecheck/build/unit tests (the inlined
+    `make test` recipe), and the Android app unit tests including the
+    Robolectric markdown render test (Docker builder image). Do not probe for, pair with, or drive ADB devices
     (phones or tablets): the Android app's on-device validation was performed
     separately and its screenshots are committed under android/docs/screenshots/.
     If the baseline passes, confirm nothing else is needed for the changed paths

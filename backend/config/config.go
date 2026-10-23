@@ -1245,15 +1245,6 @@ func (c *Config) SetViews(order, hidden *[]string, mode *string, sizes *map[stri
 	return nil
 }
 
-func isViewID(id string) bool {
-	for _, v := range viewIDs {
-		if id == v {
-			return true
-		}
-	}
-	return false
-}
-
 // checkViewOrder reports whether order is a permutation of the board's
 // tile IDs (the four view IDs plus the HA tile IDs; every tile exactly
 // once, no others).

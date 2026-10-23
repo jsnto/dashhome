@@ -21,7 +21,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 IMAGE="${DASHHOME_DOCKER_IMAGE:-dashhome-apk-builder:1}"
-VOLUME="${DASHHOME_GRADLE_VOLUME:-dashhome-gradle-cache}"
+VOLUME="${DASHHOME_GRADLE_VOLUME:-android_gradle-cache}"
 KEYSTORE_VOLUME="${DASHHOME_KEYSTORE_VOLUME:-dashhome-android-keystore}"
 OUT_DIR="${OUT_DIR:-dist}"
 APK_NAME="dashhome-android-debug.apk"

@@ -91,7 +91,8 @@ the backend.
 
 ## Quick start
 
-Requirements: Go ≥ 1.26.3, Node ≥ 18, and the integrations you want to use
+Requirements: Go ≥ 1.26.3, Node 22 (pinned in `frontend/.nvmrc` and the
+frontend `engines` field), and the integrations you want to use
 (Home Assistant, Google Cloud, a Hermes API).
 
 ```sh
@@ -522,6 +523,8 @@ into friendly setup notes.
 make test   # go test ./...  +  frontend typecheck & build  +  vitest
 ```
 
+- The frontend legs require Node 22 (pinned in `frontend/.nvmrc` and the
+  frontend `engines` field): run `nvm use` in `frontend/` first.
 - Backend tests use local fakes (httptest servers + in-memory fakes) — no
   real HA, Google, or Hermes calls.
 - Layout: `cmd/dashhome` (entrypoint), `backend/api` (Gin handlers),

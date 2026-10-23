@@ -78,7 +78,7 @@ daemon. The build mirrors the lumi Android Docker pattern:
 - Output: `dist/dashhome-android-debug.apk` (repo root).
 - The first run downloads the Android SDK (~500 MB) and the Gradle
   distribution into a Docker image; later runs reuse the
-  `dashhome-gradle-cache` volume for incremental builds and the
+  `android_gradle-cache` volume for incremental builds and the
   `dashhome-android-keystore` volume for the debug signing key, so every
   APK is signed with the same key and on-device updates don't fail with
   a signature conflict.
