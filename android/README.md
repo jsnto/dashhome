@@ -75,7 +75,7 @@ daemon. The build mirrors the lumi Android Docker pattern:
 ./scripts/build-apk-docker.sh
 ```
 
-- Output: `dist/dashhome-android-debug.apk` (repo root).
+- Output: `android/dist/dashhome-android-debug.apk` (repo root).
 - The first run downloads the Android SDK (~500 MB) and the Gradle
   distribution into a Docker image; later runs reuse the
   `android_gradle-cache` volume for incremental builds and the
@@ -88,7 +88,7 @@ daemon. The build mirrors the lumi Android Docker pattern:
 Install on a device (USB or wireless ADB):
 
 ```sh
-adb install -r dist/dashhome-android-debug.apk
+adb install -r android/dist/dashhome-android-debug.apk
 ```
 
 On first launch, enter the dashhome server's LAN URL (e.g.

@@ -3,9 +3,9 @@
 # JDK on the host, only a Docker daemon.
 #
 #   Usage:     ./scripts/build-apk-docker.sh          (from the repo root)
-#   Output:    dist/dashhome-android-debug.apk
+#   Output:    android/dist/dashhome-android-debug.apk
 #   Overrides: DASHHOME_DOCKER_IMAGE=<image>   (default dashhome-apk-builder:1)
-#              OUT_DIR=<dir>                    (default dist)
+#              OUT_DIR=<dir>                    (default android/dist)
 #
 # The first run downloads the Android SDK (~500 MB) into the image and the
 # Gradle distribution via the wrapper; subsequent runs reuse the named
@@ -23,7 +23,7 @@ cd "$(dirname "$0")/.."
 IMAGE="${DASHHOME_DOCKER_IMAGE:-dashhome-apk-builder:1}"
 VOLUME="${DASHHOME_GRADLE_VOLUME:-android_gradle-cache}"
 KEYSTORE_VOLUME="${DASHHOME_KEYSTORE_VOLUME:-dashhome-android-keystore}"
-OUT_DIR="${OUT_DIR:-dist}"
+OUT_DIR="${OUT_DIR:-android/dist}"
 APK_NAME="dashhome-android-debug.apk"
 
 if ! docker info >/dev/null 2>&1; then
