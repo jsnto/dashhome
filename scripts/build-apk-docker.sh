@@ -2,7 +2,7 @@
 # Build the dashhome Android debug APK inside Docker - no Android SDK or
 # JDK on the host, only a Docker daemon.
 #
-#   Usage:     ./android/scripts/build-apk-docker.sh   (from the repo root)
+#   Usage:     ./scripts/build-apk-docker.sh          (from the repo root)
 #   Output:    dist/dashhome-android-debug.apk
 #   Overrides: DASHHOME_DOCKER_IMAGE=<image>   (default dashhome-apk-builder:1)
 #              OUT_DIR=<dir>                    (default dist)
@@ -16,9 +16,9 @@
 # certificate, so on-device updates fail with a signature conflict
 # ("package conflicts with an existing package").
 set -euo pipefail
-# The script lives in <repo root>/android/scripts/; build from the repo root
+# The script lives in <repo root>/scripts/; build from the repo root
 # (the Docker context), with the Dockerfile referenced under android/.
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/.."
 
 IMAGE="${DASHHOME_DOCKER_IMAGE:-dashhome-apk-builder:1}"
 VOLUME="${DASHHOME_GRADLE_VOLUME:-android_gradle-cache}"

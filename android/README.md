@@ -72,7 +72,7 @@ No Android SDK or JDK is required on the build host — only a Docker
 daemon. The build mirrors the lumi Android Docker pattern:
 
 ```sh
-./android/scripts/build-apk-docker.sh
+./scripts/build-apk-docker.sh
 ```
 
 - Output: `dist/dashhome-android-debug.apk` (repo root).
@@ -137,7 +137,6 @@ use the `android-all` framework jar Robolectric downloads on first run.
 ```
 android/
   Dockerfile                     # JDK 17 + Android SDK 35 build image
-  scripts/build-apk-docker.sh    # the entry point (see above)
   gradle/                        # wrapper + version catalog
   app/
     src/main/kotlin/com/jsnto/dashhome/
