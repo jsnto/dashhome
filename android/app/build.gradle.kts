@@ -1,8 +1,22 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
+
+// The ONE permanent release signing key (see the "Release signing" note in
+// android/README.md): scripts/build-apk-docker.sh mounts the host signing
+// directory read-only and exports these at the in-container paths; a local
+// (non-Docker) release build exports them at the host paths. Absent (the
+// JVM unit-test runs, a keyless local build) no stableRelease config is
+// created and the release type falls back to the debug signing config
+// below - the published path always signs with the permanent key, never a
+// regenerated per-build one.
+val releaseKeystoreFile: String? = System.getenv("DASHHOME_RELEASE_KEYSTORE")
+val releaseKeystorePropsFile: String? = System.getenv("DASHHOME_RELEASE_KEYSTORE_PROPS")
 
 android {
     namespace = "com.jsnto.dashhome"
@@ -12,13 +26,31 @@ android {
         applicationId = "com.jsnto.dashhome"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.3.1"
+    }
+
+    signingConfigs {
+        if (!releaseKeystoreFile.isNullOrBlank() && !releaseKeystorePropsFile.isNullOrBlank()) {
+            val props = Properties()
+            File(releaseKeystorePropsFile).inputStream().use { props.load(it) }
+            create("stableRelease") {
+                storeFile = File(releaseKeystoreFile)
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Sign with the permanent release key when it is provided
+            // (the published path); otherwise fall back to the debug
+            // signing config so a keyless build still packages.
+            signingConfig =
+                signingConfigs.findByName("stableRelease") ?: signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
