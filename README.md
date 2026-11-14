@@ -169,7 +169,7 @@ per the board's `calendar_mode`), the real Home Assistant dashboard in a
 WebView, the Hermes chat and markdown push feed,
 and Settings. Same data and sections as the web dashboard, laid out for
 phones with an adaptive layout for tablets and other wide displays. The
-app talks only to the dashhome API (no backend changes needed); see
+app talks to the dashhome API (no backend changes needed); see
 [`android/README.md`](android/README.md) for building (Docker — no Android
 SDK on the host) and tests.
 

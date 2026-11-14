@@ -18,6 +18,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +44,7 @@ private const val SECTION_HA = "Home Assistant"
 private const val SECTION_SERVER = "Server"
 private const val SECTION_INTEGRATIONS = "Integrations"
 private const val SECTION_UPDATES = "Updates"
+private const val SECTION_APP_UPDATE = "Update"
 private const val SECTION_DANGER = "Danger zone"
 
 /**
@@ -52,7 +54,9 @@ private const val SECTION_DANGER = "Danger zone"
  * the Calendar view mode, and the board grid dimensions), Home Assistant
  * (the HA-backed board tiles, with the entity picker), plus the app's
  * own Server, the read-only integration summary, the live-update
- * interval, and the danger zone.
+ * interval, the app's self-update (the "Update" area: check the public
+ * GitHub releases for a newer build and install the newest release's
+ * APK), and the danger zone.
  *
  * [theme] is the currently effective theme ("light"/"dark") and
  * [onThemePick] persists the user's choice; [onBoard] adopts a board a
@@ -66,6 +70,7 @@ fun SettingsScreen(
     onClearServer: () -> Unit,
     theme: String,
     onThemePick: (String) -> Unit,
+    updateManager: UpdateManager,
     onBoard: (Board) -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -82,6 +87,12 @@ fun SettingsScreen(
 
     var cfg by remember { mutableStateOf<ApiConfig?>(null) }
     var cfgErr by remember { mutableStateOf<ApiException?>(null) }
+
+    // The app's self-update (the "Update" area: the check result, the
+    // download, the install readiness) + the download's progress.
+    val updateState by updateManager.state.collectAsState(UpdateState.Idle)
+    val updateProgress by updateManager.progress.collectAsState(0f)
+
     LaunchedEffect(DashApi.baseUrl) {
         try {
             cfg = DashApi.getConfig()
@@ -139,6 +150,7 @@ fun SettingsScreen(
                         SECTION_SERVER,
                         SECTION_INTEGRATIONS,
                         SECTION_UPDATES,
+                        SECTION_APP_UPDATE,
                         SECTION_DANGER,
                     ).forEach { s ->
                         TabChip(
@@ -221,6 +233,16 @@ fun SettingsScreen(
                         ) {
                             Text("Forget this server")
                         }
+                    }
+                    SECTION_APP_UPDATE -> {
+                        SectionHeader(SECTION_APP_UPDATE)
+                        AppUpdateSection(
+                            state = updateState,
+                            progress = updateProgress,
+                            onCheck = updateManager::checkForLatest,
+                            onDownload = updateManager::updateToLatest,
+                            onInstall = updateManager::requestInstall,
+                        )
                     }
                 }
             }

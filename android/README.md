@@ -58,11 +58,19 @@ the web header's Settings button.
   default-placed at the first free 2 × 2 cell), plus the app's own
   Server (the dashhome server URL, LAN address), the read-only
   integration summary, the live-update interval (persisted server-side
-  via `PUT /api/config/refresh`), and the danger zone (forget this
-  server).
+  via `PUT /api/config/refresh`), the app's self-update (the "Update"
+  area: check the public GitHub `releases/latest` of `jsnto/dashhome`
+  for a newer build — a numeric per-component version compare, never a
+  string compare — download the newest release's `.apk` asset with
+  progress, and install it through the platform's installer, gated on
+  the one-time "install unknown apps" permission; the app is sideloaded
+  as an APK, so this is the only update path), and the danger zone
+  (forget this server).
 
-The app talks only to the dashhome backend API; no backend changes are
-needed. The dashboard has no login, so the server URL and the theme pick
+The app talks to the dashhome backend API — and, for the settings' Update
+check, to the public GitHub releases of this repository (unauthenticated);
+no backend changes are needed. The dashboard has no login, so the server
+URL and the theme pick
 are the only client-side settings (SharedPreferences; the web persists
 its theme pick in localStorage).
 
@@ -100,7 +108,8 @@ app verifies the server with `GET /api/config` before saving it.
 The parsing/state logic (API JSON parsing, month grid, event formatting,
 push feed ordering, chat thread state, the board's grid layout math —
 normalization, auto flow, bounds, and the drag/resize pointer-to-cell
-math) is covered by JVM unit tests; the markdown push feed is covered by
+math, and the self-update's version ordering + GitHub
+`/releases/latest` parse + APK-asset pick) is covered by JVM unit tests; the markdown push feed is covered by
 a Robolectric render test that runs the real Compose + Markwon stack and
 asserts the body TextView is painted with the theme's visible text color
 (regression guard for the "invisible body" bug: Compose packs the ARGB
@@ -109,7 +118,10 @@ in the top 32 bits of `Color.value`, so a platform `TextView` needs
 navigation, the wide-display routing boundary, Edit-tiles drag/resize,
 the settings flow, and the theme pick — is covered by Robolectric
 Compose tests that run the board against an in-test fake backend (an
-in-memory board that records the app's writes):
+in-memory board that records the app's writes); and the settings'
+Update area — the check, the streamed download, and the platform
+install intents — is covered by a Robolectric Compose test that drives
+the real update flow against a local stand-in of the releases API:
 
 ```sh
 docker run --rm -v "$HOME/.gradle":/home/gradle/.gradle -w /src/android \
@@ -141,7 +153,8 @@ android/
   app/
     src/main/kotlin/com/jsnto/dashhome/
       api/        # OkHttp client, JSON parsers, API models
-      data/       # SharedPreferences (server URL, theme pick)
+      data/       # SharedPreferences (server URL, theme pick) + the
+                  # self-update's pure version/parse logic
       ui/         # Compose screens: Calendar, Home (WebView), Hermes,
                   # Settings, the tablet tile board + per-tile settings
                   # modal + HA tile view, setup, shared components, theme

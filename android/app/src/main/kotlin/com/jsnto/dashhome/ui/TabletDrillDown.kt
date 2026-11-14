@@ -101,6 +101,7 @@ fun TabletDrillDown(
     sections: TabletSectionState,
     theme: String,
     onThemePick: (String) -> Unit,
+    updateManager: UpdateManager,
     onBoard: (Board) -> Unit,
     onBack: () -> Unit,
     onClearServer: () -> Unit,
@@ -113,6 +114,7 @@ fun TabletDrillDown(
                 onClearServer = onClearServer,
                 theme = theme,
                 onThemePick = onThemePick,
+                updateManager = updateManager,
                 onBoard = onBoard,
             )
         }
