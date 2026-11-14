@@ -1,5 +1,11 @@
-# Builds the dashhome Android debug APK with a pinned toolchain - no
+# Builds the dashhome Android release APK with a pinned toolchain - no
 # Android SDK or JDK needed on the host, only a Docker daemon.
+#
+# The release APK is signed with the ONE permanent release key that
+# scripts/build-apk-docker.sh mounts read-only at /release (env vars
+# DASHHOME_RELEASE_KEYSTORE / DASHHOME_RELEASE_KEYSTORE_PROPS); the key
+# material never lives in this image, so a rebuild of the image stays
+# deterministic to the same certificate.
 #
 #   FROM eclipse-temurin:17-jammy        -> OpenJDK 17 (AGP 8.7.3 requirement)
 #   sdkmanager: platform-tools,
@@ -35,4 +41,4 @@ COPY . /src
 # Entrypoint: run the Gradle build. The wrapper script
 # (scripts/build-apk-docker.sh) starts the container, waits for the
 # build, then copies the APK out.
-CMD ["bash", "-c", "cd android && ./gradlew assembleDebug --no-daemon --stacktrace"]
+CMD ["bash", "-c", "cd android && ./gradlew assembleRelease --no-daemon --stacktrace"]

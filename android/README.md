@@ -83,25 +83,52 @@ daemon. The build mirrors the lumi Android Docker pattern:
 ./scripts/build-apk-docker.sh
 ```
 
-- Output: `android/dist/dashhome-android-debug.apk` (repo root).
+- Output: `android/dist/dashhome-android-release.apk` (repo root).
 - The first run downloads the Android SDK (~500 MB) and the Gradle
   distribution into a Docker image; later runs reuse the
-  `android_gradle-cache` volume for incremental builds and the
-  `dashhome-android-keystore` volume for the debug signing key, so every
-  APK is signed with the same key and on-device updates don't fail with
-  a signature conflict.
+  `android_gradle-cache` volume for incremental builds.
+- Every published APK is signed with the ONE permanent dashhome release
+  key (see [Release signing](#release-signing)) - a stable certificate
+  across builds, so on-device updates don't fail with a signature
+  conflict.
 - Overrides: `DASHHOME_DOCKER_IMAGE=<image>`, `OUT_DIR=<dir>`,
-  `DASHHOME_KEYSTORE_VOLUME=<volume>`.
+  `DASHHOME_RELEASE_SIGNING_DIR=<dir>`.
 
 Install on a device (USB or wireless ADB):
 
 ```sh
-adb install -r android/dist/dashhome-android-debug.apk
+adb install -r android/dist/dashhome-android-release.apk
 ```
 
 On first launch, enter the dashhome server's LAN URL (e.g.
 `http://10.0.0.4:3000`) on the setup screen and press **Connect** — the
 app verifies the server with `GET /api/config` before saving it.
+
+## Release signing
+
+The permanent release signing key lives on the build host (prod480) in
+`/home/jasonto/dashhome-signing` - a pointer only: the key material is
+never in this repo (or in the builder image). `scripts/build-apk-docker.sh`
+mounts that directory read-only at `/release` and exports
+`DASHHOME_RELEASE_KEYSTORE` / `DASHHOME_RELEASE_KEYSTORE_PROPS`
+(in-container paths) that `app/build.gradle.kts` uses to sign the release
+build (`stableRelease` signingConfig); a local (non-Docker) release build
+exports the same two variables at the host paths.
+
+- The build script refuses to build without the key - the published
+  signature must never be regenerated per build (a different certificate
+  per build makes in-app updates impossible and trips Play Protect
+  first-sight warnings on every release).
+- Without the env vars (e.g. the JVM unit-test runs) the release buildType
+  falls back to the debug signing config, so the key is never re-created
+  as a side effect of a test run.
+- v0.3.1 is the first release signed by this key: devices on the
+  old-signed builds need a one-time uninstall + clean install of the
+  first stable-signed build (see the v0.3.1 release notes).
+- If the key is lost, every installed dashhome app is orphaned (an
+  app re-signed by a different key cannot update in place): back the
+  whole directory up - the directory's own README.md covers the backup
+  and regeneration rules.
 
 ## Unit tests
 
