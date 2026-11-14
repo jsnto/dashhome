@@ -6,6 +6,10 @@
     <!-- The Hermes chat's voice input (the web's mic): the runtime
          permission prompt appears on first use. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- The settings "Update" section installs the downloaded release APK
+         through the platform's own installer (the one-time "install
+         unknown apps" prompt). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="true"
@@ -24,5 +28,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Exposes the settings "Update" section's downloaded release APK
+             to the platform's installer (the FileProvider uri the install
+             intent carries; the paths file names the app's internal
+             updates/ folder the download lands in). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.update.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_provider_paths" />
+        </provider>
     </application>
 </manifest>

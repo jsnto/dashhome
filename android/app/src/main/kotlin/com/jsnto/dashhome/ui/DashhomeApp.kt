@@ -1,5 +1,6 @@
 package com.jsnto.dashhome.ui
 
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -73,13 +74,26 @@ private enum class Section { CALENDAR, HOME, HERMES }
  * Calendar and Hermes sections splitting into side-by-side panes inside
  * that view so the layout reads as a wide dashboard rather than a
  * stretched phone screen.
+ *
+ * [updateManager] is the app's self-update engine (the settings "Update"
+ * area - see [UpdateManager]); a test may pass its own manager (e.g. with
+ * a test HTTP client), and `null` builds the production one for the
+ * hosting activity.
  */
 private const val WIDE_SCREEN_DP = 600
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DashhomeRoot() {
+fun DashhomeRoot(updateManager: UpdateManager? = null) {
     val context = LocalContext.current
+    // The self-update engine lives at the root (the activity-scoped
+    // owner): the settings "Update" area reads its state and the install
+    // permission flow hooks into the activity's resume, so the manager
+    // outlives any single screen.
+    val manager = updateManager
+        ?: remember(context as ComponentActivity) {
+            UpdateManager(context as ComponentActivity)
+        }
     val wide = LocalConfiguration.current.screenWidthDp >= WIDE_SCREEN_DP
 
     // The theme (the web's useTheme): the persisted pick wins; while the
@@ -101,6 +115,7 @@ fun DashhomeRoot() {
             wide = wide,
             themeName = themeName,
             onThemePick = pickTheme,
+            updateManager = manager,
         )
     }
 }
@@ -112,6 +127,7 @@ private fun DashhomeShell(
     wide: Boolean,
     themeName: String,
     onThemePick: (String) -> Unit,
+    updateManager: UpdateManager,
 ) {
     var connected by rememberSaveable { mutableStateOf(Prefs.hasServer(context)) }
     if (!connected) {
@@ -150,6 +166,7 @@ private fun DashhomeShell(
             },
             theme = themeName,
             onThemePick = onThemePick,
+            updateManager = updateManager,
         )
         return
     }
@@ -187,6 +204,7 @@ private fun DashhomeShell(
                     sections = sections,
                     theme = themeName,
                     onThemePick = onThemePick,
+                    updateManager = updateManager,
                     onBoard = { board.adopt(it) },
                     onBack = { openItem = -1 },
                     onClearServer = {

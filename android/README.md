@@ -58,11 +58,19 @@ the web header's Settings button.
   default-placed at the first free 2 × 2 cell), plus the app's own
   Server (the dashhome server URL, LAN address), the read-only
   integration summary, the live-update interval (persisted server-side
-  via `PUT /api/config/refresh`), and the danger zone (forget this
-  server).
+  via `PUT /api/config/refresh`), the app's self-update (the "Update"
+  area: check the public GitHub `releases/latest` of `jsnto/dashhome`
+  for a newer build — a numeric per-component version compare, never a
+  string compare — download the newest release's `.apk` asset with
+  progress, and install it through the platform's installer, gated on
+  the one-time "install unknown apps" permission; the app is sideloaded
+  as an APK, so this is the only update path), and the danger zone
+  (forget this server).
 
-The app talks only to the dashhome backend API; no backend changes are
-needed. The dashboard has no login, so the server URL and the theme pick
+The app talks to the dashhome backend API — and, for the settings' Update
+check, to the public GitHub releases of this repository (unauthenticated);
+no backend changes are needed. The dashboard has no login, so the server
+URL and the theme pick
 are the only client-side settings (SharedPreferences; the web persists
 its theme pick in localStorage).
 
@@ -100,7 +108,8 @@ app verifies the server with `GET /api/config` before saving it.
 The parsing/state logic (API JSON parsing, month grid, event formatting,
 push feed ordering, chat thread state, the board's grid layout math —
 normalization, auto flow, bounds, and the drag/resize pointer-to-cell
-math) is covered by JVM unit tests; the markdown push feed is covered by
+math, and the self-update's version ordering + GitHub
+`/releases/latest` parse + APK-asset pick) is covered by JVM unit tests; the markdown push feed is covered by
 a Robolectric render test that runs the real Compose + Markwon stack and
 asserts the body TextView is painted with the theme's visible text color
 (regression guard for the "invisible body" bug: Compose packs the ARGB
