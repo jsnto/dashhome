@@ -118,7 +118,10 @@ in the top 32 bits of `Color.value`, so a platform `TextView` needs
 navigation, the wide-display routing boundary, Edit-tiles drag/resize,
 the settings flow, and the theme pick — is covered by Robolectric
 Compose tests that run the board against an in-test fake backend (an
-in-memory board that records the app's writes):
+in-memory board that records the app's writes); and the settings'
+Update area — the check, the streamed download, and the platform
+install intents — is covered by a Robolectric Compose test that drives
+the real update flow against a local stand-in of the releases API:
 
 ```sh
 docker run --rm -v "$HOME/.gradle":/home/gradle/.gradle -w /src/android \
@@ -150,7 +153,8 @@ android/
   app/
     src/main/kotlin/com/jsnto/dashhome/
       api/        # OkHttp client, JSON parsers, API models
-      data/       # SharedPreferences (server URL, theme pick)
+      data/       # SharedPreferences (server URL, theme pick) + the
+                  # self-update's pure version/parse logic
       ui/         # Compose screens: Calendar, Home (WebView), Hermes,
                   # Settings, the tablet tile board + per-tile settings
                   # modal + HA tile view, setup, shared components, theme
