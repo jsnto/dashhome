@@ -406,6 +406,16 @@ class UpdateManager(
             IntentFilter(INSTALL_STATUS_ACTION),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        // The receiver's registration is app-scoped (the platform's
+        // registry holds it strongly until unregisterReceiver): the
+        // activity's destroy releases it - and with it this manager and
+        // the previous activity (a recreation, e.g. a system theme
+        // change, would otherwise leak them until process death).
+        activity.lifecycle.addObserver(LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_DESTROY) {
+                activity.unregisterReceiver(installStatusReceiver)
+            }
+        })
     }
 
     /**
