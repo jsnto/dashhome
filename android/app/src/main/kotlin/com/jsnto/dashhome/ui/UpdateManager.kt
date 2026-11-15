@@ -237,6 +237,14 @@ class UpdateManager(
     }
 
     /**
+     * Whether a staging (the [handToInstaller] hand-off) is in flight:
+     * a second install attempt while it is is a no-op (at most one
+     * session per attempt is armed). Set and cleared on the main thread
+     * only (the attempt's entry, and the staging's completion).
+     */
+    private var stagingInFlight = false
+
+    /**
      * Hands the downloaded APK to the platform installer (the
      * [handToInstaller] seam - the real [stageInstallSession] by
      * default): the staging writes the APK's bytes into a fresh
@@ -252,14 +260,6 @@ class UpdateManager(
      * window is possible: it is a no-op - at most one session per
      * attempt is armed ([stagingInFlight]).
      */
-    /**
-     * Whether a staging (the [handToInstaller] hand-off) is in flight:
-     * a second install attempt while it is is a no-op (at most one
-     * session per attempt is armed). Set and cleared on the main thread
-     * only (the attempt's entry, and the staging's completion).
-     */
-    private var stagingInFlight = false
-
     private fun launchInstall(apk: File, ready: UpdateState.ReadyToInstall) {
         if (stagingInFlight) return
         if (!apk.exists()) {
@@ -572,7 +572,6 @@ private fun stageInstallSession(
         // with the session's id, the result status, and the platform's
         // reason and broadcasts it.
         session.commit(statusSender)
-        session.close()
         sessionId
     }
     staged.exceptionOrNull()?.let {
@@ -581,6 +580,12 @@ private fun stageInstallSession(
         // the platform (the abandon's own failure is swallowed: the
         // seam's contract is to never throw).
         runCatching { session?.abandon() }
+    }
+    staged.getOrNull()?.let {
+        // The commit succeeded (the committed session stays on the
+        // platform until installed): close the handle, best-effort - a
+        // close failure here must not turn it into a refusal.
+        runCatching { session?.close() }
     }
     return staged.getOrNull()
 }
