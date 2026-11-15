@@ -58,9 +58,8 @@ import org.robolectric.annotation.GraphicsMode
  * recorded intents). The on-device install hop (the platform installer
  * replacing the app) is out of reach here (no device/emulator in the
  * test); the session's outcome (the platform's install result) is
- * delivered through the app's own outcome channels (the commit status
- * receiver's broadcast, the session callback), the way the platform
- * would.
+ * delivered through the app's own outcome channel (the commit status
+ * receiver's broadcast), the way the platform would.
  *
  * The section's buttons sit low on a short screen, so the screen is tall
  * (h900dp) and every row is visible without scrolling (the phone layout:
@@ -184,7 +183,13 @@ class UpdateSectionUiTest {
         // The platform's session outcome: the success (the new version
         // replaces this build - the process is torn down; nothing the
         // pane must say - the ready state stays, the download kept).
-        manager.installResultCallback.onFinished(FAKE_INSTALL_SESSION_ID, true)
+        manager.installStatusReceiver.onReceive(
+            compose.activity,
+            Intent().apply {
+                putExtra(PackageInstaller.EXTRA_SESSION_ID, FAKE_INSTALL_SESSION_ID)
+                putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_SUCCESS)
+            },
+        )
         compose.waitForIdle()
         compose.onNodeWithText("Downloaded v0.4.0. Install it to update.").assertExists()
     }
@@ -284,7 +289,7 @@ class UpdateSectionUiTest {
     // rejected the install (INSTALL_FAILED_UPDATE_INCOMPATIBLE - the
     // platform's signature wall) and the app sat at "ready to install"
     // with no error. The staged session's outcome now surfaces the
-    // concrete failure on the kept ready state: the download is kept and
+    // failure on the kept ready state: the download is kept and
     // the Install action stays live (the retry).
     // ------------------------------------------------------------------
 
@@ -323,9 +328,9 @@ class UpdateSectionUiTest {
         }
 
         // The platform rejects the install (the round's signature wall):
-        // the session's outcome arrives on the concrete channel (the
-        // commit status receiver's broadcast - the platform's status +
-        // its reason) and surfaces (no more silent idle).
+        // the session's outcome arrives on the commit status receiver's
+        // broadcast (the platform's status + its reason) and surfaces
+        // (no more silent idle).
         manager.installStatusReceiver.onReceive(
             compose.activity,
             Intent().apply {
@@ -384,13 +389,23 @@ class UpdateSectionUiTest {
         waitUntil({ shadow.peekNextStartedActivity() != null }, "the installer intent to launch")
 
         // A session the app did not launch (not the staged install
-        // session) is ignored.
-        manager.installResultCallback.onFinished(999, false)
+        // session) is ignored - even with a failure status: no error
+        // surfaces, the pane stays ready.
+        manager.installStatusReceiver.onReceive(
+            compose.activity,
+            Intent().apply {
+                putExtra(PackageInstaller.EXTRA_SESSION_ID, 999)
+                putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+            },
+        )
         compose.waitForIdle()
         compose.onNodeWithText("Downloaded v0.4.0. Install it to update.").assertExists()
+        check(compose.onAllNodesWithText("The phone", substring = true).fetchSemanticsNodes().isEmpty()) {
+            "a broadcast for a foreign session must not surface an error in the pane"
+        }
 
         // The user backs out of the confirmation dialog: a decline, not a
-        // failure (the concrete channel's abort status) - no error
+        // failure (the outcome broadcast's abort status) - no error
         // surfaces, the pane stays ready (the retry).
         manager.installStatusReceiver.onReceive(
             compose.activity,
@@ -407,14 +422,14 @@ class UpdateSectionUiTest {
     }
 
     // ------------------------------------------------------------------
-    // The fallback outcome channel (the session callback's boolean - no
-    // status, no reason): a failed install still surfaces (no more
-    // silent idle) - the plain rejection copy + the what-to-do, the
-    // download kept, the Install action live (the retry).
+    // A failed install without the platform's reason (no
+    // EXTRA_STATUS_MESSAGE in the outcome broadcast): it still surfaces
+    // (no more silent idle) - the plain rejection copy + the what-to-do,
+    // the download kept, the Install action live (the retry).
     // ------------------------------------------------------------------
 
     @Test
-    fun aFailedSessionWithoutTheConcreteStatusSurfacesThePlainFailure() {
+    fun aFailedInstallWithoutThePlatformsReasonSurfacesThePlainFailure() {
         val events = eventList()
         val api = startReleasesApi()
         api.latestBody = releaseJson(
@@ -438,10 +453,16 @@ class UpdateSectionUiTest {
         val shadow = shadowOf(compose.activity)
         waitUntil({ shadow.peekNextStartedActivity() != null }, "the installer intent to launch")
 
-        // The platform's failure arrives on the fallback channel only
-        // (the session callback's boolean - no concrete status, no
-        // reason): the callback's onFinished with the failure's boolean.
-        manager.installResultCallback.onFinished(FAKE_INSTALL_SESSION_ID, false)
+        // The platform's failure arrives without its reason (no
+        // EXTRA_STATUS_MESSAGE in the outcome broadcast): the plain
+        // rejection copy surfaces.
+        manager.installStatusReceiver.onReceive(
+            compose.activity,
+            Intent().apply {
+                putExtra(PackageInstaller.EXTRA_SESSION_ID, FAKE_INSTALL_SESSION_ID)
+                putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+            },
+        )
         compose.waitForIdle()
         waitForText(
             "The phone's installer rejected the update (installer status 1)",

@@ -234,7 +234,7 @@ class UpdateManager(
      * confirmation UI ("Update this app?", with the Play Protect scan
      * under it) is launched over the session's id. The session's outcome
      * - the platform's install result, including its failure reason -
-     * arrives through [installResultCallback] -> [onInstallResult]. A
+     * arrives through [installStatusReceiver] -> [onInstallResult]. A
      * fresh attempt clears a previous attempt's failure copy; a refused
      * staging (or a missing file) settles its own plain message instead
      * of silently idling.
@@ -308,8 +308,9 @@ class UpdateManager(
      * The platform's own confirmation UI ("Update this app?") over the
      * staged install session: the [Intent.ACTION_INSTALL_PACKAGE] with
      * the session's id (the platform installs the session's APK - with
-     * the Play Protect scan under it - and reports the result through the
-     * session's outcome, [installResultCallback]).
+     * the Play Protect scan under it - and reports the session's outcome
+     * through the commit status receiver's broadcast,
+     * [installStatusReceiver]).
      */
     private fun installUiIntent(sessionId: Int): Intent =
         Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
@@ -322,43 +323,16 @@ class UpdateManager(
     private var installingSessionId: Int? = null
 
     /**
-     * The platform install session's outcome callback (the app's install
-     * sessions are the only sessions this app creates, so the global
-     * session callback sees only them). [PackageInstaller.SessionCallback.
-     * onFinished] delivers the install's result (the boolean) - the
-     * FALLBACK channel: the concrete one (the commit status receiver's
-     * broadcast, [installStatusReceiver]) carries the result status and
-     * the platform's reason, and this engine used to do the install
-     * fire-and-forget, observing neither (the device round 2026-11-14:
-     * a rejected install left the section idling at "ready to install").
-     */
-    val installResultCallback = object : PackageInstaller.SessionCallback() {
-        override fun onCreated(sessionId: Int) {}
-        override fun onBadgingChanged(sessionId: Int) {}
-        override fun onActiveChanged(sessionId: Int, active: Boolean) {}
-        override fun onProgressChanged(sessionId: Int, progress: Float) {}
-        override fun onFinished(sessionId: Int, success: Boolean) {
-            if (sessionId != installingSessionId) return
-            installingSessionId = null
-            if (!success) {
-                // The boolean only (no status, no reason): a plain failure -
-                // the concrete channel's copy, when it lands, refines it.
-                onInstallResult(PackageInstaller.STATUS_FAILURE, null)
-            }
-        }
-    }
-
-    /**
-     * The commit status receiver's broadcast (the CONCRETE outcome
-     * channel): when the session's install completes (the confirmation
-     * dialog's outcome), the platform fills it with the session's id
-     * ([PackageInstaller.EXTRA_SESSION_ID]), the install's result status
-     * ([PackageInstaller.EXTRA_STATUS]), and the platform's reason
-     * ([PackageInstaller.EXTRA_STATUS_MESSAGE]). A terminal non-failure
-     * (success - the new version replaces this build; a user abort - a
-     * decline; still pending - the confirmation is still open) consumes
-     * the session's id, so the callback's boolean fallback cannot then
-     * surface a spurious failure.
+     * The staged install session's outcome (the commit status
+     * receiver's broadcast): when the session's install completes (the
+     * confirmation dialog's outcome), the platform fills it with the
+     * session's id ([PackageInstaller.EXTRA_SESSION_ID]), the install's
+     * result status ([PackageInstaller.EXTRA_STATUS]), and the platform's
+     * reason ([PackageInstaller.EXTRA_STATUS_MESSAGE]). A broadcast for a
+     * session the app did not launch (a different id) is ignored, and a
+     * terminal non-failure (success - the new version replaces this
+     * build; a user abort - a decline; still pending - the confirmation
+     * is still open) consumes the session's id.
      */
     val installStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -385,16 +359,14 @@ class UpdateManager(
         activity.lifecycle.addObserver(LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) onActivityResumed()
         })
-        // The platform install session's outcome (the app's install
-        // sessions are the only sessions this app creates): a rejected
-        // install's failure must surface (see [onInstallResult]) - the
-        // fire-and-forget install launch this engine used to do could
-        // never see it (the device round 2026-11-14: the app sat at
-        // "ready to install" after the platform's rejection).
-        activity.packageManager.packageInstaller.registerSessionCallback(installResultCallback)
-        // The commit status receiver's broadcast (the concrete outcome
-        // channel: the platform fills it with the session's id, the
-        // install's result status, and the platform's reason).
+        // The staged install session's outcome (the commit status
+        // receiver's broadcast: the platform fills it with the session's
+        // id, the install's result status, and the platform's reason):
+        // a rejected install's failure must surface (see
+        // [onInstallResult]) - the fire-and-forget install launch this
+        // engine used to do could never see it (the device round
+        // 2026-11-14: the app sat at "ready to install" after the
+        // platform's rejection).
         ContextCompat.registerReceiver(
             activity,
             installStatusReceiver,
@@ -405,8 +377,8 @@ class UpdateManager(
 
     /**
      * The staged install session's outcome ([PackageInstaller.STATUS_*]
-     * status + the platform's reason, when the concrete channel carried
-     * it): a failure surfaces its plain what-to-do copy on the kept
+     * status + the platform's reason, when the broadcast carried it): a
+     * failure surfaces its plain what-to-do copy on the kept
      * [UpdateState.ReadyToInstall] (the download is kept and the Install
      * action stays live - the retry); a success is the new version
      * replacing this build, a user abort is a decline, and a pending
@@ -420,9 +392,8 @@ class UpdateManager(
         ) return
         val message = installFailureMessage(status, statusMessage) ?: return
         val ready = _state.value as? UpdateState.ReadyToInstall ?: return
-        // The concrete channel (the platform's status + reason) refines a
-        // plain failure already surfaced (the callback's boolean
-        // fallback); a plain one never overwrites a concrete one.
+        // A no-reason failure never overwrites a failure copy already
+        // surfaced (a concrete one, with the platform's reason).
         if (ready.installFailure != null && statusMessage == null) return
         _state.value = ready.copy(installFailure = message)
     }
@@ -534,8 +505,7 @@ class UpdateManager(
  * session's staging API (the caller's same plain message - the app's
  * min is API 26, the API's floor is API 28). The session's outcome (the
  * platform's install result) arrives through the app's registered
- * outcome channels (the commit status receiver's broadcast,
- * [UpdateManager]'s session callback), not here.
+ * outcome channel (the commit status receiver's broadcast), not here.
  */
 private fun stageInstallSession(
     activity: ComponentActivity,
@@ -563,10 +533,10 @@ private fun stageInstallSession(
         } finally {
             out.close()
         }
-        // The concrete outcome channel: when the session's install
-        // completes (the confirmation dialog's outcome), the platform
-        // fills [statusSender] with the session's id, the result status,
-        // and the platform's reason and broadcasts it.
+        // The outcome channel: when the session's install completes (the
+        // confirmation dialog's outcome), the platform fills [statusSender]
+        // with the session's id, the result status, and the platform's
+        // reason and broadcasts it.
         session.commit(statusSender)
         session.close()
         sessionId
@@ -584,7 +554,7 @@ private const val APK_SESSION_NAME = "dashhome-update.apk"
  */
 private const val INSTALL_STATUS_ACTION = "com.jsnto.dashhome.INSTALL_STATUS"
 
-/** The commit status receiver's [IntentSender] (the concrete outcome channel). */
+/** The commit status receiver's [IntentSender] (the outcome channel). */
 private fun installStatusSender(activity: ComponentActivity): IntentSender =
     PendingIntent.getBroadcast(
         activity,
@@ -633,7 +603,7 @@ fun installSettingsIntentFor(action: String, packageName: String): Intent =
 /**
  * The plain message for a failed platform install (the install session's
  * result status - the [PackageInstaller.STATUS_FAILURE_*] constants -
- * plus the platform's reason, when the concrete channel carried it):
+ * plus the platform's reason, when the outcome broadcast carried it):
  * the concrete failure, plus what to do. The device round 2026-11-14
  * (the polex round): the platform rejected the install
  * (`INSTALL_FAILED_UPDATE_INCOMPATIBLE` - the platform's signature wall)
