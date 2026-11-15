@@ -1,6 +1,7 @@
 package com.jsnto.dashhome.ui
 
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -24,6 +25,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
@@ -33,8 +35,9 @@ import org.robolectric.annotation.GraphicsMode
  * REAL product: the real [DashhomeRoot] (phone layout) -> the real
  * settings screen -> the real [AppUpdateSection] -> the real
  * [UpdateManager] (its fetch, parse, the streamed download, the
- * [androidx.core.content.FileProvider] uri, and the "install unknown
- * apps" gate) -> the real platform install intents.
+ * install-settings page's open with its fallback chain, the staged
+ * install session's launch, and the "install unknown apps" gate) -> the
+ * real platform install intents.
  *
  * The one seam is the manager's own documented one (its `client`
  * constructor parameter, "a real [OkHttpClient] by default", passed
@@ -43,12 +46,21 @@ import org.robolectric.annotation.GraphicsMode
  * DISPOSABLE local stand-in of the releases API ([FakeReleasesApi]) that
  * serves GitHub-shaped responses, so every branch is drivable
  * deterministically while the product code (the url, the request, the
- * parse, the download, the state, the intents) runs unmodified. A real
- * `startActivity` on the real activity records the intent the shadow sees
- * (the install-settings jump and the installer launch are asserted on the
+ * parse, the download, the state, the intents) runs unmodified. Two more
+ * documented seams drive the platform's own behavior the JVM cannot
+ * provide: the `installSettingsResolver` (the package manager's intent
+ * resolution - the tests simulate the round's device, where the modern
+ * per-app action does not resolve) and the `handToInstaller` (the
+ * platform's [PackageInstaller] session machinery - the fake returns the
+ * session id the app-side contract is asserted on). A real `startActivity`
+ * on the real activity records the intent the shadow sees (the
+ * install-settings jump and the installer launch are asserted on the
  * recorded intents). The on-device install hop (the platform installer
  * replacing the app) is out of reach here (no device/emulator in the
- * test); the app-side intent contract is the asserted boundary.
+ * test); the session's outcome (the platform's install result) is
+ * delivered through the app's own outcome channels (the commit status
+ * receiver's broadcast, the session callback), the way the platform
+ * would.
  *
  * The section's buttons sit low on a short screen, so the screen is tall
  * (h900dp) and every row is visible without scrolling (the phone layout:
@@ -69,6 +81,12 @@ class UpdateSectionUiTest {
     fun tearDown() {
         if (::server.isInitialized) server.stop()
         releasesApi?.stop()
+        // The shadow's "install unknown apps" permission is STATIC process
+        // state (the install tests grant it): reset it so no test leaks
+        // the grant into the next one (the happy path's settings gate
+        // needs the permission OFF).
+        shadowOf(RuntimeEnvironment.getApplication().packageManager)
+            .setCanRequestPackageInstalls(false)
     }
 
     // ------------------------------------------------------------------
@@ -95,13 +113,13 @@ class UpdateSectionUiTest {
         val activity = compose.activity
 
         // The section renders the running build and the unchecked state.
-        compose.onNodeWithText("dashhome v0.3.1").assertExists()
+        compose.onNodeWithText("dashhome v0.3.2").assertExists()
         waitForText("Check the releases page to see if a newer version is out.", "the unchecked state")
 
         // The check fetches the (stand-in) releases page and settles to an
-        // available update: the published v0.4.0 against the running 0.3.1.
+        // available update: the published v0.4.0 against the running 0.3.2.
         compose.onNodeWithText("Check for latest version").performClick()
-        waitForText("Update available: v0.4.0 (you have v0.3.1).", "the available-update state")
+        waitForText("Update available: v0.4.0 (you have v0.3.2).", "the available-update state")
 
         // The download streams the asset (the throttled transfer keeps the
         // Downloading state + progress observable), then settles ready.
@@ -119,7 +137,9 @@ class UpdateSectionUiTest {
 
         // The permission is still off: tapping Install explains the
         // requirement and opens the phone's own "install unknown apps"
-        // screen for this app (the download is kept).
+        // screen for this app (the download is kept) - the MODERN
+        // per-app action (the resolver seam resolves everything, the
+        // real device's modern resolver by default).
         compose.onNodeWithText("Install now").performClick()
         val shadow = shadowOf(activity)
         waitUntil({ shadow.peekNextStartedActivity() != null }, "the install-settings intent to launch")
@@ -135,8 +155,9 @@ class UpdateSectionUiTest {
         }
 
         // The user grants the permission and comes back: the engine's
-        // resume hook (the return from the install settings) launches the
-        // installer over the kept APK's FileProvider uri.
+        // resume hook (the return from the install settings) hands the
+        // kept APK to the platform installer (the staged session's
+        // confirmation-ui launch over the session's id).
         shadowOf(activity.packageManager).setCanRequestPackageInstalls(true)
         manager.onActivityResumed()
         waitUntil(
@@ -147,22 +168,296 @@ class UpdateSectionUiTest {
             "the installer intent to launch",
         )
         val installIntent = shadow.getNextStartedActivity()
-        check(installIntent.action == Intent.ACTION_VIEW) { "the installer takes an ACTION_VIEW, got ${installIntent.action}" }
+        check(installIntent.action == Intent.ACTION_INSTALL_PACKAGE) {
+            "the installer is launched over the staged session (ACTION_INSTALL_PACKAGE), got ${installIntent.action}"
+        }
+        check(installIntent.dataString == "package:com.jsnto.dashhome") {
+            "the install-ui intent must carry the app's package, got ${installIntent.dataString}"
+        }
         check(installIntent.type == "application/vnd.android.package-archive") {
-            "the installer intent must type the APK, got ${installIntent.type}"
+            "the install-ui intent must type the APK, got ${installIntent.type}"
         }
-        check((installIntent.dataString ?: "").startsWith("content://com.jsnto.dashhome.update.fileprovider/")) {
-            "the installer intent must carry the FileProvider uri, got ${installIntent.dataString}"
+        check(installIntent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1) == FAKE_INSTALL_SESSION_ID) {
+            "the install-ui intent must carry the staged session's id, got ${installIntent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)}"
         }
-        check(installIntent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
-            "the installer intent must grant the read on the uri, got flags ${installIntent.flags}"
+
+        // The platform's session outcome: the success (the new version
+        // replaces this build - the process is torn down; nothing the
+        // pane must say - the ready state stays, the download kept).
+        manager.installResultCallback.onFinished(FAKE_INSTALL_SESSION_ID, true)
+        compose.waitForIdle()
+        compose.onNodeWithText("Downloaded v0.4.0. Install it to update.").assertExists()
+    }
+
+    // ------------------------------------------------------------------
+    // The device round 2026-11-14 (Pixel 7 Pro, API 37): the modern
+    // per-app install-settings action does not resolve on the platform
+    // build (the launch failed with "unable to resolve Intent" and the
+    // old runCatching swallowed it - the toast fired, the page never
+    // opened, and the flow dead-ended). The engine's fallback chain now
+    // launches the legacy action, which opens the same per-app page.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun anUnresolvedModernSettingsActionFallsBackToTheLegacyAction() {
+        val events = eventList()
+        val api = startReleasesApi()
+        api.latestBody = releaseJson(
+            tag = "v0.4.0",
+            assets = listOf(asset(APK_NAME, "http://127.0.0.1:${api.port}/download/$APK_NAME")),
+        )
+        val apkBytes = ByteArray(APK_SIZE_BYTES) { (it % 251).toByte() }
+        api.downloads[APK_NAME] = apkBytes
+
+        startServer()
+        // The round's device resolver: the modern action does not resolve,
+        // the legacy one does.
+        val manager = testManager(
+            api.port,
+            events,
+            installSettingsResolver = { it == ACTION_MANAGE_UNKNOWN_APP_SOURCES },
+        )
+        setContentWith(manager)
+        openSettingsAndUpdateChip()
+        compose.onNodeWithText("Check for latest version").performClick()
+        waitForText("Update available: v0.4.0 (you have v0.3.2).", "the available-update state")
+        compose.onNodeWithText("Update to latest").performClick()
+        waitForText("Downloaded v0.4.0. Install it to update.", "the ready-to-install state")
+
+        // The permission is still off: tapping Install explains the
+        // requirement and opens the phone's install-settings screen -
+        // the LEGACY action this time (the modern one unresolved).
+        compose.onNodeWithText("Install now").performClick()
+        val shadow = shadowOf(compose.activity)
+        waitUntil({ shadow.peekNextStartedActivity() != null }, "the install-settings intent to launch")
+        val settingsIntent = shadow.getNextStartedActivity()
+        check(settingsIntent.action == ACTION_MANAGE_UNKNOWN_APP_SOURCES) {
+            "the modern action unresolved: the engine must fall back to the legacy install-settings action, got ${settingsIntent.action}"
         }
+        check(settingsIntent.dataString == "package:com.jsnto.dashhome") {
+            "the install-settings screen must be the one for this app, got ${settingsIntent.dataString}"
+        }
+        check(events.any { it.contains("install unknown apps") }) {
+            "the plain message must name the missing permission, got $events"
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // No install-settings action resolves (a platform with no such page
+    // at all - not the round's device): the engine tells the user the
+    // manual path instead of silently idling (the round's dead-end - the
+    // toast fired, the page never opened, and nothing said so).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun noResolvingSettingsActionTellsTheManualPathInsteadOfSilentlyIdling() {
+        val events = eventList()
+        val api = startReleasesApi()
+        api.latestBody = releaseJson(
+            tag = "v0.4.0",
+            assets = listOf(asset(APK_NAME, "http://127.0.0.1:${api.port}/download/$APK_NAME")),
+        )
+        val apkBytes = ByteArray(APK_SIZE_BYTES) { (it % 251).toByte() }
+        api.downloads[APK_NAME] = apkBytes
+
+        startServer()
+        val manager = testManager(api.port, events, installSettingsResolver = { false })
+        setContentWith(manager)
+        openSettingsAndUpdateChip()
+        compose.onNodeWithText("Check for latest version").performClick()
+        waitForText("Update available: v0.4.0 (you have v0.3.2).", "the available-update state")
+        compose.onNodeWithText("Update to latest").performClick()
+        waitForText("Downloaded v0.4.0. Install it to update.", "the ready-to-install state")
+
+        compose.onNodeWithText("Install now").performClick()
+        compose.waitForIdle()
+        check(shadowOf(compose.activity).peekNextStartedActivity() == null) {
+            "nothing may be launched when no install-settings action resolves"
+        }
+        check(events.any { it.contains("The install-settings page didn't open") }) {
+            "the engine must tell the user the manual path, got $events"
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // The device round 2026-11-14 (the polex round): the platform
+    // rejected the install (INSTALL_FAILED_UPDATE_INCOMPATIBLE - the
+    // platform's signature wall) and the app sat at "ready to install"
+    // with no error. The staged session's outcome now surfaces the
+    // concrete failure on the kept ready state: the download is kept and
+    // the Install action stays live (the retry).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun aRejectedInstallSurfacesTheFailuresCopyAndKeepsTheInstallLive() {
+        val events = eventList()
+        val api = startReleasesApi()
+        api.latestBody = releaseJson(
+            tag = "v0.4.0",
+            assets = listOf(asset(APK_NAME, "http://127.0.0.1:${api.port}/download/$APK_NAME")),
+        )
+        val apkBytes = ByteArray(APK_SIZE_BYTES) { (it % 251).toByte() }
+        api.downloads[APK_NAME] = apkBytes
+
+        startServer()
+        val manager = testManager(api.port, events)
+        setContentWith(manager)
+        openSettingsAndUpdateChip()
+        compose.onNodeWithText("Check for latest version").performClick()
+        waitForText("Update available: v0.4.0 (you have v0.3.2).", "the available-update state")
+        compose.onNodeWithText("Update to latest").performClick()
+        waitForText("Downloaded v0.4.0. Install it to update.", "the ready-to-install state")
+
+        // The permission is granted up front: the install goes straight
+        // to the platform (the staged session's confirmation-ui launch).
+        shadowOf(compose.activity.packageManager).setCanRequestPackageInstalls(true)
+        compose.onNodeWithText("Install now").performClick()
+        val shadow = shadowOf(compose.activity)
+        waitUntil({ shadow.peekNextStartedActivity() != null }, "the installer intent to launch")
+        val installIntent = shadow.getNextStartedActivity()
+        check(installIntent.action == Intent.ACTION_INSTALL_PACKAGE) {
+            "the installer is launched over the staged session, got ${installIntent.action}"
+        }
+        check(installIntent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1) == FAKE_INSTALL_SESSION_ID) {
+            "the install-ui intent must carry the staged session's id, got ${installIntent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)}"
+        }
+
+        // The platform rejects the install (the round's signature wall):
+        // the session's outcome arrives on the concrete channel (the
+        // commit status receiver's broadcast - the platform's status +
+        // its reason) and surfaces (no more silent idle).
+        manager.installStatusReceiver.onReceive(
+            compose.activity,
+            Intent().apply {
+                putExtra(PackageInstaller.EXTRA_SESSION_ID, FAKE_INSTALL_SESSION_ID)
+                putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE_INCOMPATIBLE)
+                putExtra(
+                    PackageInstaller.EXTRA_STATUS_MESSAGE,
+                    "Existing package com.jsnto.dashhome signatures do not match newer version; ignoring!",
+                )
+            },
+        )
+        compose.waitForIdle()
+        waitForText(
+            "The phone refused the update: the new version can't be installed over the one you have",
+            substring = true,
+            what = "the surfaced install failure",
+        )
+        waitForText("The installer said:", substring = true, what = "the quoted platform reason")
+        // The pane is not idling silently: the ready copy is still there
+        // (the download is kept) and the Install action is still live
+        // (the retry).
+        compose.onNodeWithText("Downloaded v0.4.0. Install it to update.").assertExists()
+        assertSemanticsEnabled("Install now")
+    }
+
+    // ------------------------------------------------------------------
+    // A session the app did not launch (not the staged install session)
+    // is ignored, and the user's decline (the confirmation dialog's back)
+    // is not a failure: no error surfaces, the pane stays ready (the
+    // retry).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun aUserAbortedInstallKeepsThePaneReadyWithoutAnError() {
+        val events = eventList()
+        val api = startReleasesApi()
+        api.latestBody = releaseJson(
+            tag = "v0.4.0",
+            assets = listOf(asset(APK_NAME, "http://127.0.0.1:${api.port}/download/$APK_NAME")),
+        )
+        val apkBytes = ByteArray(APK_SIZE_BYTES) { (it % 251).toByte() }
+        api.downloads[APK_NAME] = apkBytes
+
+        startServer()
+        val manager = testManager(api.port, events)
+        setContentWith(manager)
+        openSettingsAndUpdateChip()
+        compose.onNodeWithText("Check for latest version").performClick()
+        waitForText("Update available: v0.4.0 (you have v0.3.2).", "the available-update state")
+        compose.onNodeWithText("Update to latest").performClick()
+        waitForText("Downloaded v0.4.0. Install it to update.", "the ready-to-install state")
+
+        shadowOf(compose.activity.packageManager).setCanRequestPackageInstalls(true)
+        compose.onNodeWithText("Install now").performClick()
+        val shadow = shadowOf(compose.activity)
+        waitUntil({ shadow.peekNextStartedActivity() != null }, "the installer intent to launch")
+
+        // A session the app did not launch (not the staged install
+        // session) is ignored.
+        manager.installResultCallback.onFinished(999, false)
+        compose.waitForIdle()
+        compose.onNodeWithText("Downloaded v0.4.0. Install it to update.").assertExists()
+
+        // The user backs out of the confirmation dialog: a decline, not a
+        // failure (the concrete channel's abort status) - no error
+        // surfaces, the pane stays ready (the retry).
+        manager.installStatusReceiver.onReceive(
+            compose.activity,
+            Intent().apply {
+                putExtra(PackageInstaller.EXTRA_SESSION_ID, FAKE_INSTALL_SESSION_ID)
+                putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE_ABORTED)
+            },
+        )
+        compose.waitForIdle()
+        compose.onNodeWithText("Downloaded v0.4.0. Install it to update.").assertExists()
+        check(compose.onAllNodesWithText("The phone", substring = true).fetchSemanticsNodes().isEmpty()) {
+            "a user abort must not surface an error in the pane"
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // The fallback outcome channel (the session callback's boolean - no
+    // status, no reason): a failed install still surfaces (no more
+    // silent idle) - the plain rejection copy + the what-to-do, the
+    // download kept, the Install action live (the retry).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun aFailedSessionWithoutTheConcreteStatusSurfacesThePlainFailure() {
+        val events = eventList()
+        val api = startReleasesApi()
+        api.latestBody = releaseJson(
+            tag = "v0.4.0",
+            assets = listOf(asset(APK_NAME, "http://127.0.0.1:${api.port}/download/$APK_NAME")),
+        )
+        val apkBytes = ByteArray(APK_SIZE_BYTES) { (it % 251).toByte() }
+        api.downloads[APK_NAME] = apkBytes
+
+        startServer()
+        val manager = testManager(api.port, events)
+        setContentWith(manager)
+        openSettingsAndUpdateChip()
+        compose.onNodeWithText("Check for latest version").performClick()
+        waitForText("Update available: v0.4.0 (you have v0.3.2).", "the available-update state")
+        compose.onNodeWithText("Update to latest").performClick()
+        waitForText("Downloaded v0.4.0. Install it to update.", "the ready-to-install state")
+
+        shadowOf(compose.activity.packageManager).setCanRequestPackageInstalls(true)
+        compose.onNodeWithText("Install now").performClick()
+        val shadow = shadowOf(compose.activity)
+        waitUntil({ shadow.peekNextStartedActivity() != null }, "the installer intent to launch")
+
+        // The platform's failure arrives on the fallback channel only
+        // (the session callback's boolean - no concrete status, no
+        // reason): the callback's onFinished with the failure's boolean.
+        manager.installResultCallback.onFinished(FAKE_INSTALL_SESSION_ID, false)
+        compose.waitForIdle()
+        waitForText(
+            "The phone's installer rejected the update (installer status 1)",
+            substring = true,
+            what = "the plain failure copy",
+        )
+        // The pane is not idling silently: the ready copy is still there
+        // and the Install action is still live (the retry).
+        compose.onNodeWithText("Downloaded v0.4.0. Install it to update.").assertExists()
+        assertSemanticsEnabled("Install now")
     }
 
     // ------------------------------------------------------------------
     // The running build is AHEAD of the published release (the live
     // real-world state: the only published release is v0.1.0 while this
-    // build is 0.3.1): the check settles UpToDate and the copy names the
+    // build is 0.3.2): the check settles UpToDate and the copy names the
     // RUNNING version - the release's version is never mislabeled as the
     // current one.
     // ------------------------------------------------------------------
@@ -181,9 +476,9 @@ class UpdateSectionUiTest {
         openSettingsAndUpdateChip()
         compose.onNodeWithText("Check for latest version").performClick()
 
-        // The published v0.1.0 is older than the running 0.3.1: UpToDate,
+        // The published v0.1.0 is older than the running 0.3.2: UpToDate,
         // and the copy prints the RUNNING version (not the release's).
-        waitForText("You're up to date (current version v0.3.1).", "the up-to-date state")
+        waitForText("You're up to date (current version v0.3.2).", "the up-to-date state")
         // No update to take: the download and install actions stay
         // disabled (Compose marks a disabled button's node with the
         // Disabled semantics property - it keeps the click action on it).
@@ -229,7 +524,7 @@ class UpdateSectionUiTest {
         setContentWith(testManager(api.port, events))
         openSettingsAndUpdateChip()
         compose.onNodeWithText("Check for latest version").performClick()
-        waitForText("Update available: v0.5.0 (you have v0.3.1).", "the available-update state")
+        waitForText("Update available: v0.5.0 (you have v0.3.2).", "the available-update state")
         compose.onNodeWithText("Update to latest").performClick()
         waitForText("That release has no APK to install.", "the refusal message")
     }
@@ -267,15 +562,27 @@ class UpdateSectionUiTest {
 
     /**
      * The test [UpdateManager] (the documented `client` constructor seam
-     * pointed over loopback to [port]): built before the single
-     * composition of the test.
+     * pointed over loopback to [port], plus the `installSettingsResolver`
+     * + `handToInstaller` platform seams): built before the single
+     * composition of the test. The resolver seam resolves everything by
+     * default (the modern action is picked first); the stager seam
+     * returns the fake session id (no real session machinery in the test
+     * - the platform's boundary).
      */
-    private fun testManager(port: Int, events: MutableList<String>): UpdateManager =
+    private fun testManager(
+        port: Int,
+        events: MutableList<String>,
+        installSettingsResolver: (String) -> Boolean = { true },
+        handToInstaller: (File) -> Int? = { FAKE_INSTALL_SESSION_ID },
+    ): UpdateManager =
         UpdateManager(
             compose.activity,
             CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             routingClient(port),
-        ) { events += it }
+            installSettingsResolver = installSettingsResolver,
+            handToInstaller = handToInstaller,
+            onEvent = { events += it },
+        )
 
     /** The single composition of the test: the real app with the test manager (DashhomeRoot's documented test seam). */
     private fun setContentWith(manager: UpdateManager) {
@@ -342,6 +649,14 @@ class UpdateSectionUiTest {
         val node = compose.onNodeWithText(text).fetchSemanticsNode()
         check(node.config.any { it.key == SemanticsProperties.Disabled }) {
             "the '$text' button must be disabled (the Disabled semantics property is missing)"
+        }
+    }
+
+    /** A live Compose button node carries no Disabled semantics property. */
+    private fun assertSemanticsEnabled(text: String) {
+        val node = compose.onNodeWithText(text).fetchSemanticsNode()
+        check(node.config.none { it.key == SemanticsProperties.Disabled }) {
+            "the '$text' button must be live (the Disabled semantics property is present)"
         }
     }
 
@@ -457,6 +772,8 @@ class UpdateSectionUiTest {
         const val APK_NAME = "dashhome-update.apk"
         const val APK_SIZE_BYTES = 256 * 1024
         const val ACTION_MANAGE_APP_INSTALL_SETTINGS = "android.settings.MANAGE_APP_INSTALL_SETTINGS"
+        const val ACTION_MANAGE_UNKNOWN_APP_SOURCES = "android.settings.MANAGE_UNKNOWN_APP_SOURCES"
+        const val FAKE_INSTALL_SESSION_ID = 42
         const val WAIT_TIMEOUT_MS = 20_000L
     }
 }
