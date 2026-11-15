@@ -9,6 +9,7 @@ import android.content.IntentSender
 import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
@@ -245,15 +246,20 @@ class UpdateManager(
             return
         }
         _state.value = ready.copy(installFailure = null)
-        val sessionId = handToInstaller(apk)
-        if (sessionId == null) {
-            _state.value = ready.copy(
-                installFailure = "Couldn't hand the download to the phone's installer. Try again.",
-            )
-            return
+        // The staging's heavy IO (the APK's copy + fsync + commit) runs
+        // off the main thread; only the id's arming, the pane's update,
+        // and the confirmation-ui launch run on it.
+        scope.launch {
+            val sessionId = withContext(Dispatchers.IO) { handToInstaller(apk) }
+            if (sessionId == null) {
+                _state.value = ready.copy(
+                    installFailure = "Couldn't hand the download to the phone's installer. Try again.",
+                )
+                return@launch
+            }
+            installingSessionId = sessionId
+            activity.startActivity(installUiIntent(sessionId))
         }
-        installingSessionId = sessionId
-        activity.startActivity(installUiIntent(sessionId))
     }
 
     /**
@@ -517,7 +523,7 @@ private fun stageInstallSession(
     // below it the staging is unavailable (the caller's plain message -
     // never a silent idle).
     if (Build.VERSION.SDK_INT < 28) return null
-    return runCatching {
+    val staged = runCatching {
         val installer = activity.packageManager.packageInstaller
         // A full install that requires the user's confirmation (the
         // platform's "Update this app?" dialog, launched over the
@@ -541,8 +547,15 @@ private fun stageInstallSession(
         session.commit(statusSender)
         session.close()
         sessionId
-    }.getOrNull()
+    }
+    staged.exceptionOrNull()?.let {
+        Log.w(STAGING_LOG_TAG, "The install session's staging failed", it)
+    }
+    return staged.getOrNull()
 }
+
+/** The log's tag for the staging's refusal (a stable tag for the device rounds' trace). */
+private const val STAGING_LOG_TAG = "UpdateManager"
 
 /** The staged APK's session file name (the session's apk, the platform's label for it). */
 private const val APK_SESSION_NAME = "dashhome-update.apk"
