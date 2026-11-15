@@ -99,8 +99,10 @@ internal fun AppUpdateSection(
 /**
  * The section's status copy for the current [UpdateState]: the plain
  * result of a check (up to date / an update is available / a failure's
- * message), the in-flight check, and the download's live progress bar +
- * percentage.
+ * message), the in-flight check, the download's live progress bar +
+ * percentage, and the ready-to-install copy (with the platform's
+ * rejected-install failure's what-to-do copy, when the platform rejected
+ * the last install attempt).
  */
 @Composable
 private fun UpdateStatus(state: UpdateState, progress: Float) {

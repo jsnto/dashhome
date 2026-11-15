@@ -136,7 +136,9 @@ The parsing/state logic (API JSON parsing, month grid, event formatting,
 push feed ordering, chat thread state, the board's grid layout math —
 normalization, auto flow, bounds, and the drag/resize pointer-to-cell
 math, and the self-update's version ordering + GitHub
-`/releases/latest` parse + APK-asset pick) is covered by JVM unit tests; the markdown push feed is covered by
+`/releases/latest` parse + APK-asset pick, plus the install-settings
+action's fallback selection and the platform install failure's surfacing
+copy) is covered by JVM unit tests; the markdown push feed is covered by
 a Robolectric render test that runs the real Compose + Markwon stack and
 asserts the body TextView is painted with the theme's visible text color
 (regression guard for the "invisible body" bug: Compose packs the ARGB
@@ -146,9 +148,11 @@ navigation, the wide-display routing boundary, Edit-tiles drag/resize,
 the settings flow, and the theme pick — is covered by Robolectric
 Compose tests that run the board against an in-test fake backend (an
 in-memory board that records the app's writes); and the settings'
-Update area — the check, the streamed download, and the platform
-install intents — is covered by a Robolectric Compose test that drives
-the real update flow against a local stand-in of the releases API:
+Update area — the check, the streamed download, the install-settings
+action's fallback (and the no-resolving manual path), and the platform
+install's outcome (the surfaced rejected-install failure, the no-error
+user abort) — is covered by a Robolectric Compose test that drives the
+real update flow against a local stand-in of the releases API:
 
 ```sh
 docker run --rm -v "$HOME/.gradle":/home/gradle/.gradle -w /src/android \
