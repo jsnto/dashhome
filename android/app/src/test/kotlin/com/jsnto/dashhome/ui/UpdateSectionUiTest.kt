@@ -16,6 +16,8 @@ import java.io.File
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -549,6 +551,81 @@ class UpdateSectionUiTest {
             substring = true,
             what = "the surfaced install failure after the pending outcome",
         )
+    }
+
+    // ------------------------------------------------------------------
+    // The pane is unchanged until the confirmation UI launches, so a
+    // second Install attempt can fall inside the in-flight staging's
+    // window: it must be a no-op - exactly one session is armed and the
+    // confirmation UI is launched exactly once (a second would leave the
+    // first session's outcome unattributed by the id filter, and a
+    // zombie committed session on the platform).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun aSecondInstallAttemptDuringTheInFlightStagingIsANoOp() {
+        val events = eventList()
+        val api = startReleasesApi()
+        api.latestBody = releaseJson(
+            tag = "v0.4.0",
+            assets = listOf(asset(APK_NAME, "http://127.0.0.1:${api.port}/download/$APK_NAME")),
+        )
+        val apkBytes = ByteArray(APK_SIZE_BYTES) { (it % 251).toByte() }
+        api.downloads[APK_NAME] = apkBytes
+
+        startServer()
+        // A seam that blocks while the staging is in flight (the window
+        // a second attempt falls into): the second attempt must not
+        // reach it.
+        val stagingEntered = CountDownLatch(1)
+        val stagingGate = CountDownLatch(1)
+        val manager = testManager(
+            api.port,
+            events,
+            handToInstaller = {
+                stagingEntered.countDown()
+                stagingGate.await()
+                FAKE_INSTALL_SESSION_ID
+            },
+        )
+        setContentWith(manager)
+        openSettingsAndUpdateChip()
+        compose.onNodeWithText("Check for latest version").performClick()
+        waitForText("Update available: v0.4.0 (you have v0.3.2).", "the available-update state")
+        compose.onNodeWithText("Update to latest").performClick()
+        waitForText("Downloaded v0.4.0. Install it to update.", "the ready-to-install state")
+
+        shadowOf(compose.activity.packageManager).setCanRequestPackageInstalls(true)
+
+        // The first attempt starts the staging (blocked inside the seam
+        // - the in-flight window is open).
+        manager.requestInstall()
+        check(stagingEntered.await(5, TimeUnit.SECONDS)) {
+            "the first install attempt must reach the installer seam"
+        }
+        // The second attempt while the staging is in flight: a no-op.
+        manager.requestInstall()
+        // The staging completes: exactly one session is armed and the
+        // confirmation UI is launched exactly once.
+        stagingGate.countDown()
+        val shadow = shadowOf(compose.activity)
+        waitUntil({ shadow.peekNextStartedActivity() != null }, "the installer intent to launch")
+        val installIntent = shadow.getNextStartedActivity()
+        check(installIntent.action == Intent.ACTION_INSTALL_PACKAGE) {
+            "the installer is launched over the staged session, got ${installIntent.action}"
+        }
+        check(installIntent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1) == FAKE_INSTALL_SESSION_ID) {
+            "the install-ui intent must carry the staged session's id, got ${installIntent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)}"
+        }
+        compose.waitForIdle()
+        check(shadow.peekNextStartedActivity() == null) {
+            "a second attempt during the in-flight staging must not launch a second confirmation ui"
+        }
+        // The pane is untouched: the download is kept, no error.
+        compose.onNodeWithText("Downloaded v0.4.0. Install it to update.").assertExists()
+        check(compose.onAllNodesWithText("The phone", substring = true).fetchSemanticsNodes().isEmpty()) {
+            "a second attempt during the in-flight staging must not surface an error"
+        }
     }
 
     // ------------------------------------------------------------------

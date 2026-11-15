@@ -91,6 +91,15 @@ class UpdateManager(
      * tests are out of reach of (like the install hop), and the app-side
      * contract (the confirmation-ui intent the session id is launched
      * through, the session outcome's handling) is what the tests assert.
+     *
+     * The real hand-off is blocking (the APK's copy + fsync + commit)
+     * and runs inside [launchInstall]'s [Dispatchers.IO] hop: it is not
+     * cancellable mid-staging, so if the hosting scope is cancelled (or
+     * the process is killed) while a staging is in flight, a committed
+     * session may be left without its confirmation UI. The consequence
+     * is bounded - no install can happen (the platform's confirmation
+     * is still required), and the platform cleans the session up on
+     * uninstall - and is deliberately accepted.
      */
     private val handToInstaller: (File) -> Int? = {
         apk -> stageInstallSession(activity, apk, installStatusSender(activity))
@@ -238,9 +247,21 @@ class UpdateManager(
      * arrives through [installStatusReceiver] -> [onInstallResult]. A
      * fresh attempt clears a previous attempt's failure copy; a refused
      * staging (or a missing file) settles its own plain message instead
-     * of silently idling.
+     * of silently idling. The pane is unchanged until the confirmation
+     * UI launches, so a second attempt inside the in-flight staging's
+     * window is possible: it is a no-op - at most one session per
+     * attempt is armed ([stagingInFlight]).
      */
+    /**
+     * Whether a staging (the [handToInstaller] hand-off) is in flight:
+     * a second install attempt while it is is a no-op (at most one
+     * session per attempt is armed). Set and cleared on the main thread
+     * only (the attempt's entry, and the staging's completion).
+     */
+    private var stagingInFlight = false
+
     private fun launchInstall(apk: File, ready: UpdateState.ReadyToInstall) {
+        if (stagingInFlight) return
         if (!apk.exists()) {
             _state.value = UpdateState.Error("The downloaded file is missing. Download it again to install.")
             return
@@ -249,16 +270,21 @@ class UpdateManager(
         // The staging's heavy IO (the APK's copy + fsync + commit) runs
         // off the main thread; only the id's arming, the pane's update,
         // and the confirmation-ui launch run on it.
+        stagingInFlight = true
         scope.launch {
-            val sessionId = withContext(Dispatchers.IO) { handToInstaller(apk) }
-            if (sessionId == null) {
-                _state.value = ready.copy(
-                    installFailure = "Couldn't hand the download to the phone's installer. Try again.",
-                )
-                return@launch
+            try {
+                val sessionId = withContext(Dispatchers.IO) { handToInstaller(apk) }
+                if (sessionId == null) {
+                    _state.value = ready.copy(
+                        installFailure = "Couldn't hand the download to the phone's installer. Try again.",
+                    )
+                    return@launch
+                }
+                installingSessionId = sessionId
+                activity.startActivity(installUiIntent(sessionId))
+            } finally {
+                stagingInFlight = false
             }
-            installingSessionId = sessionId
-            activity.startActivity(installUiIntent(sessionId))
         }
     }
 
@@ -523,6 +549,7 @@ private fun stageInstallSession(
     // below it the staging is unavailable (the caller's plain message -
     // never a silent idle).
     if (Build.VERSION.SDK_INT < 28) return null
+    var session: PackageInstaller.Session? = null
     val staged = runCatching {
         val installer = activity.packageManager.packageInstaller
         // A full install that requires the user's confirmation (the
@@ -531,7 +558,7 @@ private fun stageInstallSession(
         val sessionId = installer.createSession(
             PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL),
         )
-        val session = installer.openSession(sessionId)
+        session = installer.openSession(sessionId)
         val size = apk.length()
         val out = session.openWrite(APK_SESSION_NAME, 0, size)
         try {
@@ -550,6 +577,10 @@ private fun stageInstallSession(
     }
     staged.exceptionOrNull()?.let {
         Log.w(STAGING_LOG_TAG, "The install session's staging failed", it)
+        // A refused staging must not leave a half-written session on
+        // the platform (the abandon's own failure is swallowed: the
+        // seam's contract is to never throw).
+        runCatching { session?.abandon() }
     }
     return staged.getOrNull()
 }
