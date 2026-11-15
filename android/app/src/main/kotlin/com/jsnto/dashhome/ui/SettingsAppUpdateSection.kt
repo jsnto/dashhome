@@ -26,8 +26,10 @@ import com.jsnto.dashhome.BuildConfig
  * The section is presentational: it renders the [UpdateState] and the
  * download's [progress] the [UpdateManager] publishes, and it calls the
  * manager's actions ([onCheck], [onDownload], [onInstall]). The engine
- * (the fetch, the download, the FileProvider uri, the install intent, and
- * the "install unknown apps" gate) is [UpdateManager]; the version
+ * (the fetch, the download, the install-settings page's open with its
+ * fallback chain, the [android.content.pm.PackageInstaller] session +
+ * confirmation-ui launch, the session outcome's surfacing, and the
+ * "install unknown apps" gate) is [UpdateManager]; the version
  * ordering and the response parse are the pure domain in
  * `data/UpdateCheck.kt`.
  */
@@ -97,8 +99,10 @@ internal fun AppUpdateSection(
 /**
  * The section's status copy for the current [UpdateState]: the plain
  * result of a check (up to date / an update is available / a failure's
- * message), the in-flight check, and the download's live progress bar +
- * percentage.
+ * message), the in-flight check, the download's live progress bar +
+ * percentage, and the ready-to-install copy (with the platform's
+ * rejected-install failure's what-to-do copy, when the platform rejected
+ * the last install attempt).
  */
 @Composable
 private fun UpdateStatus(state: UpdateState, progress: Float) {
@@ -130,10 +134,24 @@ private fun UpdateStatus(state: UpdateState, progress: Float) {
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
-        is UpdateState.ReadyToInstall -> Text(
-            "Downloaded v${state.latestVersion}. Install it to update.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
+        is UpdateState.ReadyToInstall -> {
+            Text(
+                "Downloaded v${state.latestVersion}. Install it to update.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            // The platform's rejection of the last install attempt (the
+            // session outcome's failure copy + what to do): the download
+            // is kept and the Install action stays live (the retry) - the
+            // failure surfaces instead of the pane idling at "ready to
+            // install" (the device round 2026-11-14).
+            state.installFailure?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.error,
+                )
+            }
+        }
         is UpdateState.Error -> Text(
             state.message,
             style = MaterialTheme.typography.bodyMedium,
