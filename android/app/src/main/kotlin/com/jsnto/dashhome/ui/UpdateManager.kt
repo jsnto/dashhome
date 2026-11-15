@@ -329,10 +329,12 @@ class UpdateManager(
      * session's id ([PackageInstaller.EXTRA_SESSION_ID]), the install's
      * result status ([PackageInstaller.EXTRA_STATUS]), and the platform's
      * reason ([PackageInstaller.EXTRA_STATUS_MESSAGE]). A broadcast for a
-     * session the app did not launch (a different id) is ignored, and a
-     * terminal non-failure (success - the new version replaces this
-     * build; a user abort - a decline; still pending - the confirmation
-     * is still open) consumes the session's id.
+     * session the app did not launch (a different id) is ignored; a
+     * success (the new version replaces this build) and a user abort (a
+     * decline) consume the session's id, but a pending broadcast (the
+     * confirmation is still open - the terminal outcome for the same
+     * session follows) does not, and a new install attempt overwrites
+     * the id.
      */
     val installStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -341,8 +343,7 @@ class UpdateManager(
             val status =
                 intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
             if (status == PackageInstaller.STATUS_SUCCESS ||
-                status == PackageInstaller.STATUS_FAILURE_ABORTED ||
-                status == PackageInstaller.STATUS_PENDING_USER_ACTION
+                status == PackageInstaller.STATUS_FAILURE_ABORTED
             ) {
                 installingSessionId = null
             }

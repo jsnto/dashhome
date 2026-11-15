@@ -476,6 +476,82 @@ class UpdateSectionUiTest {
     }
 
     // ------------------------------------------------------------------
+    // A pending outcome (the confirmation is still open) is not a
+    // terminal result: it must not surface anything, and it must not
+    // consume the staged session's id - the terminal outcome for the
+    // same session follows, and if the pending consumed the id the
+    // terminal failure would be dropped and the pane would idle with
+    // no error (the silent idle the round's polex finding fixed).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun aPendingThenTerminalFailureBroadcastStillSurfacesTheFailure() {
+        val events = eventList()
+        val api = startReleasesApi()
+        api.latestBody = releaseJson(
+            tag = "v0.4.0",
+            assets = listOf(asset(APK_NAME, "http://127.0.0.1:${api.port}/download/$APK_NAME")),
+        )
+        val apkBytes = ByteArray(APK_SIZE_BYTES) { (it % 251).toByte() }
+        api.downloads[APK_NAME] = apkBytes
+
+        startServer()
+        val manager = testManager(api.port, events)
+        setContentWith(manager)
+        openSettingsAndUpdateChip()
+        compose.onNodeWithText("Check for latest version").performClick()
+        waitForText("Update available: v0.4.0 (you have v0.3.2).", "the available-update state")
+        compose.onNodeWithText("Update to latest").performClick()
+        waitForText("Downloaded v0.4.0. Install it to update.", "the ready-to-install state")
+
+        shadowOf(compose.activity.packageManager).setCanRequestPackageInstalls(true)
+        compose.onNodeWithText("Install now").performClick()
+        val shadow = shadowOf(compose.activity)
+        waitUntil({ shadow.peekNextStartedActivity() != null }, "the installer intent to launch")
+
+        // The commit broadcast reports the session as pending (the
+        // confirmation is still open): no outcome yet - the pane is
+        // untouched (no error surfaces).
+        manager.installStatusReceiver.onReceive(
+            compose.activity,
+            Intent().apply {
+                putExtra(PackageInstaller.EXTRA_SESSION_ID, FAKE_INSTALL_SESSION_ID)
+                putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_PENDING_USER_ACTION)
+            },
+        )
+        compose.waitForIdle()
+        compose.onNodeWithText("Downloaded v0.4.0. Install it to update.").assertExists()
+        check(compose.onAllNodesWithText("The phone", substring = true).fetchSemanticsNodes().isEmpty()) {
+            "a pending outcome must not surface an error in the pane"
+        }
+
+        // The user confirms, the platform rejects the install (the
+        // round's signature wall): the terminal outcome for the same
+        // session must still reach the receiver (the pending must not
+        // have consumed the session's id) and surface.
+        manager.installStatusReceiver.onReceive(
+            compose.activity,
+            Intent().apply {
+                putExtra(PackageInstaller.EXTRA_SESSION_ID, FAKE_INSTALL_SESSION_ID)
+                putExtra(
+                    PackageInstaller.EXTRA_STATUS,
+                    PackageInstaller.STATUS_FAILURE_INCOMPATIBLE,
+                )
+                putExtra(
+                    PackageInstaller.EXTRA_STATUS_MESSAGE,
+                    "Existing package com.jsnto.dashhome signatures do not match newer version; ignoring!",
+                )
+            },
+        )
+        compose.waitForIdle()
+        waitForText(
+            "The phone refused the update: the new version can't be installed over the one you have",
+            substring = true,
+            what = "the surfaced install failure after the pending outcome",
+        )
+    }
+
+    // ------------------------------------------------------------------
     // The running build is AHEAD of the published release (the live
     // real-world state: the only published release is v0.1.0 while this
     // build is 0.3.2): the check settles UpToDate and the copy names the
